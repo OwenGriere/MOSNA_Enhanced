@@ -1,0 +1,6 @@
+[toolchain]
+# Pinned so a local run and the GitHub workflow agree on lint behaviour:
+# clippy gains lints between releases, and `-D warnings` would otherwise turn a
+# toolchain upgrade into a surprise CI failure.
+channel = "stable"
+components = ["rustfmt", "clippy"]

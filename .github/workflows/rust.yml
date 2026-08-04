@@ -1,0 +1,105 @@
+name: CI
+
+# Every unit test of the Rust port runs here. A red build blocks the change:
+# the port's contract is that each module ships with the tests that pin its
+# behaviour against the Python implementation it replaces.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+env:
+  CARGO_TERM_COLOR: always
+  # Fail on warnings so dead code and unused results cannot accumulate.
+  RUSTFLAGS: -D warnings
+
+jobs:
+  test:
+    name: test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # The application ships on Linux and Windows, so both are covered.
+        os: [ubuntu-latest, windows-latest]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Cache cargo registry and build output
+        uses: Swatinem/rust-cache@v2
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features
+
+      - name: Build
+        run: cargo build --workspace --all-targets
+
+      - name: Unit and integration tests
+        run: cargo test --workspace --all-features
+
+      - name: Documentation tests
+        run: cargo test --workspace --doc
+
+  # Property-based tests explore far more inputs than the example-based ones.
+  # `PROPTEST_CASES` is read by proptest itself, so the same test bodies run
+  # with a much larger budget here than in a local `cargo test`.
+  proptest:
+    name: property tests (deep)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Run property tests with an enlarged case budget
+        env:
+          PROPTEST_CASES: '2048'
+          # Fail rather than silently skip when shrinking takes too long.
+          PROPTEST_MAX_SHRINK_ITERS: '10000'
+        run: cargo test --workspace prop_ -- --nocapture
+
+  # The bench's level 1 is a golden test: it recomputes the deterministic core
+  # and compares it against the references committed under `benchmark/golden/`.
+  # It exits non-zero on drift, which is only a guard rail if it is automatic.
+  #
+  # Release, because a golden reference recorded from an optimised build is what
+  # it has to be checked against — and because a debug run of the same work
+  # would take long enough to be worth skipping.
+  bench:
+    name: numerical drift
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+
+      # The small cohort: under a second, and it exercises every deterministic
+      # stage. The large reference is there for a deeper local check.
+      - name: Level 1 — golden (small cohort)
+        run: cargo run --release -p mosna-bench -- --samples 2 --cells 3000 golden
+
+      # Level 2 needs no reference: it runs the seeded stages on one thread and
+      # on many, and the two must agree. This is the check that caught Leiden
+      # breaking ties by hash order.
+      - name: Level 2 — reproducibility
+        run: cargo run --release -p mosna-bench -- --samples 1 --cells 2000 reproduce
+
+  docs:
+    name: rustdoc
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      - name: Build documentation
+        run: cargo doc --workspace --no-deps

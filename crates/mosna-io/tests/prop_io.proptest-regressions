@@ -1,0 +1,8 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc c0dcf9df4c86c5991e450c5b4c1bb21182cf3416e901018597cf65fdede2ddf5 # shrinks to patient = "0", sample = "a", patient_column = "o", sample_column = "a_"
+cc 99bf1d41857cb4c8d1ebccdd523a41ad04d5eb1f27161298922045cf6e9bd1d9 # shrinks to patient = "0a", sample = "A", patient_column = "a_", sample_column = "aa"

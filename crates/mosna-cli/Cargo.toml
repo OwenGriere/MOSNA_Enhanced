@@ -1,0 +1,30 @@
+[package]
+name = "mosna-cli"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Command line interface of the MOSNA analyses"
+
+[lib]
+name = "mosna_cli"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mosna"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+
+mosna-config.workspace = true
+mosna-pipeline.workspace = true
+mosna-viz.workspace = true
+mosna-paths.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+mosna-io.workspace = true
+serde_yaml.workspace = true

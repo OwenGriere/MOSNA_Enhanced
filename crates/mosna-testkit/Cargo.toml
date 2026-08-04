@@ -1,0 +1,14 @@
+[package]
+name = "mosna-testkit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Fixtures, generators and assertions shared by the MOSNA test suites"
+publish = false
+
+[dependencies]
+proptest = "1"
+tempfile = "3"
+mosna-io.workspace = true

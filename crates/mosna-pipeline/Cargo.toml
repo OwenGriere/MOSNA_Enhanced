@@ -1,0 +1,23 @@
+[package]
+name = "mosna-pipeline"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "The four MOSNA analyses, orchestrating core, io and config"
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+rayon.workspace = true
+serde_yaml.workspace = true
+arrow-schema = "56"
+
+mosna-config.workspace = true
+mosna-io.workspace = true
+mosna-core.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+mosna-testkit.workspace = true

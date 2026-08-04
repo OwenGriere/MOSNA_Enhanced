@@ -1,0 +1,20 @@
+[package]
+name = "mosna-viz"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Figures produced by the MOSNA analyses"
+
+[dependencies]
+anyhow.workspace = true
+plotters = "0.3"
+
+mosna-core.workspace = true
+mosna-io.workspace = true
+mosna-pipeline.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+image = { version = "0.25", default-features = false, features = ["png"] }

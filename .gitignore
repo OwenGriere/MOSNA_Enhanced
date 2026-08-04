@@ -1,0 +1,55 @@
+
+/target
+target/
+**/*.rs.bk
+*.pdb
+
+
+
+/dist
+/out
+temp/
+Tysserand_Network/
+Assortativity/
+Niche_Analysis/
+
+
+!**/proptest-regressions/
+
+/benchmark/reports/
+/benchmark/results/
+
+# ---------------------------------------------------------------------------
+# Logs
+# ---------------------------------------------------------------------------
+*.log
+!PROGRESS.log
+
+.claude/
+.vscode/
+.idea/
+*.iml
+*.swp
+*.swo
+*~
+.cache/
+.direnv/
+compile_commands.json
+rust-project.json
+
+# ---------------------------------------------------------------------------
+# Operating system
+# ---------------------------------------------------------------------------
+
+.DS_Store
+._*
+Thumbs.db
+Desktop.ini
+
+# ---------------------------------------------------------------------------
+# Local environment
+# ---------------------------------------------------------------------------
+
+.env
+.env.local
+*.local

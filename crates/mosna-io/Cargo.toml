@@ -1,0 +1,25 @@
+[package]
+name = "mosna-io"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Table I/O (parquet, csv, tsv) and network file discovery for MOSNA"
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+regex.workspace = true
+rayon.workspace = true
+
+arrow-array = "56"
+arrow-schema = "56"
+arrow-cast = "56"
+arrow-select = "56"
+parquet = { version = "56", features = ["arrow"] }
+csv = "1"
+
+[dev-dependencies]
+tempfile = "3"
+proptest.workspace = true

@@ -1,0 +1,35 @@
+[package]
+name = "mosna-bench"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Performance and reproducibility bench for MOSNA"
+publish = false
+
+[lib]
+name = "mosna_bench"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mosna-bench"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+rayon.workspace = true
+serde = { workspace = true }
+serde_json.workspace = true
+serde_yaml.workspace = true
+rand.workspace = true
+rand_chacha = "0.3"
+
+mosna-config.workspace = true
+mosna-core.workspace = true
+mosna-io.workspace = true
+mosna-pipeline.workspace = true
+
+[dev-dependencies]
+tempfile = "3"

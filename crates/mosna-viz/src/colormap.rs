@@ -1,0 +1,259 @@
+//! Colour maps, reproducing matplotlib's exactly.
+//!
+//! These are not decoration. A diverging map whose centre is not neutral makes
+//! a z-score of zero look like a signal; a categorical palette in a different
+//! order colours the same niche differently between two runs. Both are
+//! reproduced value for value.
+
+/// An 8-bit RGB colour.
+pub type Rgb = [u8; 3];
+
+/// A continuous colour map, interpolated between evenly spaced control points.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Gradient {
+    stops: Vec<Rgb>,
+}
+
+impl Gradient {
+    pub fn new(stops: Vec<Rgb>) -> Self {
+        assert!(stops.len() >= 2, "a gradient needs at least two stops");
+        Self { stops }
+    }
+
+    /// Sample the map at `t` in `[0, 1]`, clamping outside.
+    pub fn sample(&self, t: f64) -> Rgb {
+        let t = if t.is_nan() { 0.0 } else { t.clamp(0.0, 1.0) };
+        let last = self.stops.len() - 1;
+        let scaled = t * last as f64;
+        let low = scaled.floor() as usize;
+
+        if low >= last {
+            return self.stops[last];
+        }
+        let fraction = scaled - low as f64;
+        let (a, b) = (self.stops[low], self.stops[low + 1]);
+
+        // Linear in sRGB, which is what matplotlib's `LinearSegmentedColormap`
+        // does; interpolating in a perceptual space would give different
+        // values from the reference figures.
+        [0, 1, 2].map(|c| (a[c] as f64 + (b[c] as f64 - a[c] as f64) * fraction).round() as u8)
+    }
+
+    /// The colour used for a missing value.
+    ///
+    /// `cmap.set_bad(color="#888888")` in the Python: a cell with no data is
+    /// grey, distinct from every value the map can produce.
+    pub const BAD: Rgb = [0x88, 0x88, 0x88];
+}
+
+/// `RdBu_r`, the diverging map every z-score figure uses.
+///
+/// The ColorBrewer 11-class RdBu, reversed: blue for negative, near-white at
+/// the centre, red for positive.
+pub fn rd_bu_r() -> Gradient {
+    Gradient::new(vec![
+        [0x05, 0x30, 0x61],
+        [0x21, 0x66, 0xac],
+        [0x43, 0x93, 0xc3],
+        [0x92, 0xc5, 0xde],
+        [0xd1, 0xe5, 0xf0],
+        [0xf7, 0xf7, 0xf7],
+        [0xfd, 0xdb, 0xc7],
+        [0xf4, 0xa5, 0x82],
+        [0xd6, 0x60, 0x4d],
+        [0xb2, 0x18, 0x2b],
+        [0x67, 0x00, 0x1f],
+    ])
+}
+
+/// `Blues`, the sequential map the niche composition heatmap uses.
+pub fn blues() -> Gradient {
+    Gradient::new(vec![
+        [0xf7, 0xfb, 0xff],
+        [0xde, 0xeb, 0xf7],
+        [0xc6, 0xdb, 0xef],
+        [0x9e, 0xca, 0xe1],
+        [0x6b, 0xae, 0xd6],
+        [0x42, 0x92, 0xc6],
+        [0x21, 0x71, 0xb5],
+        [0x08, 0x51, 0x9c],
+        [0x08, 0x30, 0x6b],
+    ])
+}
+
+/// `tab20`, used by the abundance bar chart.
+pub fn tab20() -> Vec<Rgb> {
+    vec![
+        [0x1f, 0x77, 0xb4],
+        [0xae, 0xc7, 0xe8],
+        [0xff, 0x7f, 0x0e],
+        [0xff, 0xbb, 0x78],
+        [0x2c, 0xa0, 0x2c],
+        [0x98, 0xdf, 0x8a],
+        [0xd6, 0x27, 0x28],
+        [0xff, 0x98, 0x96],
+        [0x94, 0x67, 0xbd],
+        [0xc5, 0xb0, 0xd5],
+        [0x8c, 0x56, 0x4b],
+        [0xc4, 0x9c, 0x94],
+        [0xe3, 0x77, 0xc2],
+        [0xf7, 0xb6, 0xd2],
+        [0x7f, 0x7f, 0x7f],
+        [0xc7, 0xc7, 0xc7],
+        [0xbc, 0xbd, 0x22],
+        [0xdb, 0xdb, 0x8d],
+        [0x17, 0xbe, 0xcf],
+        [0x9e, 0xda, 0xe5],
+    ]
+}
+
+/// `tab20b`, appended when more than twenty categories are shown.
+pub fn tab20b() -> Vec<Rgb> {
+    vec![
+        [0x39, 0x3b, 0x79],
+        [0x52, 0x54, 0xa3],
+        [0x6b, 0x6e, 0xcf],
+        [0x9c, 0x9e, 0xde],
+        [0x63, 0x79, 0x39],
+        [0x8c, 0xa2, 0x52],
+        [0xb5, 0xcf, 0x6b],
+        [0xce, 0xdb, 0x9c],
+        [0x8c, 0x6d, 0x31],
+        [0xbd, 0x9e, 0x39],
+        [0xe7, 0xba, 0x52],
+        [0xe7, 0xcb, 0x94],
+        [0x84, 0x3c, 0x39],
+        [0xad, 0x49, 0x4a],
+        [0xd6, 0x61, 0x6b],
+        [0xe7, 0x96, 0x9c],
+        [0x7b, 0x41, 0x73],
+        [0xa5, 0x51, 0x94],
+        [0xce, 0x6d, 0xbd],
+        [0xde, 0x9e, 0xd6],
+    ]
+}
+
+/// Colours for a stacked bar chart of `n` categories.
+///
+/// Port of the palette assembly in `assort_figures_abundance.py`: `tab20`,
+/// extended with `tab20b` past twenty categories.
+pub fn abundance_palette(n: usize) -> Vec<Rgb> {
+    let mut palette = tab20();
+    if n > 20 {
+        palette.extend(tab20b());
+    }
+    if palette.is_empty() {
+        return vec![Gradient::BAD; n];
+    }
+    (0..n).map(|i| palette[i % palette.len()]).collect()
+}
+
+/// The categorical palette for clusters and phenotypes.
+///
+/// Port of `plotting.py::make_cluster_cmap` with its defaults
+/// (`grey_pos='end'`, `saturated_first=True`): ten saturated colours, then ten
+/// pale companions past ten categories, then four bright ones past twenty.
+/// Beyond that the palette cycles, which is what
+/// `clusters_cmap[i % n_colors]` does at every call site.
+pub fn make_cluster_cmap(n: usize) -> Vec<Rgb> {
+    const SATURATED: [Rgb; 10] = [
+        [0x1F, 0x77, 0xB4],
+        [0xFF, 0x7F, 0x0E],
+        [0x2C, 0xA0, 0x2C],
+        [0xD6, 0x27, 0x28],
+        [0x94, 0x67, 0xBD],
+        [0x8C, 0x56, 0x4B],
+        [0x17, 0xBE, 0xCF],
+        [0xE3, 0x77, 0xC2],
+        [0xBC, 0xBD, 0x22],
+        [0x7F, 0x7F, 0x7F],
+    ];
+    const PALE: [Rgb; 10] = [
+        [0xAE, 0xC7, 0xE8],
+        [0xFF, 0xBB, 0x78],
+        [0x98, 0xDF, 0x8A],
+        [0xFF, 0x98, 0x96],
+        [0xC5, 0xB0, 0xD5],
+        [0xC4, 0x9C, 0x94],
+        [0x9E, 0xDA, 0xE5],
+        [0xF7, 0xB6, 0xD2],
+        [0xDB, 0xDB, 0x8D],
+        [0xC7, 0xC7, 0xC7],
+    ];
+    const BRIGHT: [Rgb; 4] = [
+        [0x00, 0xFF, 0xFF],
+        [0x00, 0xFF, 0x00],
+        [0xFF, 0x00, 0xFF],
+        [0xFF, 0x00, 0x7F],
+    ];
+
+    let mut palette: Vec<Rgb> = SATURATED.to_vec();
+    if n > 10 {
+        // Below twenty the pale list is trimmed to what is needed, which is
+        // what keeps a twelve-cluster figure from reserving ten pale colours.
+        let take = if n < 20 { n - 10 } else { PALE.len() };
+        palette.extend(PALE.iter().take(take));
+    }
+    if n > 20 {
+        palette.extend(BRIGHT);
+    }
+
+    (0..n).map(|i| palette[i % palette.len()]).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_gradient_hits_its_end_points_exactly() {
+        let gradient = Gradient::new(vec![[0, 0, 0], [255, 255, 255]]);
+        assert_eq!(gradient.sample(0.0), [0, 0, 0]);
+        assert_eq!(gradient.sample(1.0), [255, 255, 255]);
+        assert_eq!(gradient.sample(0.5), [128, 128, 128]);
+    }
+
+    #[test]
+    fn a_gradient_clamps_and_survives_nan() {
+        let gradient = rd_bu_r();
+        assert_eq!(gradient.sample(-5.0), gradient.sample(0.0));
+        assert_eq!(gradient.sample(5.0), gradient.sample(1.0));
+        assert_eq!(gradient.sample(f64::NAN), gradient.sample(0.0));
+    }
+
+    #[test]
+    fn the_diverging_centre_is_neutral() {
+        let centre = rd_bu_r().sample(0.5);
+        assert_eq!(centre[0], centre[1]);
+        assert_eq!(centre[1], centre[2]);
+    }
+
+    #[test]
+    fn the_cluster_palette_trims_the_pale_colours_below_twenty() {
+        let twelve = make_cluster_cmap(12);
+        assert_eq!(twelve.len(), 12);
+        // Ten saturated, then exactly two pale ones — not ten.
+        assert_eq!(twelve[10], [0xAE, 0xC7, 0xE8]);
+        assert_eq!(twelve[11], [0xFF, 0xBB, 0x78]);
+    }
+
+    #[test]
+    fn the_cluster_palette_never_returns_short() {
+        for n in [1, 5, 10, 11, 20, 21, 24, 25, 100] {
+            assert_eq!(make_cluster_cmap(n).len(), n, "n = {n}");
+        }
+    }
+
+    #[test]
+    fn an_empty_request_yields_an_empty_palette() {
+        assert!(make_cluster_cmap(0).is_empty());
+        assert!(abundance_palette(0).is_empty());
+    }
+
+    #[test]
+    fn the_abundance_palette_extends_past_twenty() {
+        let palette = abundance_palette(30);
+        assert_eq!(palette.len(), 30);
+        assert_eq!(palette[20], tab20b()[0], "tab20b follows tab20");
+    }
+}

@@ -1,0 +1,25 @@
+[package]
+name = "mosna-install"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Installs MOSNA into a prefix, and removes it again"
+
+[lib]
+name = "mosna_install"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mosna-install"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+mosna-paths.workspace = true
+image = { version = "0.25", default-features = false, features = ["ico", "png"] }
+
+[dev-dependencies]
+tempfile = "3"

@@ -1,0 +1,31 @@
+[package]
+name = "mosna-core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Scientific core of MOSNA: spatial networks, NAS features, assortativity, dimensionality reduction and clustering"
+
+[dependencies]
+anyhow.workspace = true
+thiserror.workspace = true
+rayon.workspace = true
+ndarray.workspace = true
+rand.workspace = true
+rand_distr.workspace = true
+rand_chacha = "0.3"
+log.workspace = true
+
+mosna-io.workspace = true
+
+delaunator = "1"
+kiddo = "5"
+arrow-array = "56"
+arrow-schema = "56"
+
+[dev-dependencies]
+tempfile = "3"
+proptest.workspace = true
+mosna-testkit.workspace = true
+approx = "0.5"
