@@ -143,9 +143,72 @@ fn patient_of(path: &Path, prefix: &str) -> Option<String> {
     }
 }
 
+/// The URI the image loader wants for a figure on disk.
+///
+/// `egui_extras`' file loader takes what follows `file://` as a path, with one
+/// concession to Windows: a leading slash is stripped, and anything else is
+/// read as the hostname of a UNC share. So `file://C:\runs\fig.png` — which is
+/// what pasting a Windows path after the scheme produces — is looked for at
+/// `\\C:\runs\fig.png`, on a machine that does not exist, and the figure never
+/// appears. The path is put in the shape the loader parses instead.
+pub fn file_uri(path: &Path) -> String {
+    file_uri_of(&path.display().to_string(), cfg!(windows))
+}
+
+/// The rule itself, with the platform as an argument so both branches can be
+/// tested from either one.
+fn file_uri_of(path: &str, windows: bool) -> String {
+    // Only on Windows: a backslash is an ordinary character in a Unix file
+    // name, and rewriting it there would break the very paths it means to fix.
+    let path = if windows {
+        path.replace('\\', "/")
+    } else {
+        path.to_string()
+    };
+    let separator = if path.starts_with('/') { "" } else { "/" };
+    format!("file://{separator}{path}")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A Unix path is already rooted, so it needs the third slash and nothing
+    /// else — the loader percent-decodes nothing, so nothing may be encoded.
+    #[test]
+    fn a_unix_figure_becomes_a_three_slash_uri() {
+        let uri = file_uri_of("/home/user/Niche_Analysis/cluster labels.png", false);
+        assert_eq!(uri, "file:///home/user/Niche_Analysis/cluster labels.png");
+        assert_eq!(
+            uri.strip_prefix("file://"),
+            Some("/home/user/Niche_Analysis/cluster labels.png"),
+            "what the loader reads back must be the path it was given"
+        );
+    }
+
+    /// A Windows path is not rooted at a slash and is spelled with backslashes;
+    /// both have to be fixed, or the loader goes looking for a network share.
+    #[test]
+    fn a_windows_figure_becomes_a_drive_letter_uri() {
+        let uri = file_uri_of(r"C:\Users\owen\runs\fig.png", true);
+        assert_eq!(uri, "file:///C:/Users/owen/runs/fig.png");
+
+        // The loader's own parsing: strip the scheme, then the leading slash.
+        let path = uri
+            .strip_prefix("file://")
+            .and_then(|rest| rest.strip_prefix('/'))
+            .unwrap();
+        assert_eq!(path, "C:/Users/owen/runs/fig.png");
+    }
+
+    /// A backslash is a legal character in a Unix file name.
+    #[test]
+    fn a_unix_name_containing_a_backslash_is_left_alone() {
+        assert_eq!(
+            file_uri_of(r"/data/odd\name.png", false),
+            r"file:///data/odd\name.png"
+        );
+    }
 
     fn touch(path: PathBuf) {
         std::fs::create_dir_all(path.parent().unwrap()).unwrap();

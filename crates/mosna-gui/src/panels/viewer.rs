@@ -125,7 +125,7 @@ fn images(app: &mut MosnaApp, ui: &mut egui::Ui) {
         .auto_shrink([false, false])
         .show(ui, |ui| {
             ui.add(
-                egui::Image::new(format!("file://{}", path.display()))
+                egui::Image::new(crate::model::viewer::file_uri(path))
                     .fit_to_original_size(1.0)
                     .max_width(ui.available_width()),
             );
@@ -190,7 +190,7 @@ fn log(app: &mut MosnaApp, ui: &mut egui::Ui) {
     ui.add_space(4.0);
 
     egui::Frame::new()
-        .fill(theme::BACKGROUND)
+        .fill(theme::FIELD)
         .stroke(egui::Stroke::new(1.0, theme::BORDER))
         .corner_radius(egui::CornerRadius::same(4))
         .inner_margin(egui::Margin::same(10))
@@ -231,7 +231,7 @@ fn status_bar(app: &mut MosnaApp, ui: &mut egui::Ui) {
     } else {
         app.active_step
             .map(theme::step_colour)
-            .unwrap_or(theme::GOLD_DIM)
+            .unwrap_or(theme::ACCENT_SOFT)
     };
 
     let bar = match app.progress {
@@ -255,7 +255,7 @@ fn status_bar(app: &mut MosnaApp, ui: &mut egui::Ui) {
 fn label(name: &str, selected: bool) -> egui::RichText {
     let text = egui::RichText::new(name).size(theme::size::LABEL);
     if selected {
-        text.color(theme::GOLD_BRIGHT).strong()
+        text.color(theme::ACCENT_STRONG).strong()
     } else {
         text.color(theme::TEXT_MUTED)
     }

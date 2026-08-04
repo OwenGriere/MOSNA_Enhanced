@@ -690,8 +690,14 @@ fn parameters() -> Chapter {
                                 "Names given to those statistics in the output columns.",
                                 "Noms donnés à ces statistiques dans les colonnes produites.")),
                             Row::new("reducer_type", "string", T::new(
-                                "Dimensionality reduction applied before clustering.",
-                                "Réduction de dimension appliquée avant le regroupement.")),
+                                "Dimensionality reduction applied before clustering: umap, or \
+                                 none to cluster the aggregated features directly. With none, \
+                                 metric, min_dist and dim_clust are ignored and no cluster \
+                                 projection is drawn.",
+                                "Réduction de dimension appliquée avant le regroupement : umap, \
+                                 ou none pour regrouper directement les caractéristiques \
+                                 agrégées. Avec none, metric, min_dist et dim_clust sont \
+                                 ignorés et aucune projection des groupes n'est tracée.")),
                             Row::new("metric", "string", T::new(
                                 "Distance used to compare neighbourhoods: euclidean, \
                                  manhattan or cosine.",

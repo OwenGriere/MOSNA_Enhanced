@@ -40,10 +40,10 @@ pub fn show(app: &mut MosnaApp, ctx: &egui::Context) {
                 ui.horizontal(|ui| {
                     let button = egui::Button::new(
                         egui::RichText::new("Choose…")
-                            .color(theme::BACKGROUND)
+                            .color(theme::TEXT_INVERSE)
                             .strong(),
                     )
-                    .fill(theme::GOLD);
+                    .fill(theme::ACCENT);
                     if ui.add(button).clicked() {
                         if let Some(directory) = rfd::FileDialog::new()
                             .set_title("Choose working directory")

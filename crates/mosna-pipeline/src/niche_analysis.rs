@@ -2,7 +2,9 @@
 
 use std::path::{Path, PathBuf};
 
-use mosna_config::model::niche_params::{ClustererType, Metric as ConfigMetric, NicheParams};
+use mosna_config::model::niche_params::{
+    ClustererType, Metric as ConfigMetric, NicheParams, ReducerType,
+};
 use mosna_config::validate::assert_params::{assert_params, Analysis};
 use mosna_config::{save_config, section, NicheAnalysisConfig, RawConfig};
 use mosna_core::clustering::{
@@ -167,10 +169,10 @@ fn run_aggregated(
     progress.step(1, 3, "[PROCESS] Niches Analysis");
 
     progress.info("[PROCESS] Reduction and Clustering of Spatial Niches");
-    let (embedding, labels) = reduce_and_cluster(&var_aggreg, params)?;
+    let (input, labels) = reduce_and_cluster(&var_aggreg, params)?;
     progress.step(2, 3, "[PROCESS] Niches Analysis");
 
-    figures.embedding(&embedding, params.dim_clust, &labels, save_dir)?;
+    draw_clusters(&input, &labels, save_dir, progress, figures)?;
 
     // Writing the labels back is what lets the network be re-plotted coloured
     // by niche, and what keeps the composition aligned with the cells.
@@ -238,9 +240,9 @@ fn run_per_sample(
         let single = std::slice::from_ref(id);
         let var_aggreg =
             compute_features(settings, net_dir, extension, single, use_attributes, params)?;
-        let (embedding, labels) = reduce_and_cluster(&var_aggreg, params)?;
+        let (input, labels) = reduce_and_cluster(&var_aggreg, params)?;
 
-        figures.embedding(&embedding, params.dim_clust, &labels, &save_dir)?;
+        draw_clusters(&input, &labels, &save_dir, progress, figures)?;
         merge_niche_pheno(
             net_dir,
             single,
@@ -353,33 +355,89 @@ fn compute_features(
     )?)
 }
 
-/// Reduce the features and partition them into niches.
-fn reduce_and_cluster(
-    var_aggreg: &VarAggreg,
-    params: &NicheParams,
-) -> Result<(Vec<f64>, Vec<u32>)> {
-    let (matrix, width) = var_aggreg.clustering_matrix();
-    let n_rows = var_aggreg.n_rows;
+/// What the clusterer is handed, whatever the reduction did.
+///
+/// The clusterers all read a flat row-major matrix and take its width as an
+/// argument, so the width has to travel with the values rather than be
+/// re-derived at each call site from `dim_clust` — which is the reduced
+/// dimension, and is simply wrong when there was no reduction.
+#[derive(Debug)]
+struct ClusterInput {
+    values: Vec<f64>,
+    width: usize,
+    /// Whether these are coordinates in a low-dimensional space, and so
+    /// something that can be scattered in a plane.
+    reduced: bool,
+}
 
-    let umap_params = UmapParams {
-        n_components: params.dim_clust,
-        n_neighbors: params.n_neighbors,
-        metric: match params.metric {
-            ConfigMetric::Manhattan => Metric::Manhattan,
-            ConfigMetric::Cosine => Metric::Cosine,
-            ConfigMetric::Euclidean => Metric::Euclidean,
-        },
-        min_dist: params.min_dist,
-        ..UmapParams::default()
+/// Reduce the features, or hand them over unchanged.
+///
+/// `reducer_type: none` is not a degenerate UMAP: the aggregated matrix goes to
+/// the clusterer exactly as it is, ids included, which is what UMAP would have
+/// consumed. Turning the reduction off therefore changes what is clustered and
+/// nothing else.
+fn project(var_aggreg: &VarAggreg, params: &NicheParams) -> Result<ClusterInput> {
+    let (matrix, width) = var_aggreg.clustering_matrix();
+    require_finite(&matrix, width)?;
+
+    match params.reducer_type {
+        ReducerType::None => Ok(ClusterInput {
+            values: matrix,
+            width,
+            reduced: false,
+        }),
+        ReducerType::Umap => {
+            let umap_params = UmapParams {
+                n_components: params.dim_clust,
+                n_neighbors: params.n_neighbors,
+                metric: match params.metric {
+                    ConfigMetric::Manhattan => Metric::Manhattan,
+                    ConfigMetric::Cosine => Metric::Cosine,
+                    ConfigMetric::Euclidean => Metric::Euclidean,
+                },
+                min_dist: params.min_dist,
+                ..UmapParams::default()
+            };
+            Ok(ClusterInput {
+                values: umap(&matrix, var_aggreg.n_rows, width, &umap_params)?,
+                width: params.dim_clust,
+                reduced: true,
+            })
+        }
+    }
+}
+
+/// Refuse a matrix with a hole in it.
+///
+/// `clustering_matrix` parses the patient and sample ids as numbers — numpy
+/// does the same to the object array the Python hands to `check_array` — so a
+/// patient called `P01` arrives here as `NaN`. UMAP used to swallow that and
+/// return an embedding of `NaN`s; without a reducer it would reach the
+/// clusterer directly. Python raises on it, and so does this, naming the cell
+/// so the offending column can be found.
+fn require_finite(values: &[f64], width: usize) -> Result<()> {
+    let Some(position) = values.iter().position(|value| !value.is_finite()) else {
+        return Ok(());
     };
-    let embedding = umap(&matrix, n_rows, width, &umap_params)?;
+    Err(PipelineError::invalid(format!(
+        "the clustering input is not a number at row {}, column {} of {width}: \
+         a patient or sample id that is not numeric arrives here as NaN, \
+         and the last columns of the matrix are those ids",
+        position / width,
+        position % width,
+    )))
+}
+
+/// Partition the rows into niches.
+fn cluster(input: &ClusterInput, n_rows: usize, params: &NicheParams) -> Result<Vec<u32>> {
+    let (values, width) = (input.values.as_slice(), input.width);
 
     let labels = match params.clusterer_type {
         ClustererType::Gmm => {
             let gmm = gaussian_mixture(
-                &embedding,
+                values,
                 n_rows,
-                params.dim_clust,
+                width,
                 &GmmParams {
                     n_clusters: params.n_clusters,
                     ..GmmParams::default()
@@ -389,16 +447,16 @@ fn reduce_and_cluster(
         }
         ClustererType::Leiden => {
             let k = params.effective_k_cluster();
-            let graph = knn_graph(&embedding, n_rows, params.dim_clust, k, Metric::Euclidean);
+            let graph = knn_graph(values, n_rows, width, k, Metric::Euclidean);
             let edges: Vec<(usize, usize, f64)> = (0..n_rows)
                 .flat_map(|i| graph.indices[i].iter().map(move |&j| (i, j, 1.0)))
                 .collect();
             leiden(n_rows, &edges, params.resolution, 0)
         }
         ClustererType::Spectral => spectral_clustering(
-            &embedding,
+            values,
             n_rows,
-            params.dim_clust,
+            width,
             &SpectralParams {
                 n_clusters: params.n_clusters,
                 ..SpectralParams::default()
@@ -415,7 +473,38 @@ fn reduce_and_cluster(
         }
     };
 
-    Ok((embedding, labels))
+    Ok(labels)
+}
+
+/// Scatter the clusters in the projection, when there is one.
+///
+/// The figure places every cell at its coordinates in the reduced space. The
+/// unreduced features have no such space: their first two columns are two
+/// phenotypes, not two axes, and a scatter of them would look like a projection
+/// while meaning something else entirely. It is skipped, and said so, rather
+/// than drawn wrong.
+fn draw_clusters(
+    input: &ClusterInput,
+    labels: &[u32],
+    save_dir: &Path,
+    progress: &dyn Progress,
+    figures: &dyn FigureSink,
+) -> Result<()> {
+    if !input.reduced {
+        progress.info("[INFO] No reduction: the cluster projection is not drawn");
+        return Ok(());
+    }
+    figures.embedding(&input.values, input.width, labels, save_dir)
+}
+
+/// Reduce the features and partition them into niches.
+fn reduce_and_cluster(
+    var_aggreg: &VarAggreg,
+    params: &NicheParams,
+) -> Result<(ClusterInput, Vec<u32>)> {
+    let input = project(var_aggreg, params)?;
+    let labels = cluster(&input, var_aggreg.n_rows, params)?;
+    Ok((input, labels))
 }
 
 /// The normalisations to compute, expanding `all`.
@@ -431,6 +520,128 @@ fn expand(normalize: mosna_config::model::niche_params::Normalize) -> Vec<Normal
 mod tests {
     use super::*;
     use mosna_config::model::niche_params::Normalize as ConfigNormalize;
+
+    fn params(yaml: &str) -> NicheParams {
+        NicheParams::from_value(&serde_yaml::from_str(yaml).unwrap())
+    }
+
+    /// Four cells, three features, numeric patient ids and no sample level.
+    fn features(patients: &[&str]) -> VarAggreg {
+        let n_rows = patients.len();
+        VarAggreg {
+            column_names: vec!["A mean".into(), "A std".into(), "B mean".into()],
+            values: (0..n_rows * 3).map(|i| i as f64 * 0.5).collect(),
+            n_rows,
+            patients: patients.iter().map(|p| p.to_string()).collect(),
+            samples: vec![None; n_rows],
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // What the clusterer is handed
+    // -----------------------------------------------------------------------
+
+    /// Without a reducer the clusterer receives the aggregated features
+    /// themselves — the very matrix UMAP would otherwise have consumed, id
+    /// columns included, so that turning the reduction off changes what is
+    /// clustered and nothing else.
+    #[test]
+    fn without_a_reducer_the_clusterer_receives_the_feature_matrix_itself() {
+        let var_aggreg = features(&["1", "1", "2", "2"]);
+        let (expected, expected_width) = var_aggreg.clustering_matrix();
+
+        let input = project(&var_aggreg, &params("reducer_type: none\n")).unwrap();
+
+        assert_eq!(input.width, expected_width, "one column per feature and id");
+        assert_eq!(input.values, expected);
+    }
+
+    /// The clusterers read the matrix row by row, `width` values at a time: a
+    /// length that is not a whole number of rows would silently shift every row
+    /// after the first.
+    #[test]
+    fn the_clustering_input_is_rectangular() {
+        let var_aggreg = features(&["1", "1", "2", "2"]);
+        for yaml in [
+            "reducer_type: none\n",
+            "reducer_type: umap\ndim_clust: 2\nn_neighbors: 2\n",
+        ] {
+            let input = project(&var_aggreg, &params(yaml)).unwrap();
+            assert_eq!(
+                input.values.len(),
+                var_aggreg.n_rows * input.width,
+                "`{yaml}` produced a ragged matrix"
+            );
+        }
+    }
+
+    /// With a reducer the width is the reduced dimension, not the feature
+    /// count: the figures and the clusterers both size their rows from it.
+    #[test]
+    fn with_a_reducer_the_clusterer_receives_one_column_per_reduced_dimension() {
+        let var_aggreg = features(&["1", "1", "2", "2"]);
+        let input = project(
+            &var_aggreg,
+            &params("reducer_type: umap\ndim_clust: 2\nn_neighbors: 2\n"),
+        )
+        .unwrap();
+
+        assert_eq!(input.width, 2);
+        assert!(
+            input.reduced,
+            "a UMAP projection can be scattered in a plane"
+        );
+    }
+
+    /// The raw features are not a projection, so nothing may try to draw them
+    /// as one — the first two columns of a feature table are two phenotypes,
+    /// not two axes.
+    #[test]
+    fn the_unreduced_features_are_not_a_projection() {
+        let input = project(&features(&["1", "2"]), &params("reducer_type: none\n")).unwrap();
+        assert!(!input.reduced);
+    }
+
+    /// `clustering_matrix` parses the patient id as a number, so a
+    /// non-numeric one arrives as `NaN`. Reduction used to bury that; without
+    /// it the hole would go straight into the clusterer and come back as
+    /// niches nobody could explain.
+    #[test]
+    fn a_clustering_input_that_is_not_all_numbers_is_refused() {
+        let err = project(
+            &features(&["P01", "P01", "P02", "P02"]),
+            &params("reducer_type: none\n"),
+        )
+        .unwrap_err();
+
+        let message = err.to_string();
+        assert!(message.contains("row 0"), "{message}");
+        assert!(message.contains("column 3"), "{message}");
+        assert!(message.contains("id"), "{message}");
+    }
+
+    /// And the same hole is refused when a reducer is asked for: it was never
+    /// UMAP's to absorb.
+    #[test]
+    fn a_hole_in_the_features_is_refused_with_a_reducer_too() {
+        assert!(project(
+            &features(&["P01", "P01", "P02", "P02"]),
+            &params("reducer_type: umap\ndim_clust: 2\nn_neighbors: 2\n"),
+        )
+        .is_err());
+    }
+
+    /// The whole point: no reduction still yields one niche label per cell.
+    #[test]
+    fn without_a_reducer_every_cell_still_gets_a_niche() {
+        let var_aggreg = features(&["1", "1", "2", "2"]);
+        let (_, labels) = reduce_and_cluster(
+            &var_aggreg,
+            &params("reducer_type: none\nclusterer_type: gmm\nn_clusters: 2\n"),
+        )
+        .unwrap();
+        assert_eq!(labels.len(), var_aggreg.n_rows);
+    }
 
     #[test]
     fn all_expands_to_every_normalisation() {

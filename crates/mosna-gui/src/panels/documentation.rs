@@ -3,7 +3,7 @@
 //! Laid out like the Squidpy documentation — a navigation tree on the left, the
 //! page on the right, a toolbar above with a search box and the language
 //! button — but drawn with the interface's own widgets, so it wears the same
-//! black-and-gold palette as everything else.
+//! slate-and-teal palette as everything else.
 //!
 //! Every decision this file makes about *where the reader is* comes from
 //! [`crate::docs::state::ManualState`], which is tested. What is left here is
@@ -110,7 +110,7 @@ fn toolbar(documentation: &Documentation, manual: &mut ManualState, ui: &mut egu
             if ui
                 .button(
                     egui::RichText::new(format!("🌐 {}", manual.language_button()))
-                        .color(theme::GOLD_BRIGHT),
+                        .color(theme::ACCENT_STRONG),
                 )
                 .on_hover_text("Switch language")
                 .clicked()
@@ -156,7 +156,7 @@ fn navigation(documentation: &Documentation, manual: &mut ManualState, ui: &mut 
         let expanded = manual.is_expanded(chapter.id);
         let marker = if expanded { "▾" } else { "▸" };
         let heading = egui::RichText::new(format!("{marker}  {}", chapter.title.get(language)))
-            .color(theme::GOLD)
+            .color(theme::ACCENT)
             .size(theme::size::HEADING)
             .strong();
 
@@ -190,7 +190,7 @@ fn entry(ui: &mut egui::Ui, title: &str, selected: bool, indent: f32) -> bool {
         ui.add_space(indent);
         let text = egui::RichText::new(title).size(theme::size::BODY);
         let text = if selected {
-            text.color(theme::GOLD_BRIGHT).strong()
+            text.color(theme::ACCENT_STRONG).strong()
         } else {
             text.color(theme::TEXT_MUTED)
         };
@@ -220,7 +220,7 @@ fn page(documentation: &Documentation, manual: &ManualState, ui: &mut egui::Ui) 
     }
     ui.label(
         egui::RichText::new(section.title.get(language))
-            .color(theme::GOLD_BRIGHT)
+            .color(theme::ACCENT_STRONG)
             .size(theme::size::PAGE_TITLE)
             .strong(),
     );
@@ -243,7 +243,7 @@ fn draw_block(block: &Block, manual: &ManualState, ui: &mut egui::Ui) {
             ui.add_space(4.0);
             ui.label(
                 egui::RichText::new(text.get(language))
-                    .color(theme::GOLD)
+                    .color(theme::ACCENT)
                     .size(theme::size::HEADING)
                     .strong(),
             );
@@ -261,7 +261,7 @@ fn draw_block(block: &Block, manual: &ManualState, ui: &mut egui::Ui) {
                     ui.add_space(6.0);
                     ui.label(
                         egui::RichText::new("•")
-                            .color(theme::GOLD)
+                            .color(theme::ACCENT)
                             .size(theme::size::BODY),
                     );
                     ui.label(
@@ -292,7 +292,7 @@ fn citations(
             ui.add_space(6.0);
             ui.label(
                 egui::RichText::new(citation.name)
-                    .color(theme::GOLD)
+                    .color(theme::ACCENT)
                     .monospace()
                     .size(theme::size::MONO)
                     .strong(),
@@ -309,7 +309,7 @@ fn citations(
 
 fn callout(kind: CalloutKind, text: Text, language: crate::docs::Language, ui: &mut egui::Ui) {
     let (accent, marker) = match kind {
-        CalloutKind::Tip => (theme::GOLD, "Tip"),
+        CalloutKind::Tip => (theme::ACCENT, "Tip"),
         CalloutKind::Warning => (theme::STEP_FAILED, "Warning"),
         CalloutKind::Note => (theme::TEXT_MUTED, "Note"),
     };
@@ -353,7 +353,7 @@ fn code(caption: &str, lines: &[&'static str], ui: &mut egui::Ui) {
     });
 
     egui::Frame::new()
-        .fill(theme::BACKGROUND)
+        .fill(theme::FIELD)
         .stroke(egui::Stroke::new(1.0, theme::BORDER))
         .corner_radius(egui::CornerRadius::same(4))
         .inner_margin(egui::Margin::same(8))
@@ -363,7 +363,7 @@ fn code(caption: &str, lines: &[&'static str], ui: &mut egui::Ui) {
                 let colour = if line.trim_start().starts_with('#') {
                     theme::TEXT_MUTED
                 } else {
-                    theme::GOLD_BRIGHT
+                    theme::TEXT
                 };
                 ui.label(
                     egui::RichText::new(*line)
@@ -397,7 +397,7 @@ fn table(
                 header.col(|ui| {
                     ui.label(
                         egui::RichText::new(text.get(language))
-                            .color(theme::GOLD)
+                            .color(theme::ACCENT)
                             .size(theme::size::LABEL)
                             .strong(),
                     );
@@ -429,7 +429,7 @@ fn table(
                     line.col(|ui| {
                         ui.label(
                             egui::RichText::new(row.kind)
-                                .color(theme::GOLD_DIM)
+                                .color(theme::TEXT_MUTED)
                                 .size(theme::size::LABEL),
                         );
                     });

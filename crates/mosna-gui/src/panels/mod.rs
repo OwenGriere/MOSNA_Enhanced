@@ -16,14 +16,14 @@ use crate::theme;
 
 /// A panel heading, in the accent colour.
 pub fn header(ui: &mut egui::Ui, text: &str) {
-    ui.add_space(4.0);
+    ui.add_space(6.0);
     ui.label(
         egui::RichText::new(text)
-            .color(theme::GOLD)
-            .size(theme::size::SECTION_TITLE)
+            .color(theme::ACCENT)
+            .size(theme::size::PANEL_TITLE)
             .strong(),
     );
-    ui.add_space(4.0);
+    ui.add_space(6.0);
     ui.separator();
     ui.add_space(2.0);
 }
@@ -31,9 +31,11 @@ pub fn header(ui: &mut egui::Ui, text: &str) {
 /// A titled box, the equivalent of Qt's `QGroupBox`.
 pub fn group<R>(ui: &mut egui::Ui, title: &str, contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ui.add_space(8.0);
+    // Graphite, not gold: a panel holds half a dozen of these, and gold on each
+    // one would leave nothing for the panel's own title to be.
     ui.label(
         egui::RichText::new(title)
-            .color(theme::GOLD_DIM)
+            .color(theme::STEEL)
             .size(theme::size::HEADING)
             .strong(),
     );
@@ -181,12 +183,7 @@ pub fn path_field(ui: &mut egui::Ui, title: &str, path: &mut String) -> bool {
 pub fn accent_button(ui: &mut egui::Ui, text: &str, colour: egui::Color32) -> egui::Response {
     // Dark text on a light fill, light text on a dark one, so the caption stays
     // readable across the whole step palette.
-    let brightness = colour.r() as u32 + colour.g() as u32 + colour.b() as u32;
-    let foreground = if brightness > 380 {
-        theme::BACKGROUND
-    } else {
-        theme::TEXT
-    };
+    let foreground = theme::text_on(colour);
 
     ui.add_sized(
         [

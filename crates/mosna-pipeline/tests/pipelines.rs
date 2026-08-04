@@ -68,8 +68,41 @@ impl Workspace {
     }
 }
 
+/// Counts the figures a run asks for, so a test can assert that a figure which
+/// would be meaningless was not drawn.
+#[derive(Default)]
+struct CountingFigures {
+    embeddings: std::sync::atomic::AtomicUsize,
+}
+
+impl CountingFigures {
+    fn embeddings(&self) -> usize {
+        self.embeddings.load(std::sync::atomic::Ordering::Relaxed)
+    }
+}
+
+impl mosna_pipeline::FigureSink for CountingFigures {
+    fn embedding(
+        &self,
+        _embedding: &[f64],
+        _n_components: usize,
+        _labels: &[u32],
+        _save_dir: &Path,
+    ) -> mosna_pipeline::Result<()> {
+        self.embeddings
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Ok(())
+    }
+}
+
 /// A configuration covering all three analyses, pointing at `raw`.
 fn config(saving_directory: &str) -> RawConfig {
+    config_with_reducer(saving_directory, "umap")
+}
+
+/// The same, with the dimensionality reduction of both niche sub-sections set
+/// to `reducer` — `none` sends the features straight to the clusterer.
+fn config_with_reducer(saving_directory: &str, reducer: &str) -> RawConfig {
     let yaml = format!(
         "\
 Tysserand:
@@ -107,7 +140,7 @@ Niche Analysis:
   Y coordinates column for niches: Y_position
   CPU: 4
   Aggregated nodes:
-    reducer_type: umap
+    reducer_type: {reducer}
     dim_clust: 2
     n_neighbors: 10
     metric: euclidean
@@ -122,7 +155,7 @@ Niche Analysis:
     stat_funcs: np.mean,np.std
     stat_names: [mean, std]
   Per sample:
-    reducer_type: umap
+    reducer_type: {reducer}
     dim_clust: 2
     n_neighbors: 10
     metric: euclidean
@@ -407,6 +440,72 @@ fn niche_analysis_writes_results_and_labels_the_cells() {
         assert_eq!(niches.len(), 36);
         assert!(niches.iter().all(|v| v.is_finite() && *v >= 0.0));
     }
+}
+
+/// The reduction is optional. With `reducer_type: none` the run goes straight
+/// from the aggregated features to the clustering, and still labels every cell.
+#[test]
+fn niche_analysis_runs_without_a_reduction() {
+    let workspace = Workspace::new(3, 36, &["A", "B", "C"]);
+    let configuration = config_with_reducer("no reduction", "none");
+    tysserand_network(
+        &configuration,
+        workspace.root(),
+        &SilentProgress,
+        &NoFigures,
+    )
+    .unwrap();
+    niche_analysis(
+        &configuration,
+        workspace.root(),
+        &SilentProgress,
+        &NoFigures,
+    )
+    .unwrap();
+
+    let save_dir = workspace
+        .root()
+        .join("Niche_Analysis/Aggregation/no reduction");
+    assert!(save_dir.is_dir(), "{save_dir:?} was not created");
+    assert!(save_dir.join("parameters.json").is_file());
+
+    let nodes = find_sample(workspace.net_dir(), "parquet", "patient", Some("sample")).unwrap();
+    for path in &nodes {
+        let table = read_table(path, Extension::Parquet).unwrap();
+        assert!(table.has_column("niches"), "{path:?} has no niches column");
+        let niches = table.f64_column("niches").unwrap();
+        assert_eq!(niches.len(), 36);
+        assert!(niches.iter().all(|v| v.is_finite() && *v >= 0.0));
+    }
+}
+
+/// The scatter of the clusters is a picture of the *projection*. Without one
+/// there is no plane to draw it in — the first two feature columns are two
+/// phenotypes, not two axes — so the figure is skipped rather than faked.
+#[test]
+fn the_cluster_scatter_is_drawn_only_when_there_is_a_projection() {
+    let workspace = Workspace::new(2, 25, &["A", "B"]);
+
+    let reduced = CountingFigures::default();
+    let configuration = config_with_reducer("reduced", "umap");
+    tysserand_network(&configuration, workspace.root(), &SilentProgress, &reduced).unwrap();
+    niche_analysis(&configuration, workspace.root(), &SilentProgress, &reduced).unwrap();
+    assert_eq!(reduced.embeddings(), 1, "the projection was not drawn");
+
+    let unreduced = CountingFigures::default();
+    let configuration = config_with_reducer("unreduced", "none");
+    niche_analysis(
+        &configuration,
+        workspace.root(),
+        &SilentProgress,
+        &unreduced,
+    )
+    .unwrap();
+    assert_eq!(
+        unreduced.embeddings(),
+        0,
+        "there is no projection to scatter"
+    );
 }
 
 /// The aggregated features are cached so a re-run does not recompute them,

@@ -26,11 +26,11 @@ pub fn show(app: &mut MosnaApp, ui: &mut egui::Ui) {
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     let button = egui::Button::new(
                         egui::RichText::new("📁 Set working dir")
-                            .color(theme::BACKGROUND)
+                            .color(theme::TEXT_INVERSE)
                             .size(theme::size::LABEL)
                             .strong(),
                     )
-                    .fill(theme::GOLD)
+                    .fill(theme::ACCENT)
                     .corner_radius(egui::CornerRadius::same(4));
 
                     if ui

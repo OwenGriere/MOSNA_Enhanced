@@ -32,7 +32,9 @@ pub fn fixed_options(key: &str) -> Option<&'static [&'static str]> {
     Some(match key {
         "Niches method" => &["NAS", "SCAN-IT"],
         "Processing method" => &["Aggregated nodes", "Per sample"],
-        "reducer_type" => &["umap"],
+        // `none` clusters the aggregated features directly. It is second so
+        // that a sub-section without the key still defaults to umap.
+        "reducer_type" => &["umap", "none"],
         "clusterer_type" => &["leiden", "ecg", "spectral", "gmm", "hdbscan"],
         "order" => &["1", "2"],
         "metric" => &["manhattan", "euclidean", "cosine"],
@@ -51,12 +53,12 @@ pub fn tooltip(key: &str) -> Option<&'static str> {
         "stat_funcs" => "Statistical functions applied to neighbor features (e.g. np.mean, np.std).",
         "stat_names" => "Names associated with stat_funcs, used to label output columns.",
         "clusterer_type" => "Clustering algorithm used to define niches: gmm, leiden, hdbscan, spectral, ecg.",
-        "metric" => "Distance metric for comparing observations: euclidean, manhattan or cosine.",
+        "metric" => "Distance metric the reducer compares observations with: euclidean, manhattan or cosine.\nUnused when reducer_type is none.",
         "normalize" => "Normalization applied to niche features before the model:\ntotal, niche, obs, clr, niche&obs, all.",
-        "reducer_type" => "Dimensionality reduction applied before clustering (currently: umap).",
-        "n_neighbors" => "Number of neighbors used to build the local graph structure (UMAP / KNN).",
-        "min_dist" => "UMAP parameter: how tightly points can cluster in reduced space.\nSmaller = tighter groups.",
-        "dim_clust" => "Number of dimensions kept after reduction, used for clustering.",
+        "reducer_type" => "Dimensionality reduction applied before clustering.\numap: project the features first. none: cluster the aggregated features directly, which greys out the settings below.",
+        "n_neighbors" => "Number of neighbors used to build the local graph structure (UMAP / KNN).\nAlso caps k_cluster, so it still applies without a reduction.",
+        "min_dist" => "UMAP parameter: how tightly points can cluster in reduced space.\nSmaller = tighter groups. Unused when reducer_type is none.",
+        "dim_clust" => "Number of dimensions kept after reduction, used for clustering.\nUnused when reducer_type is none.",
         "k_cluster" => "Neighbors used during the clustering graph construction step.",
         "n_clusters" => "Number of clusters to produce (gmm, spectral).",
         "resolution" => "Leiden granularity. Lower → fewer clusters, higher → more clusters.",
@@ -309,9 +311,15 @@ fn render(value: &Value) -> String {
 fn parse_text(key: &str, raw: &str) -> Value {
     let text = raw.trim();
 
-    // `assert_params` requires `order` to be a string; coercing `'1'` to the
-    // integer 1 would make the configuration invalid.
-    if key == "order" {
+    // Two keys whose valid values collide with the ladder below, and which
+    // `assert_params` requires to be strings.
+    //
+    // `order` is `'1'`, which would become the integer 1. `reducer_type` is
+    // `none`, the literal name of "no reduction", which the null rule would
+    // turn into YAML's null — the panel would offer a choice and then write a
+    // document its own validator rejects. Both are values the interface itself
+    // puts in the box, so neither can be left to the coercion.
+    if matches!(key, "order" | "reducer_type") {
         return Value::String(text.to_string());
     }
 
@@ -353,6 +361,19 @@ mod tests {
         assert_eq!(yes.choice(), Some("True"));
         let no = Field::for_key("Plot Network", &Value::Bool(false));
         assert_eq!(no.choice(), Some("False"));
+    }
+
+    /// The reduction can be turned off from the panel, not only by hand in the
+    /// configuration file.
+    #[test]
+    fn the_reducer_can_be_set_to_none() {
+        let options = fixed_options("reducer_type").unwrap();
+        assert!(options.contains(&"none"), "{options:?}");
+        assert_eq!(options[0], "umap", "the default must stay first");
+
+        let field = Field::for_key("reducer_type", &Value::String("none".into()));
+        assert_eq!(field.choice(), Some("none"));
+        assert_eq!(field.value(), Value::String("none".into()));
     }
 
     #[test]

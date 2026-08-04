@@ -371,6 +371,16 @@ impl StreamKind {
 }
 
 impl eframe::App for MosnaApp {
+    /// What the window is cleared to before anything is drawn on it.
+    ///
+    /// eframe's default is a near-black, which the panels used to cover
+    /// invisibly. Against a silver interface it shows — at start-up, and along
+    /// the edge while the window is being resized — so the page colour is
+    /// stated here instead.
+    fn clear_color(&self, _visuals: &egui::Visuals) -> [f32; 4] {
+        theme::BACKGROUND.to_normalized_gamma_f32()
+    }
+
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         let ctx = ui.ctx().clone();
         theme::apply(&ctx);

@@ -2,7 +2,7 @@
 //!
 //! Reproduces `GUI_MOSNA.py` — the same three panels in the same splitter, the
 //! same tabs, the same widget for every configuration key, the same buttons —
-//! on `egui` instead of PySide6, and in a black-and-gold palette.
+//! on `egui` instead of PySide6, and in a slate-and-teal palette.
 //!
 //! The crate is split so that everything except the drawing is testable:
 //!

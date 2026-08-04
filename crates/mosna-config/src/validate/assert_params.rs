@@ -170,7 +170,10 @@ fn assert_niche_subsection(c: &Value) -> Result<()> {
 
     require_int(c, "n_clusters", "n_clusters must be int")?;
     require_str(c, "reducer_type", "reducer type must be str")?;
-    require_one_of(c, "reducer_type", &["umap"])?;
+    // `none` skips the reduction and clusters the aggregated features
+    // themselves; it is the only other reducer, because it is the only other
+    // one anything implements.
+    require_one_of(c, "reducer_type", &["umap", "none"])?;
 
     require_str(c, "metric", "metric must be str")?;
     require_one_of(c, "metric", &["manhattan", "euclidean", "cosine"])?;
@@ -317,13 +320,40 @@ Number of shuffle: 500
         assert!(!is_valid_folder_name(""));
     }
 
+    /// Reduction is optional. `none` is a real choice, not a typo: the
+    /// aggregated features go straight to the clusterer.
+    #[test]
+    fn niche_subsection_accepts_a_run_without_reduction() {
+        let yaml = niche_subsection_yaml().replace("reducer_type: umap", "reducer_type: none");
+        assert_niche_subsection(&value(&yaml)).unwrap();
+    }
+
+    /// Optional is not the same as unchecked: a reducer nobody implements is
+    /// still refused, so a misspelling cannot silently disable the reduction.
+    #[test]
+    fn niche_subsection_rejects_an_unknown_reducer() {
+        let yaml = niche_subsection_yaml().replace("reducer_type: umap", "reducer_type: pca");
+        let err = assert_niche_subsection(&value(&yaml)).unwrap_err();
+        assert!(
+            err.to_string().contains("reducer_type must be one of"),
+            "{err}"
+        );
+    }
+
     #[test]
     fn niche_subsection_rejects_an_unknown_clusterer() {
-        let yaml = "\
+        let yaml = niche_subsection_yaml().replace("clusterer_type: gmm", "clusterer_type: kmeans");
+        let err = assert_niche_subsection(&value(&yaml)).unwrap_err();
+        assert!(err.to_string().contains("clusterer_type must be one of"));
+    }
+
+    /// A valid sub-section, for tests that break exactly one key of it.
+    fn niche_subsection_yaml() -> String {
+        "\
 order: '1'
 stat_funcs: np.mean,np.std
 stat_names: [mean, std]
-clusterer_type: kmeans
+clusterer_type: gmm
 n_clusters: 6
 reducer_type: umap
 metric: manhattan
@@ -334,8 +364,7 @@ dim_clust: 2
 min_cluster_size: 100
 k_cluster: 20
 normalize: all
-";
-        let err = assert_niche_subsection(&value(yaml)).unwrap_err();
-        assert!(err.to_string().contains("clusterer_type must be one of"));
+"
+        .to_string()
     }
 }

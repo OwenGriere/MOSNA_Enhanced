@@ -1,41 +1,64 @@
-//! The black-and-gold palette.
+//! The silver-and-gold palette.
+//!
+//! Silver carries the interface — the page, the panels, the boxes, the rules —
+//! and gold is spent only on what the user is meant to act on or has already
+//! chosen: the panel titles, the primary buttons, the selected row, the running
+//! step. Everything that used to be gold merely to look expensive (group-box
+//! titles, table headers, hover outlines, the manual's code blocks) is silver
+//! or graphite, so the accent still means something when it appears.
 
 use egui::{Color32, CornerRadius, Stroke, Vec2, Visuals};
 
-/// Page background, near-black with a warm cast so gold sits on it comfortably.
-pub const BACKGROUND: Color32 = Color32::from_rgb(0x0E, 0x0D, 0x0B);
+/// Page background: the darkest silver, so the panels sitting on it read as
+/// raised rather than as holes.
+pub const BACKGROUND: Color32 = Color32::from_rgb(0xC4, 0xC8, 0xCD);
 /// Panel background, one step lighter than the page.
-pub const PANEL: Color32 = Color32::from_rgb(0x16, 0x15, 0x12);
-/// Raised surfaces: group boxes, table rows, the log view.
-pub const SURFACE: Color32 = Color32::from_rgb(0x1E, 0x1C, 0x18);
+pub const PANEL: Color32 = Color32::from_rgb(0xD8, 0xDB, 0xDF);
+/// Raised surfaces: group boxes, table rows, the manual's navigation.
+pub const SURFACE: Color32 = Color32::from_rgb(0xE7, 0xE9, 0xEC);
 /// Hovered surface.
-pub const SURFACE_HOVER: Color32 = Color32::from_rgb(0x2A, 0x27, 0x20);
+pub const SURFACE_HOVER: Color32 = Color32::from_rgb(0xF2, 0xF3, 0xF5);
+/// What the user types into, and what the program writes back: text fields, the
+/// log, the manual's code blocks. Near-white, so a field is legible as a field.
+pub const FIELD: Color32 = Color32::from_rgb(0xF7, 0xF8, 0xFA);
 /// Hairlines and separators.
-pub const BORDER: Color32 = Color32::from_rgb(0x35, 0x31, 0x27);
+pub const BORDER: Color32 = Color32::from_rgb(0xA5, 0xAB, 0xB2);
+/// Darkened silver, for the emphasis that does not deserve the accent: group
+/// titles, the outline under the pointer, the step that only clears files.
+pub const STEEL: Color32 = Color32::from_rgb(0x6D, 0x74, 0x7C);
 
-/// The accent: a classic metallic gold.
-pub const GOLD: Color32 = Color32::from_rgb(0xD4, 0xAF, 0x37);
-/// A brighter gold, for the element under the pointer.
-pub const GOLD_BRIGHT: Color32 = Color32::from_rgb(0xF0, 0xC7, 0x5E);
-/// A muted gold, for borders and inactive accents.
-pub const GOLD_DIM: Color32 = Color32::from_rgb(0x8A, 0x73, 0x26);
+/// The accent: an antique gold, dark enough to be read on silver.
+///
+/// A metallic gold — the one in the logo — is barely two to one against these
+/// backgrounds, so it is reserved for *fills*, where the text on top provides
+/// the contrast instead. See [`ACCENT_SOFT`].
+pub const ACCENT: Color32 = Color32::from_rgb(0x75, 0x59, 0x0C);
+/// A deeper gold, for the element under the pointer or already chosen: on a
+/// light background emphasis means more contrast, not more brightness.
+pub const ACCENT_STRONG: Color32 = Color32::from_rgb(0x5E, 0x47, 0x08);
+/// The metallic gold, used only as a fill — a pressed control, a selection,
+/// the progress bar — with dark text over it.
+pub const ACCENT_SOFT: Color32 = Color32::from_rgb(0xC7, 0xA5, 0x4A);
 
-/// Body text: warm off-white rather than pure white, which glares on black.
-pub const TEXT: Color32 = Color32::from_rgb(0xE8, 0xE2, 0xD4);
+/// Body text: near-black with a cool cast, matching the silver.
+pub const TEXT: Color32 = Color32::from_rgb(0x1B, 0x1F, 0x23);
 /// Secondary text.
-pub const TEXT_MUTED: Color32 = Color32::from_rgb(0x9A, 0x93, 0x82);
+pub const TEXT_MUTED: Color32 = Color32::from_rgb(0x5B, 0x62, 0x6A);
+/// Text drawn on a dark fill — a bronze step button, a failed run.
+pub const TEXT_INVERSE: Color32 = Color32::from_rgb(0xF4, 0xF6, 0xF8);
 
 /// Log colours.
 ///
 /// Error, warning and success keep their conventional hues: they carry meaning
-/// that a gold monochrome would destroy, and a user scanning a log needs red to
-/// mean red. Information and progress, which have no conventional colour, are
-/// moved onto the gold axis — those were blue and purple in the Python.
-pub const LOG_ERROR: Color32 = Color32::from_rgb(0xE5, 0x5B, 0x4C);
-pub const LOG_WARNING: Color32 = Color32::from_rgb(0xE0, 0xA8, 0x30);
-pub const LOG_SUCCESS: Color32 = Color32::from_rgb(0x6B, 0xC2, 0x8A);
-pub const LOG_INFO: Color32 = GOLD;
-pub const LOG_PROGRESS: Color32 = GOLD_DIM;
+/// that a monochrome would destroy, and a user scanning a log needs red to mean
+/// red. They are darkened from the values a dark theme wants, because the log
+/// is now near-white. Information and progress, which have no conventional
+/// colour, are on the accent axis — those were blue and purple in the Python.
+pub const LOG_ERROR: Color32 = Color32::from_rgb(0xA3, 0x24, 0x1B);
+pub const LOG_WARNING: Color32 = Color32::from_rgb(0x8A, 0x5A, 0x05);
+pub const LOG_SUCCESS: Color32 = Color32::from_rgb(0x1D, 0x6B, 0x3F);
+pub const LOG_INFO: Color32 = ACCENT;
+pub const LOG_PROGRESS: Color32 = ACCENT_STRONG;
 pub const LOG_PLAIN: Color32 = TEXT_MUTED;
 
 /// The colour of each step's button and of the progress bar while it runs.
@@ -44,12 +67,13 @@ pub const LOG_PLAIN: Color32 = TEXT_MUTED;
 /// maroon) so that the progress bar told you which step was running. That cue
 /// is kept, but expressed as a progression through the gold range — bronze,
 /// gold, champagne — so it stays on palette while remaining distinguishable.
-pub const STEP_TYSSERAND: Color32 = Color32::from_rgb(0x8C, 0x6D, 0x1F);
-pub const STEP_ASSORTATIVITY: Color32 = Color32::from_rgb(0xB8, 0x86, 0x0B);
-pub const STEP_NICHES: Color32 = Color32::from_rgb(0xE3, 0xC0, 0x5C);
-pub const STEP_CLEAR: Color32 = Color32::from_rgb(0x4A, 0x43, 0x33);
+/// Clearing is not an analysis, so it stays off the accent, on graphite.
+pub const STEP_TYSSERAND: Color32 = Color32::from_rgb(0x6B, 0x52, 0x0C);
+pub const STEP_ASSORTATIVITY: Color32 = Color32::from_rgb(0xA8, 0x86, 0x2A);
+pub const STEP_NICHES: Color32 = Color32::from_rgb(0xDC, 0xC2, 0x72);
+pub const STEP_CLEAR: Color32 = Color32::from_rgb(0x4E, 0x55, 0x5C);
 /// A failed run turns the progress bar this colour.
-pub const STEP_FAILED: Color32 = Color32::from_rgb(0x8B, 0x2E, 0x24);
+pub const STEP_FAILED: Color32 = Color32::from_rgb(0xA3, 0x24, 0x1B);
 
 /// The sizing scale.
 ///
@@ -60,8 +84,14 @@ pub const STEP_FAILED: Color32 = Color32::from_rgb(0x8B, 0x2E, 0x24);
 /// mistake.
 pub mod size {
     /// The title of a page of the manual.
-    pub const PAGE_TITLE: f32 = 26.0;
-    /// A panel header, or a section title in the manual.
+    pub const PAGE_TITLE: f32 = 28.0;
+    /// The name of a panel — Browser, Viewer, Parameters.
+    ///
+    /// Its own step rather than the section title's: these three name the whole
+    /// column under them, and at the section size they read as one heading
+    /// among the many inside the panel instead of as the panel's own title.
+    pub const PANEL_TITLE: f32 = 24.0;
+    /// A section title in the manual.
     pub const SECTION_TITLE: f32 = 20.0;
     /// A sub-heading inside a page, or a group box's title.
     pub const HEADING: f32 = 17.0;
@@ -79,9 +109,10 @@ pub mod size {
     /// Returned as data rather than compared constant against constant, so the
     /// property being checked is "this hierarchy descends" and not "26 is more
     /// than 20" — which the compiler already knows and no test needs to say.
-    pub fn hierarchy() -> [(&'static str, f32); 6] {
+    pub fn hierarchy() -> [(&'static str, f32); 7] {
         [
             ("PAGE_TITLE", PAGE_TITLE),
+            ("PANEL_TITLE", PANEL_TITLE),
             ("SECTION_TITLE", SECTION_TITLE),
             ("HEADING", HEADING),
             ("BODY", BODY),
@@ -92,9 +123,9 @@ pub mod size {
 
     /// Every step, including the monospace size, which sits outside the
     /// hierarchy: code is not a level of emphasis.
-    pub fn all() -> [(&'static str, f32); 7] {
-        let [a, b, c, d, e, f] = hierarchy();
-        [a, b, c, d, e, f, ("MONO", MONO)]
+    pub fn all() -> [(&'static str, f32); 8] {
+        let [a, b, c, d, e, f, g] = hierarchy();
+        [a, b, c, d, e, f, g, ("MONO", MONO)]
     }
 }
 
@@ -160,22 +191,23 @@ const RADIUS: u8 = 4;
 
 /// Install the palette on a context.
 pub fn apply(ctx: &egui::Context) {
-    let mut visuals = Visuals::dark();
+    let mut visuals = Visuals::light();
 
     visuals.override_text_color = Some(TEXT);
     visuals.panel_fill = PANEL;
-    visuals.window_fill = BACKGROUND;
-    visuals.extreme_bg_color = BACKGROUND;
+    visuals.window_fill = SURFACE;
+    visuals.extreme_bg_color = FIELD;
     visuals.faint_bg_color = SURFACE;
     visuals.window_stroke = Stroke::new(1.0, BORDER);
-    visuals.selection.bg_fill = GOLD_DIM;
-    visuals.selection.stroke = Stroke::new(1.0, GOLD_BRIGHT);
-    visuals.hyperlink_color = GOLD_BRIGHT;
+    visuals.selection.bg_fill = ACCENT_SOFT;
+    visuals.selection.stroke = Stroke::new(1.0, ACCENT_STRONG);
+    visuals.hyperlink_color = ACCENT_STRONG;
 
     let rounding = CornerRadius::same(RADIUS);
 
-    // Idle controls stay quiet; the gold appears on interaction, so the eye is
-    // drawn to what it can act on rather than to everything at once.
+    // Idle controls stay quiet, and the pointer only lifts them a shade of
+    // silver: the gold is kept for the control being *pressed*, and for what is
+    // already chosen, so it stays rare enough to mean something.
     visuals.widgets.noninteractive.bg_fill = PANEL;
     visuals.widgets.noninteractive.weak_bg_fill = PANEL;
     visuals.widgets.noninteractive.bg_stroke = Stroke::new(1.0, BORDER);
@@ -190,18 +222,19 @@ pub fn apply(ctx: &egui::Context) {
 
     visuals.widgets.hovered.bg_fill = SURFACE_HOVER;
     visuals.widgets.hovered.weak_bg_fill = SURFACE_HOVER;
-    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, GOLD_DIM);
-    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, GOLD_BRIGHT);
+    visuals.widgets.hovered.bg_stroke = Stroke::new(1.0, STEEL);
+    visuals.widgets.hovered.fg_stroke = Stroke::new(1.0, TEXT);
     visuals.widgets.hovered.corner_radius = rounding;
 
-    visuals.widgets.active.bg_fill = GOLD_DIM;
-    visuals.widgets.active.weak_bg_fill = GOLD_DIM;
-    visuals.widgets.active.bg_stroke = Stroke::new(1.0, GOLD);
-    visuals.widgets.active.fg_stroke = Stroke::new(1.0, BACKGROUND);
+    visuals.widgets.active.bg_fill = ACCENT_SOFT;
+    visuals.widgets.active.weak_bg_fill = ACCENT_SOFT;
+    visuals.widgets.active.bg_stroke = Stroke::new(1.0, ACCENT);
+    // Dark text on the metallic gold: the gold is the fill, not the writing.
+    visuals.widgets.active.fg_stroke = Stroke::new(1.0, TEXT);
     visuals.widgets.active.corner_radius = rounding;
 
     visuals.widgets.open.bg_fill = SURFACE;
-    visuals.widgets.open.bg_stroke = Stroke::new(1.0, GOLD_DIM);
+    visuals.widgets.open.bg_stroke = Stroke::new(1.0, STEEL);
     visuals.widgets.open.fg_stroke = Stroke::new(1.0, TEXT);
     visuals.widgets.open.corner_radius = rounding;
 
@@ -259,6 +292,41 @@ pub fn log_colour(kind: crate::model::log::LogKind) -> Color32 {
     }
 }
 
+/// Perceived luminance, on the WCAG definition.
+fn luminance(colour: Color32) -> f32 {
+    let channel = |v: u8| {
+        let v = v as f32 / 255.0;
+        if v <= 0.04045 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * channel(colour.r()) + 0.7152 * channel(colour.g()) + 0.0722 * channel(colour.b())
+}
+
+/// Contrast ratio between two colours, 1:1 to 21:1.
+fn contrast(a: Color32, b: Color32) -> f32 {
+    let (x, y) = (luminance(a), luminance(b));
+    let (high, low) = if x > y { (x, y) } else { (y, x) };
+    (high + 0.05) / (low + 0.05)
+}
+
+/// The caption colour for a coloured fill: whichever of the two text colours is
+/// easier to read on it.
+///
+/// Measured rather than guessed from the sum of the channels, which is what
+/// this used to do: the step colours span bronze to champagne, and the sum puts
+/// the boundary in the middle of that range, where the answer is genuinely
+/// close and the cheap rule gets it wrong.
+pub fn text_on(fill: Color32) -> Color32 {
+    if contrast(TEXT, fill) >= contrast(TEXT_INVERSE, fill) {
+        TEXT
+    } else {
+        TEXT_INVERSE
+    }
+}
+
 /// The colour of a step's button and progress bar.
 pub fn step_colour(step: crate::model::runner::Step) -> Color32 {
     use crate::model::runner::Step;
@@ -276,33 +344,8 @@ mod tests {
     use crate::model::log::LogKind;
     use crate::model::runner::Step;
 
-    /// Perceived luminance, for contrast checks.
-    fn luminance(colour: Color32) -> f32 {
-        let channel = |v: u8| {
-            let v = v as f32 / 255.0;
-            if v <= 0.04045 {
-                v / 12.92
-            } else {
-                ((v + 0.055) / 1.055).powf(2.4)
-            }
-        };
-        0.2126 * channel(colour.r()) + 0.7152 * channel(colour.g()) + 0.0722 * channel(colour.b())
-    }
-
-    fn contrast(a: Color32, b: Color32) -> f32 {
-        let (high, low) = {
-            let (x, y) = (luminance(a), luminance(b));
-            if x > y {
-                (x, y)
-            } else {
-                (y, x)
-            }
-        };
-        (high + 0.05) / (low + 0.05)
-    }
-
     /// Body text on the panel must clear the 4.5:1 the accessibility guidelines
-    /// ask for; a dark theme is easy to get wrong here.
+    /// ask for; a low-contrast theme is easy to get wrong here.
     #[test]
     fn body_text_is_readable_on_the_panel() {
         assert!(
@@ -315,27 +358,120 @@ mod tests {
     #[test]
     fn the_accent_is_readable_on_the_panel() {
         assert!(
-            contrast(GOLD, PANEL) >= 4.5,
-            "gold on panel is only {:.1}:1",
-            contrast(GOLD, PANEL)
+            contrast(ACCENT, PANEL) >= 4.5,
+            "the accent on panel is only {:.1}:1",
+            contrast(ACCENT, PANEL)
         );
     }
 
-    /// Text drawn on an active, gold-filled control must be dark.
+    /// The metallic gold is a fill, so what has to be legible is the writing on
+    /// top of it.
     #[test]
     fn text_on_a_pressed_control_stays_legible() {
-        assert!(contrast(BACKGROUND, GOLD_DIM) >= 3.0);
+        assert!(
+            contrast(TEXT, ACCENT_SOFT) >= 4.5,
+            "text on a pressed control is only {:.1}:1",
+            contrast(TEXT, ACCENT_SOFT)
+        );
+    }
+
+    /// Every fill the interface picks a caption colour for must end up with a
+    /// readable one — the step buttons span bronze to champagne, and a rule
+    /// that got the middle wrong would put pale text on pale gold.
+    #[test]
+    fn every_fill_has_a_readable_caption() {
+        let fills = [
+            STEP_TYSSERAND,
+            STEP_ASSORTATIVITY,
+            STEP_NICHES,
+            STEP_CLEAR,
+            STEP_FAILED,
+            ACCENT,
+            ACCENT_SOFT,
+        ];
+        for fill in fills {
+            let ratio = contrast(text_on(fill), fill);
+            assert!(ratio >= 4.0, "{fill:?} gets a {ratio:.1}:1 caption");
+        }
+    }
+
+    /// Silver has to carry more of the interface than gold does, or the accent
+    /// stops being an accent. The chrome — page, panels, boxes, rules, the
+    /// emphasis that is not the accent — is neutral: no channel apart from the
+    /// others by more than a hair.
+    #[test]
+    fn the_chrome_is_silver_not_gold() {
+        for colour in [
+            BACKGROUND,
+            PANEL,
+            SURFACE,
+            SURFACE_HOVER,
+            FIELD,
+            BORDER,
+            STEEL,
+            TEXT,
+            TEXT_MUTED,
+            TEXT_INVERSE,
+        ] {
+            let (r, g, b) = (colour.r() as i32, colour.g() as i32, colour.b() as i32);
+            let spread = r.max(g).max(b) - r.min(g).min(b);
+            assert!(spread <= 16, "{colour:?} is tinted, not silver");
+        }
+    }
+
+    /// A colour in CIE L\*a\*b\*, where a Euclidean distance approximates how
+    /// different two colours *look*.
+    fn lab(colour: Color32) -> [f32; 3] {
+        let linear = |v: u8| {
+            let v = v as f32 / 255.0;
+            if v <= 0.04045 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        let (r, g, b) = (linear(colour.r()), linear(colour.g()), linear(colour.b()));
+
+        // Through XYZ, normalised to the D65 white point.
+        let x = (0.4124 * r + 0.3576 * g + 0.1805 * b) / 0.95047;
+        let y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+        let z = (0.0193 * r + 0.1192 * g + 0.9505 * b) / 1.08883;
+
+        let f = |t: f32| {
+            if t > 0.008856 {
+                t.cbrt()
+            } else {
+                7.787 * t + 16.0 / 116.0
+            }
+        };
+        let (fx, fy, fz) = (f(x), f(y), f(z));
+        [116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz)]
+    }
+
+    /// How different two colours look, on the CIE76 scale: about 2.3 is the
+    /// smallest difference an eye can see, and 20 is unmistakable.
+    fn perceptual_distance(a: Color32, b: Color32) -> f32 {
+        let (a, b) = (lab(a), lab(b));
+        (0..3).map(|i| (a[i] - b[i]).powi(2)).sum::<f32>().sqrt()
     }
 
     /// The four steps must stay distinguishable, or the progress bar no longer
     /// tells the user which step is running.
+    ///
+    /// Measured perceptually rather than by contrast ratio, which knows only
+    /// about lightness: it passed a bronze and a gold that were plainly the
+    /// same button twice, and would fail the bronze against the graphite that
+    /// nobody could confuse it with.
     #[test]
     fn the_step_colours_are_distinguishable() {
         let steps = Step::all();
         for (i, a) in steps.iter().enumerate() {
             for b in steps.iter().skip(i + 1) {
-                let ratio = contrast(step_colour(*a), step_colour(*b));
-                assert!(ratio >= 1.3, "{a:?} and {b:?} are too close: {ratio:.2}:1");
+                let distance = perceptual_distance(step_colour(*a), step_colour(*b));
+                assert!(
+                    distance >= 20.0,
+                    "{a:?} and {b:?} are too close: {distance:.0}"
+                );
             }
         }
     }
@@ -349,10 +485,10 @@ mod tests {
         assert_eq!(log_colour(LogKind::Plain), LOG_PLAIN);
     }
 
-    /// Information and progress sit on the gold axis: red channel highest,
+    /// Information and progress sit on the accent axis: red channel highest,
     /// blue channel lowest.
     #[test]
-    fn informational_colours_are_gold() {
+    fn informational_colours_are_on_the_accent_axis() {
         for colour in [LOG_INFO, LOG_PROGRESS] {
             assert!(
                 colour.r() > colour.b() && colour.g() > colour.b(),
@@ -361,6 +497,7 @@ mod tests {
         }
     }
 
+    /// The log is drawn on the field colour, not on the panel.
     #[test]
     fn every_log_line_has_a_colour() {
         for kind in [
@@ -372,7 +509,7 @@ mod tests {
             LogKind::Plain,
         ] {
             let colour = log_colour(kind);
-            assert!(contrast(colour, SURFACE) >= 3.0, "{kind:?} is hard to read");
+            assert!(contrast(colour, FIELD) >= 4.5, "{kind:?} is hard to read");
         }
     }
 }

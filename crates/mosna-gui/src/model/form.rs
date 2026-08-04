@@ -144,6 +144,21 @@ impl Form {
         self.set_text(section, tab, "clusterer_type", algorithm);
     }
 
+    /// Choose the dimensionality reduction of a niche sub-section, `none`
+    /// included.
+    pub fn set_reducer(&mut self, section: &str, tab: &str, reducer: &str) {
+        self.set_text(section, tab, "reducer_type", reducer);
+    }
+
+    /// Re-apply the conditional enabling after the panel changed a field in
+    /// place.
+    ///
+    /// The panel edits the field it drew directly, so nothing here ran; the two
+    /// pickers that decide what the rest of the tab is for have to say so.
+    pub fn refresh(&mut self) {
+        self.refresh_enablement();
+    }
+
     /// Whether a field is currently editable.
     pub fn is_enabled(&self, section: &str, tab: &str, key: &str) -> bool {
         self.field(section, tab, key)
@@ -182,32 +197,52 @@ impl Form {
         }
     }
 
-    /// Grey out the parameters the chosen algorithm does not use.
+    /// Grey out the parameters the chosen algorithms do not use.
     ///
     /// Port of `update_clustering_fields`: `resolution` belongs to leiden,
     /// `n_clusters` to gmm and spectral, `min_cluster_size` to hdbscan. Leaving
     /// them all editable would invite the user to set something with no effect.
+    ///
+    /// The reduction picker does the same for its own box. `dim_clust`,
+    /// `min_dist` and `metric` are read by the reducer alone, so
+    /// `reducer_type: none` retires them. `n_neighbors` is not: it also caps
+    /// leiden's graph degree through `effective_k_cluster`, so it stays
+    /// editable with no reducer at all.
+    ///
+    /// Each rule is neutral when its own picker is absent, so a tab carrying
+    /// only one of the two keeps everything the other governs.
     fn refresh_enablement(&mut self) {
         for section in &mut self.sections {
             for tab in &mut section.tabs {
-                let algorithm = tab
-                    .groups
-                    .iter()
-                    .flat_map(|g| g.fields.iter())
-                    .find(|f| f.key == "clusterer_type")
-                    .and_then(|f| f.choice())
-                    .map(str::to_string);
-
-                let Some(algorithm) = algorithm else {
-                    continue;
+                let chosen = |key: &str| {
+                    tab.groups
+                        .iter()
+                        .flat_map(|g| g.fields.iter())
+                        .find(|f| f.key == key)
+                        .and_then(|f| f.choice())
+                        .map(str::to_string)
                 };
+                let algorithm = chosen("clusterer_type");
+                let reducer = chosen("reducer_type");
+                if algorithm.is_none() && reducer.is_none() {
+                    continue;
+                }
+
+                let is = |picked: &Option<String>, wanted: &[&str]| {
+                    picked
+                        .as_deref()
+                        .map(|value| wanted.contains(&value))
+                        .unwrap_or(true)
+                };
+                let reduces = !matches!(reducer.as_deref(), Some("none"));
 
                 for group in &mut tab.groups {
                     for field in &mut group.fields {
                         field.enabled = match field.key.as_str() {
-                            "resolution" => algorithm == "leiden",
-                            "n_clusters" => algorithm == "gmm" || algorithm == "spectral",
-                            "min_cluster_size" => algorithm == "hdbscan",
+                            "resolution" => is(&algorithm, &["leiden"]),
+                            "n_clusters" => is(&algorithm, &["gmm", "spectral"]),
+                            "min_cluster_size" => is(&algorithm, &["hdbscan"]),
+                            "dim_clust" | "min_dist" | "metric" => reduces,
                             _ => true,
                         };
                     }
@@ -364,7 +399,10 @@ Niche Analysis:
   CPU: 8
   Aggregated nodes:
     reducer_type: umap
+    dim_clust: 2
+    n_neighbors: 20
     metric: cosine
+    min_dist: 0.0
     clusterer_type: leiden
     resolution: 0.05
     n_clusters: 6
@@ -417,6 +455,82 @@ Niche Analysis:
         assert!(!form.is_enabled("Niche Analysis", "Aggregated nodes", "n_clusters"));
 
         form.set_clusterer("Niche Analysis", "Aggregated nodes", "spectral");
+        assert!(form.is_enabled("Niche Analysis", "Aggregated nodes", "n_clusters"));
+        assert!(!form.is_enabled("Niche Analysis", "Aggregated nodes", "resolution"));
+    }
+
+    /// Turning the reduction off must grey out the settings that only the
+    /// reducer reads, or the panel invites the user to tune something the run
+    /// will never look at.
+    #[test]
+    fn no_reduction_greys_out_the_reduction_parameters() {
+        let mut form = form();
+        for key in ["dim_clust", "min_dist", "metric"] {
+            assert!(
+                form.is_enabled("Niche Analysis", "Aggregated nodes", key),
+                "`{key}` should start editable"
+            );
+        }
+
+        form.set_reducer("Niche Analysis", "Aggregated nodes", "none");
+        for key in ["dim_clust", "min_dist", "metric"] {
+            assert!(
+                !form.is_enabled("Niche Analysis", "Aggregated nodes", key),
+                "`{key}` is only read by the reducer"
+            );
+        }
+
+        // The picker itself has to stay live, or the choice could not be undone.
+        assert!(form.is_enabled("Niche Analysis", "Aggregated nodes", "reducer_type"));
+
+        form.set_reducer("Niche Analysis", "Aggregated nodes", "umap");
+        assert!(form.is_enabled("Niche Analysis", "Aggregated nodes", "dim_clust"));
+    }
+
+    /// Choosing no reduction must reach the file as the string `none`.
+    ///
+    /// The panel's own coercion reads `none` as "no value", so this used to be
+    /// written as YAML's null — a document the validator refuses for a choice
+    /// the panel offered.
+    #[test]
+    fn choosing_no_reduction_is_written_back_as_a_string() {
+        let original = RawConfig::from_yaml_str(SAMPLE).unwrap();
+        let mut form = Form::from_config(&original);
+        form.set_reducer("Niche Analysis", "Aggregated nodes", "none");
+
+        let mut updated = original.clone();
+        form.apply_to(&mut updated);
+
+        let aggregated = updated
+            .section("Niche Analysis")
+            .unwrap()
+            .get("Aggregated nodes")
+            .unwrap();
+        assert_eq!(
+            aggregated.get("reducer_type"),
+            Some(&Value::String("none".into())),
+            "`none` must stay the name of a reducer, not become a missing value"
+        );
+    }
+
+    /// `n_neighbors` is not the reducer's alone: `effective_k_cluster` caps
+    /// leiden's graph degree with it, so it stays editable without a reducer.
+    #[test]
+    fn no_reduction_leaves_the_shared_parameters_alone() {
+        let mut form = form();
+        form.set_reducer("Niche Analysis", "Aggregated nodes", "none");
+        assert!(form.is_enabled("Niche Analysis", "Aggregated nodes", "n_neighbors"));
+        assert!(form.is_enabled("Niche Analysis", "Aggregated nodes", "resolution"));
+        assert!(form.is_enabled("Niche Analysis", "Aggregated nodes", "clusterer_type"));
+    }
+
+    /// The two rules are independent: switching the reducer off must not
+    /// re-enable a clustering parameter the algorithm does not use.
+    #[test]
+    fn the_two_enablement_rules_do_not_interfere() {
+        let mut form = form();
+        form.set_clusterer("Niche Analysis", "Aggregated nodes", "gmm");
+        form.set_reducer("Niche Analysis", "Aggregated nodes", "none");
         assert!(form.is_enabled("Niche Analysis", "Aggregated nodes", "n_clusters"));
         assert!(!form.is_enabled("Niche Analysis", "Aggregated nodes", "resolution"));
     }

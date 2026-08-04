@@ -208,7 +208,7 @@ fn results(app: &mut MosnaApp, ui: &mut egui::Ui) {
                         for title in ["Patient", "Sample", "Nodes files", "Edges files"] {
                             ui.label(
                                 egui::RichText::new(title)
-                                    .color(theme::GOLD_DIM)
+                                    .color(theme::TEXT_MUTED)
                                     .size(theme::size::LABEL)
                                     .strong(),
                             );
@@ -220,7 +220,7 @@ fn results(app: &mut MosnaApp, ui: &mut egui::Ui) {
                             let paint = |text: &str| {
                                 let mut rich = egui::RichText::new(text).size(theme::size::LABEL);
                                 if selected {
-                                    rich = rich.color(theme::GOLD_BRIGHT).strong();
+                                    rich = rich.color(theme::ACCENT_STRONG).strong();
                                 }
                                 rich
                             };

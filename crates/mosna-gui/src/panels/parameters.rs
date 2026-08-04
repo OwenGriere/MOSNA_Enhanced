@@ -84,12 +84,10 @@ fn sections(app: &mut MosnaApp, ui: &mut egui::Ui) {
     ui.data_mut(|d| d.insert_temp(tab_id, tab_index));
     ui.add_space(4.0);
 
-    let section_name = names[section_index].clone();
-    let tab_name = tabs[tab_index].clone();
-
-    // The algorithm choice re-enables and disables other fields, so the whole
-    // tab is re-evaluated after the pass rather than during it.
-    let mut new_algorithm: Option<String> = None;
+    // The clusterer and the reducer both decide which other fields are of any
+    // use, so the whole tab is re-evaluated after the pass rather than during
+    // it — a field cannot be disabled while it is being drawn.
+    let mut choice_changed = false;
 
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
@@ -136,8 +134,8 @@ fn sections(app: &mut MosnaApp, ui: &mut egui::Ui) {
                             });
                             changed
                         });
-                        if changed && key == "clusterer_type" {
-                            new_algorithm = field.choice().map(str::to_string);
+                        if changed && matches!(key.as_str(), "clusterer_type" | "reducer_type") {
+                            choice_changed = true;
                         }
                         ui.add_space(4.0);
                     }
@@ -145,8 +143,8 @@ fn sections(app: &mut MosnaApp, ui: &mut egui::Ui) {
             }
         });
 
-    if let Some(algorithm) = new_algorithm {
-        app.form.set_clusterer(&section_name, &tab_name, &algorithm);
+    if choice_changed {
+        app.form.refresh();
     }
 }
 
@@ -299,10 +297,10 @@ fn actions(app: &mut MosnaApp, ui: &mut egui::Ui) {
         let save_width = row * 0.72;
         let save = egui::Button::new(
             egui::RichText::new("Save Config")
-                .color(theme::BACKGROUND)
+                .color(theme::TEXT_INVERSE)
                 .strong(),
         )
-        .fill(theme::GOLD)
+        .fill(theme::ACCENT)
         .corner_radius(egui::CornerRadius::same(4))
         .truncate();
         if ui.add_sized([save_width, 28.0], save).clicked() {
@@ -337,7 +335,7 @@ fn actions(app: &mut MosnaApp, ui: &mut egui::Ui) {
 fn tab_label(name: &str, selected: bool) -> egui::RichText {
     let text = egui::RichText::new(name).size(theme::size::LABEL);
     if selected {
-        text.color(theme::GOLD_BRIGHT).strong()
+        text.color(theme::ACCENT_STRONG).strong()
     } else {
         text.color(theme::TEXT_MUTED)
     }

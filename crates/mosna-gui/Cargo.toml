@@ -26,7 +26,13 @@ mosna-paths.workspace = true
 
 eframe = "0.35"
 egui = "0.35"
-egui_extras = { version = "0.35", features = ["image"] }
+# Two loaders, and both are needed to put a figure on the screen: `file` reads
+# the bytes behind the `file://` URI the viewer builds, `image` decodes them.
+# With only `image`, egui has nothing that answers for the scheme and reports
+# "No matching BytesLoader" at the moment the user opens the Images tab.
+egui_extras = { version = "0.35", features = ["image", "file"] }
+# Not used directly: it is the decoder `egui_extras/image` calls, and this is
+# where the formats the pipeline writes are turned on.
 image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
 rfd = "0.17"
 
