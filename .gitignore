@@ -23,8 +23,6 @@ Niche_Analysis/
 # Logs
 # ---------------------------------------------------------------------------
 *.log
-!PROGRESS.log
-
 .claude/
 .vscode/
 .idea/
