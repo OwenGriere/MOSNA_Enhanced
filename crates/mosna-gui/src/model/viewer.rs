@@ -12,9 +12,14 @@ pub struct AnalysisImages {
 }
 
 /// Everything the viewer can show.
+///
+/// Step 1's figures are not among them. Its only output was a picture of the
+/// network, and the Network tab draws the network itself — from the same
+/// files, at any zoom, with every attribute still readable at the pointer.
+/// Scanning `Tysserand_Network` to offer a flat copy of that would be offering
+/// the worse of the two.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct AnalysisImageSet {
-    pub tysserand: AnalysisImages,
     pub assortativity: AnalysisImages,
     pub niches: AnalysisImages,
 }
@@ -31,23 +36,9 @@ const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg"];
 /// tab is always empty. The correct directory is used here.
 pub fn collect_analysis_images(working_dir: &Path) -> AnalysisImageSet {
     AnalysisImageSet {
-        tysserand: collect_tysserand(&working_dir.join("Tysserand_Network")),
         assortativity: collect_assortativity(&working_dir.join("Assortativity")),
         niches: collect_niches(&working_dir.join("Niche_Analysis")),
     }
-}
-
-/// Step 1 writes one `net_{patient}-{sample}.png` per sample.
-fn collect_tysserand(folder: &Path) -> AnalysisImages {
-    let mut images = AnalysisImages::default();
-    for path in list_images(folder) {
-        match patient_of(&path, "net") {
-            Some(patient) => images.patients.entry(patient).or_default().push(path),
-            // A file that does not follow the convention is still worth showing.
-            None => images.global.push(path),
-        }
-    }
-    images
 }
 
 /// Step 2 writes cohort figures at the top level and one heatmap per sample
@@ -215,25 +206,17 @@ mod tests {
         std::fs::write(path, b"").unwrap();
     }
 
+    /// Step 1's figures are the Network tab's business now, and nothing here
+    /// should go looking for them — a gallery of them beside a tab that draws
+    /// the same networks live is two answers to one question.
     #[test]
-    fn network_figures_are_grouped_by_patient() {
+    fn step_ones_figures_are_not_collected() {
         let dir = tempfile::tempdir().unwrap();
         touch(dir.path().join("Tysserand_Network/net_1-1.png"));
-        touch(dir.path().join("Tysserand_Network/net_1-2.png"));
         touch(dir.path().join("Tysserand_Network/net_2-1.png"));
 
         let images = collect_analysis_images(dir.path());
-        assert_eq!(images.tysserand.patients["1"].len(), 2);
-        assert_eq!(images.tysserand.patients["2"].len(), 1);
-    }
-
-    #[test]
-    fn a_single_level_network_figure_is_grouped_too() {
-        let dir = tempfile::tempdir().unwrap();
-        touch(dir.path().join("Tysserand_Network/net_7.png"));
-
-        let images = collect_analysis_images(dir.path());
-        assert!(images.tysserand.patients.contains_key("7"));
+        assert_eq!(images, AnalysisImageSet::default());
     }
 
     #[test]
@@ -300,11 +283,11 @@ mod tests {
     #[test]
     fn listing_is_sorted_so_the_tabs_do_not_shuffle() {
         let dir = tempfile::tempdir().unwrap();
-        for name in ["net_3-1.png", "net_1-1.png", "net_2-1.png"] {
-            touch(dir.path().join("Tysserand_Network").join(name));
+        for name in ["heatmap_zscore_3-1.png", "heatmap_zscore_1-1.png"] {
+            touch(dir.path().join("Assortativity/assort_files").join(name));
         }
         let images = collect_analysis_images(dir.path());
-        let patients: Vec<&String> = images.tysserand.patients.keys().collect();
-        assert_eq!(patients, vec!["1", "2", "3"]);
+        let patients: Vec<&String> = images.assortativity.patients.keys().collect();
+        assert_eq!(patients, vec!["1", "3"]);
     }
 }

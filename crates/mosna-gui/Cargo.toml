@@ -21,6 +21,9 @@ regex.workspace = true
 serde_yaml.workspace = true
 
 mosna-config.workspace = true
+# For the colour maps: the interactive network is coloured by the same tables
+# as the figures, so a niche is the same colour in both.
+mosna-core.workspace = true
 mosna-io.workspace = true
 mosna-paths.workspace = true
 
@@ -31,9 +34,16 @@ egui = "0.35"
 # With only `image`, egui has nothing that answers for the scheme and reports
 # "No matching BytesLoader" at the moment the user opens the Images tab.
 egui_extras = { version = "0.35", features = ["image", "file"] }
-# Not used directly: it is the decoder `egui_extras/image` calls, and this is
-# where the formats the pipeline writes are turned on.
-image = { version = "0.25", default-features = false, features = ["png", "jpeg"] }
+# The decoder `egui_extras/image` calls, and the one the window icon is read
+# with. `png` and `jpeg` are the formats the pipeline writes; `ico` is for the
+# shipped logo, which may be a real icon file rather than the PNG it is today —
+# the same three `mosna-install` accepts, so the two cannot disagree about what
+# the logo is.
+image = { version = "0.25", default-features = false, features = [
+    "png",
+    "jpeg",
+    "ico",
+] }
 rfd = "0.17"
 
 [dev-dependencies]

@@ -140,6 +140,20 @@ impl Table {
             .collect())
     }
 
+    /// Whether a column holds numbers rather than labels.
+    ///
+    /// The storage type answers this, not the values: a `Utf8` column casts to
+    /// float without error and comes back as a column of `NaN`, so "did the
+    /// cast succeed" answers a different question than it appears to. A
+    /// dictionary of strings is labels however it is encoded.
+    pub fn is_numeric_column(&self, name: &str) -> Result<bool> {
+        let data_type = self.require_column(name)?.data_type();
+        Ok(match data_type {
+            DataType::Dictionary(_, value) => value.is_numeric(),
+            other => other.is_numeric(),
+        })
+    }
+
     /// Borrow a column, or fail with the name of the file that lacks it.
     pub fn require_column(&self, name: &str) -> Result<&arrow_array::ArrayRef> {
         self.column(name).ok_or_else(|| IoError::MissingColumn {
@@ -188,6 +202,36 @@ mod tests {
         let table = Table::from_columns(vec![("p".into(), array)]).unwrap();
         assert_eq!(table.dropna_string_column("p").unwrap(), vec!["a", "b"]);
         assert_eq!(table.opt_string_column("p").unwrap().len(), 3);
+    }
+
+    /// The reason this exists: the cast cannot be used to tell the two apart.
+    #[test]
+    fn numbers_and_labels_are_told_apart_by_their_type() {
+        let table = Table::from_columns(vec![
+            ("CD8".into(), Table::f64_array([0.5])),
+            ("count".into(), Table::i64_array([3])),
+            ("phenotype".into(), Table::string_array(["cancer"])),
+        ])
+        .unwrap();
+
+        assert!(table.is_numeric_column("CD8").unwrap());
+        assert!(table.is_numeric_column("count").unwrap());
+        assert!(!table.is_numeric_column("phenotype").unwrap());
+
+        // The trap: casting a label column to float succeeds, and lies.
+        assert!(table.f64_column("phenotype").unwrap()[0].is_nan());
+    }
+
+    #[test]
+    fn a_dictionary_of_labels_is_not_numeric() {
+        let values = StringArray::from(vec!["a", "b", "a"]);
+        let keys = arrow_array::Int32Array::from(vec![0, 1, 0]);
+        let dictionary: arrow_array::ArrayRef =
+            Arc::new(arrow_array::DictionaryArray::try_new(keys, Arc::new(values)).unwrap());
+        let table = Table::from_columns(vec![("phenotype".into(), dictionary)]).unwrap();
+
+        assert!(!table.is_numeric_column("phenotype").unwrap());
+        assert_eq!(table.string_column("phenotype").unwrap()[1], "b");
     }
 
     #[test]

@@ -4,5 +4,6 @@ pub mod browser;
 pub mod field;
 pub mod form;
 pub mod log;
+pub mod network;
 pub mod runner;
 pub mod viewer;

@@ -16,6 +16,7 @@
 
 pub mod assortativity;
 pub mod clustering;
+pub mod colormap;
 pub mod error;
 pub mod geometry;
 pub mod linalg;

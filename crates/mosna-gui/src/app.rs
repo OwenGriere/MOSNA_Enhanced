@@ -20,14 +20,19 @@ use crate::theme;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ViewerTab {
     Images,
+    /// The network itself, drawn from the files rather than from a figure.
+    Network,
     Log,
     Documentation,
 }
 
 /// Which analysis's figures are showing.
+///
+/// Step 1 has no entry: its only figure was a picture of the network, and the
+/// Network tab draws the network itself — from the same files, at any zoom,
+/// with the attributes still attached. A PNG of it is a worse copy.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum AnalysisTab {
-    Tysserand,
     Assortativity,
     Niches,
 }
@@ -51,6 +56,9 @@ pub struct MosnaApp {
     pub selected_row: Option<usize>,
 
     pub images: AnalysisImageSet,
+    /// The interactive network's state: which sample is drawn, what it is
+    /// coloured by, where the camera is.
+    pub network: crate::panels::network::NetworkState,
     pub viewer_tab: ViewerTab,
     pub analysis_tab: AnalysisTab,
     pub selected_patient: Option<String>,
@@ -96,8 +104,9 @@ impl MosnaApp {
             rows: Vec::new(),
             selected_row: None,
             images: AnalysisImageSet::default(),
+            network: Default::default(),
             viewer_tab: ViewerTab::Images,
-            analysis_tab: AnalysisTab::Tysserand,
+            analysis_tab: AnalysisTab::Assortativity,
             selected_patient: None,
             selected_image: 0,
             log: Vec::new(),
@@ -122,6 +131,10 @@ impl MosnaApp {
     pub fn set_working_dir(&mut self, directory: PathBuf) {
         self.browser.working_dir = Some(directory);
         self.needs_working_dir = false;
+        // The network on screen belongs to the directory being left, down to
+        // its camera and its colouring; keeping any of it would show one
+        // dataset labelled as another.
+        self.network.clear();
         self.refresh_images();
         self.refresh_nodes();
     }

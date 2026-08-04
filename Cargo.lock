@@ -2670,6 +2670,7 @@ dependencies = [
  "egui_extras",
  "image 0.25.10",
  "mosna-config",
+ "mosna-core",
  "mosna-io",
  "mosna-paths",
  "regex",

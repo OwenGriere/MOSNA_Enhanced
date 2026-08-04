@@ -13,7 +13,9 @@ pub fn show(app: &mut MosnaApp, ui: &mut egui::Ui) {
         .frame(
             egui::Frame::new()
                 .fill(theme::PANEL)
-                .inner_margin(egui::Margin::same(10)),
+                // Tight, because the Network tab's canvas is the one thing in
+                // this panel that can always use another few pixels.
+                .inner_margin(egui::Margin::same(6)),
         )
         .show(ui, |ui| {
             header(ui, "Viewer");
@@ -29,6 +31,7 @@ pub fn show(app: &mut MosnaApp, ui: &mut egui::Ui) {
             ui.horizontal(|ui| {
                 for (tab, name) in [
                     (ViewerTab::Images, "Images"),
+                    (ViewerTab::Network, "Network"),
                     (ViewerTab::Log, "Log"),
                     (ViewerTab::Documentation, "Documentation"),
                 ] {
@@ -45,6 +48,7 @@ pub fn show(app: &mut MosnaApp, ui: &mut egui::Ui) {
 
             match app.viewer_tab {
                 ViewerTab::Images => images(app, ui),
+                ViewerTab::Network => super::network::show(app, ui),
                 ViewerTab::Log => log(app, ui),
                 ViewerTab::Documentation => super::documentation::show(app, ui),
             }
@@ -54,7 +58,6 @@ pub fn show(app: &mut MosnaApp, ui: &mut egui::Ui) {
 fn images(app: &mut MosnaApp, ui: &mut egui::Ui) {
     ui.horizontal(|ui| {
         for (tab, name) in [
-            (AnalysisTab::Tysserand, "Tysserand"),
             (AnalysisTab::Assortativity, "Assortativity"),
             (AnalysisTab::Niches, "Niches"),
         ] {
@@ -76,15 +79,11 @@ fn images(app: &mut MosnaApp, ui: &mut egui::Ui) {
     ui.add_space(4.0);
 
     let set = match app.analysis_tab {
-        AnalysisTab::Tysserand => &app.images.tysserand,
         AnalysisTab::Assortativity => &app.images.assortativity,
         AnalysisTab::Niches => &app.images.niches,
     };
 
-    // Step 1 produces only per-patient figures, so its tab has no Global list —
-    // the same asymmetry the Python builds.
-    let per_patient_only = app.analysis_tab == AnalysisTab::Tysserand;
-    let gallery = gallery_for(set, &mut app.selected_patient, per_patient_only, ui);
+    let gallery = gallery_for(set, &mut app.selected_patient, ui);
 
     if gallery.is_empty() {
         ui.centered_and_justified(|ui| {
@@ -136,7 +135,6 @@ fn images(app: &mut MosnaApp, ui: &mut egui::Ui) {
 fn gallery_for(
     set: &AnalysisImages,
     selected_patient: &mut Option<String>,
-    per_patient_only: bool,
     ui: &mut egui::Ui,
 ) -> Vec<PathBuf> {
     let patients: Vec<&String> = set.patients.keys().collect();
@@ -167,9 +165,7 @@ fn gallery_for(
     }
 
     let mut gallery = Vec::new();
-    if !per_patient_only {
-        gallery.extend(set.global.iter().cloned());
-    }
+    gallery.extend(set.global.iter().cloned());
     if let Some(patient) = selected_patient {
         if let Some(images) = set.patients.get(patient) {
             gallery.extend(images.iter().cloned());

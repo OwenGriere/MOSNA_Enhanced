@@ -14,7 +14,6 @@
 
 pub mod assortativity;
 pub mod canvas;
-pub mod colormap;
 pub mod embedding;
 pub mod network;
 pub mod niches;
@@ -22,6 +21,12 @@ pub mod norm;
 pub mod theme;
 
 use std::path::Path;
+
+/// The colour maps, which live in `mosna-core` so that the interface can draw
+/// a network in the same colours as the figures without taking a dependency on
+/// the plotting crate. Re-exported here because this is where they are used
+/// most, and where they used to be.
+pub use mosna_core::colormap;
 
 use mosna_core::niches::{NicheComposition, Normalize};
 use mosna_io::SampleId;

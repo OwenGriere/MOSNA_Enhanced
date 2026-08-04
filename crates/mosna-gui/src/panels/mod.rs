@@ -8,6 +8,7 @@ pub mod browser;
 pub mod documentation;
 pub mod layout;
 pub mod modals;
+pub mod network;
 pub mod parameters;
 pub mod top_bar;
 pub mod viewer;

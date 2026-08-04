@@ -5,11 +5,26 @@ use std::path::PathBuf;
 fn main() -> eframe::Result<()> {
     let config_path = config_path();
 
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_inner_size([1600.0, 980.0])
+        .with_min_inner_size([1120.0, 700.0])
+        .with_title("MOSNA Graphic Interface")
+        // The name of the desktop entry the installer writes, which is how a
+        // Wayland compositor finds the icon for a running window: it matches
+        // the window's application id against `mosna.desktop`. `StartupWMClass`
+        // in that file does the same job on X11. Without this the taskbar has
+        // nothing to match and shows a blank window, however well the icon was
+        // installed.
+        .with_app_id(mosna_paths::layout::DESKTOP_ID);
+
+    // And the icon on the window itself, for every way of starting it that
+    // does not go through the desktop entry at all.
+    if let Some(icon) = mosna_gui::icon::window_icon() {
+        viewport = viewport.with_icon(icon);
+    }
+
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default()
-            .with_inner_size([1600.0, 980.0])
-            .with_min_inner_size([1120.0, 700.0])
-            .with_title("MOSNA Graphic Interface"),
+        viewport,
         ..Default::default()
     };
 

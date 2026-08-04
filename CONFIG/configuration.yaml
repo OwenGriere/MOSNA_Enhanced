@@ -1,5 +1,5 @@
 Tysserand:
-  Nodes directory: /home/owen.griere/Bureau/Pierre_mIF_IMC/mIF_C2
+  Nodes directory: /home/owen.griere/Bureau/Pierre_mIF_IMC/IMC
   Patient column name: patient
   Sample column name: sample
   Extension: parquet

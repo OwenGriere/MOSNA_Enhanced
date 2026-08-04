@@ -355,10 +355,11 @@ fn workflow() -> Chapter {
                              sont nommés. Rien n'y est calculé ; il prépare les chemins.",
                         ),
                         T::new(
-                            "Viewer, in the middle — figures, the log of a running analysis, \
-                             and this manual.",
-                            "Viewer, au centre — les figures, le journal de l'analyse en cours, \
-                             et ce manuel.",
+                            "Viewer, in the middle — figures, the network drawn from the files \
+                             themselves, the log of a running analysis, and this manual.",
+                            "Viewer, au centre — les figures, le réseau tracé directement \
+                             depuis les fichiers, le journal de l'analyse en cours, et ce \
+                             manuel.",
                         ),
                         T::new(
                             "Parameters, on the right — every setting, plus the buttons that \
@@ -381,6 +382,31 @@ fn workflow() -> Chapter {
                             "Les trois panneaux de l'interface",
                         ),
                     },
+                    Block::Paragraph(T::new(
+                        "The Viewer's Network tab draws a sample from its nodes and edges \
+                         files rather than from a figure. Choose the patient, then the sample; \
+                         a dataset with no sample column asks only for the patient. Drag to \
+                         pan, scroll or use the zoom buttons, and hover a cell to read the \
+                         columns you ticked in the margin. Colouring by a column of labels — a \
+                         phenotype, a niche — gives a legend of its values; colouring by a \
+                         measured column gives a colour bar over its range. Past sixty \
+                         thousand cells in view only a fraction are drawn, with the edges \
+                         between them: at that size a cell is under a pixel and they overlap \
+                         several deep, so the rest would cost frames and show nothing. Zoom \
+                         in and they all come back.",
+                        "L'onglet Network du Viewer trace un échantillon depuis ses fichiers de \
+                         nœuds et d'arêtes plutôt que depuis une figure. Choisissez le patient, \
+                         puis l'échantillon ; un jeu de données sans colonne d'échantillon ne \
+                         demande que le patient. Glisser pour se déplacer, molette ou boutons \
+                         de zoom, survoler une cellule pour lire les colonnes cochées en \
+                         marge. Colorer par une colonne d'étiquettes — un phénotype, une niche \
+                         — donne une légende de ses valeurs ; colorer par une colonne mesurée \
+                         donne une barre de couleur sur son étendue. Au-delà de soixante mille \
+                         cellules à l'écran, seule une fraction est tracée, avec les arêtes qui \
+                         les relient : à cette taille une cellule fait moins d'un pixel et \
+                         elles se recouvrent, le reste coûterait des images par seconde sans \
+                         rien montrer. En zoomant, tout revient.",
+                    )),
                 ],
             },
             Section {

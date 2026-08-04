@@ -20,6 +20,7 @@
 
 pub mod app;
 pub mod docs;
+pub mod icon;
 pub mod model;
 pub mod panels;
 pub mod theme;

@@ -81,6 +81,40 @@ pub fn blues() -> Gradient {
     ])
 }
 
+/// `Reds`, the sequential map the interactive network colours a measured
+/// column with.
+///
+/// The ColorBrewer 9-class Reds, which is exactly what matplotlib interpolates
+/// — these nine are its control points, not a sampling of them, so nine stops
+/// reproduce the reference as closely as seventeen would.
+///
+/// # What it is for
+///
+/// A cell's value should be legible as *more* or *less* at a glance, and the
+/// interface's surface is a light silver. This map puts the low end within a
+/// shade of that surface and the high end at eleven to one against it, so a
+/// rare high-expressing cell is the thing the eye lands on and a field of low
+/// ones recedes into the background. That is deliberate, and it is a choice:
+/// a low value is nearly invisible here, which is right when the question is
+/// "where is the signal" and wrong when it is "is this cell measured at all".
+/// A cell with *no* value is not faint but grey — [`Gradient::BAD`] — so the
+/// two cannot be confused.
+///
+/// One hue throughout, so nothing competes with the intensity itself.
+pub fn reds() -> Gradient {
+    Gradient::new(vec![
+        [0xff, 0xf5, 0xf0],
+        [0xfe, 0xe0, 0xd2],
+        [0xfc, 0xbb, 0xa1],
+        [0xfc, 0x92, 0x72],
+        [0xfb, 0x69, 0x4a],
+        [0xee, 0x3a, 0x2c],
+        [0xca, 0x18, 0x1d],
+        [0xa3, 0x0f, 0x15],
+        [0x67, 0x00, 0x0d],
+    ])
+}
+
 /// `tab20`, used by the abundance bar chart.
 pub fn tab20() -> Vec<Rgb> {
     vec![
@@ -219,6 +253,60 @@ mod tests {
         assert_eq!(gradient.sample(-5.0), gradient.sample(0.0));
         assert_eq!(gradient.sample(5.0), gradient.sample(1.0));
         assert_eq!(gradient.sample(f64::NAN), gradient.sample(0.0));
+    }
+
+    /// The point of `Reds` in this interface: a high value has to be the thing
+    /// the eye lands on, and a low one has to get out of the way.
+    #[test]
+    fn reds_runs_from_almost_white_to_a_deep_red() {
+        let map = reds();
+        let (low, high) = (map.sample(0.0), map.sample(1.0));
+
+        assert!(
+            low.iter().all(|c| *c > 0xE0),
+            "the low end is not near-white: {low:?}"
+        );
+        assert!(
+            high[0] > high[1] && high[0] > high[2] && high[0] < 0x80,
+            "the high end is not a deep red: {high:?}"
+        );
+    }
+
+    /// Lightness falls monotonically, which is what lets a reader order two
+    /// cells by eye rather than by consulting the bar.
+    #[test]
+    fn reds_only_ever_darkens() {
+        let map = reds();
+        let lightness = |c: Rgb| 0.2126 * c[0] as f32 + 0.7152 * c[1] as f32 + 0.0722 * c[2] as f32;
+
+        let mut previous = lightness(map.sample(0.0));
+        for step in 1..=20 {
+            let next = lightness(map.sample(step as f64 / 20.0));
+            assert!(
+                next < previous,
+                "it brightens between {} and {step} of 20",
+                step - 1
+            );
+            previous = next;
+        }
+    }
+
+    /// One hue throughout: red is never the smallest channel, so nothing in
+    /// the ramp reads as another colour competing with the intensity.
+    #[test]
+    fn reds_stays_red_the_whole_way() {
+        let map = reds();
+        for step in 0..=20 {
+            let [r, g, b] = map.sample(step as f64 / 20.0);
+            assert!(r >= g && r >= b, "step {step} is not a red: {r},{g},{b}");
+        }
+    }
+
+    /// A faint cell and an unmeasured one must not look alike: the first is a
+    /// value, the second is the absence of one.
+    #[test]
+    fn the_palest_red_is_not_the_missing_value_grey() {
+        assert_ne!(reds().sample(0.0), Gradient::BAD);
     }
 
     #[test]

@@ -642,25 +642,21 @@ fn images_are_collected_and_grouped_by_patient() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
 
-    std::fs::create_dir_all(root.join("Tysserand_Network")).unwrap();
-    std::fs::write(root.join("Tysserand_Network/net_1-1.png"), b"").unwrap();
-    std::fs::write(root.join("Tysserand_Network/net_2-1.png"), b"").unwrap();
-
     std::fs::create_dir_all(root.join("Assortativity/assort_files")).unwrap();
     std::fs::write(root.join("Assortativity/abundance.png"), b"").unwrap();
-    std::fs::write(
-        root.join("Assortativity/assort_files/heatmap_zscore_1-1.png"),
-        b"",
-    )
-    .unwrap();
+    for name in ["heatmap_zscore_1-1.png", "heatmap_zscore_2-1.png"] {
+        std::fs::write(root.join("Assortativity/assort_files").join(name), b"").unwrap();
+    }
+
+    // Step 1's own figures are the Network tab's business, and are not
+    // gathered here even when they are sitting on disk.
+    std::fs::create_dir_all(root.join("Tysserand_Network")).unwrap();
+    std::fs::write(root.join("Tysserand_Network/net_1-1.png"), b"").unwrap();
 
     let images = collect_analysis_images(root);
 
-    assert_eq!(images.tysserand.patients.len(), 2);
-    assert!(images.tysserand.patients.contains_key("1"));
-    assert!(images.tysserand.patients.contains_key("2"));
-
     assert_eq!(images.assortativity.global.len(), 1);
+    assert_eq!(images.assortativity.patients.len(), 2);
     assert_eq!(images.assortativity.patients["1"].len(), 1);
 }
 
@@ -686,7 +682,7 @@ fn niche_images_are_found_where_step_three_writes_them() {
 fn a_working_directory_without_results_yields_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let images = collect_analysis_images(dir.path());
-    assert!(images.tysserand.patients.is_empty());
     assert!(images.assortativity.global.is_empty());
+    assert!(images.assortativity.patients.is_empty());
     assert!(images.niches.global.is_empty());
 }
