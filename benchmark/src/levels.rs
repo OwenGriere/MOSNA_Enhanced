@@ -11,7 +11,7 @@ use mosna_core::assortativity::mixing_matrix::mixing_matrix;
 use mosna_core::assortativity::sample_assort_mixmat::sample_assort_mixmat;
 use mosna_core::clustering::gmm::{gaussian_mixture, GmmParams};
 use mosna_core::clustering::leiden::leiden;
-use mosna_core::geometry::build_delaunay::{build_delaunay, TrimDist};
+use mosna_core::geometry::build_delaunay::{build_delaunay, DelaunayTrim};
 use mosna_core::geometry::link_solitaries::{link_solitaries, LinkMethod};
 use mosna_core::nas::make_features_nas::make_features_nas;
 use mosna_core::nas::onehot::one_hot;
@@ -46,7 +46,7 @@ pub fn level_1_golden(spec: &CohortSpec) -> Fingerprint {
         let stage = |name: &str| format!("sample_{index}/{name}");
 
         // -- geometry -------------------------------------------------------
-        let raw = build_delaunay(&tissue.coords, TrimDist::default())
+        let raw = build_delaunay(&tissue.coords, DelaunayTrim::default())
             .expect("a cohort always has enough points");
         fingerprint.pairs(&stage("delaunay"), &raw);
 
@@ -242,7 +242,7 @@ fn vocabulary(spec: &CohortSpec) -> Vec<String> {
 
 /// The network of a tissue, as step one builds it.
 fn network_of(tissue: &Tissue) -> Vec<(u32, u32)> {
-    let raw = build_delaunay(&tissue.coords, TrimDist::default()).expect("enough points");
+    let raw = build_delaunay(&tissue.coords, DelaunayTrim::default()).expect("enough points");
     link_solitaries(&tissue.coords, &raw, LinkMethod::Delaunay, MIN_NEIGHBORS)
         .expect("relinking cannot fail")
 }

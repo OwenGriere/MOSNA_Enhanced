@@ -126,8 +126,10 @@ mod tests {
         // Four blocks of three pairs each for two attributes.
         assert_eq!(stats.column_names.len(), 7 + 4 * 3);
         assert_eq!(stats.values.len(), stats.column_names.len());
-        assert!(stats.column_names.contains(&"A - B RAW".to_string()));
-        assert!(stats.column_names.contains(&"A - B Z".to_string()));
+        // `B - A`, not `A - B`: the reference names the lower triangle with the
+        // larger index first, and the values are flattened in that same order.
+        assert!(stats.column_names.contains(&"B - A RAW".to_string()));
+        assert!(stats.column_names.contains(&"B - A Z".to_string()));
     }
 
     #[test]

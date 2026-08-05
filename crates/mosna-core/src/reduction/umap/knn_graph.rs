@@ -30,10 +30,22 @@ impl KnnGraph {
 /// `k` is clamped to `n_rows - 1`: a point is never its own neighbour, so there
 /// are only that many candidates.
 ///
-/// This is exact. It costs `O(n^2 d)`, which is the right trade below a few
-/// thousand points; [`super::nn_descent::nn_descent`] takes over above that.
-/// The exact routine stays the specification the approximate one is measured
-/// against.
+/// This is exact, and it costs `O(n^2 d)`.
+///
+/// # The cost is the ceiling on cohort size
+///
+/// There is no approximate fallback. An earlier version of this comment
+/// claimed one — `nn_descent` — taking over above a few thousand points; that
+/// module was never written, and the claim survived because `cargo doc` did not
+/// gate the build. It is stated plainly instead: at fifty thousand cells this
+/// is 2.5 billion distance evaluations per call, and step 3 calls it once for
+/// the reduction and once more for the clustering graph.
+///
+/// Below roughly ten thousand cells the exhaustive search is the right trade —
+/// it is exact, it parallelises perfectly, and it has no index to build. Above
+/// that, an approximate index (NN-Descent, HNSW) is what makes the step
+/// practical, and it would be measured against this routine as its
+/// specification.
 pub fn knn_graph(
     data: &[f64],
     n_rows: usize,

@@ -7,7 +7,7 @@ use rayon::prelude::*;
 use mosna_config::model::tysserand::EdgesMethod;
 use mosna_config::validate::assert_params::{assert_params, Analysis};
 use mosna_config::{section, RawConfig, TysserandConfig};
-use mosna_core::geometry::{build_delaunay, link_solitaries, LinkMethod, TrimDist};
+use mosna_core::geometry::{build_delaunay, link_solitaries, DelaunayTrim, LinkMethod};
 use mosna_io::read::get_opener::{read_table, Extension};
 use mosna_io::write::write_parquet::write_parquet;
 use mosna_io::{find_sample, find_sample_from_file, Table};
@@ -87,7 +87,7 @@ pub fn tysserand_network(
             let nodes = read_table(file, extension)?;
 
             let coords = nodes.coords(&settings.x_column, &settings.y_column)?;
-            let pairs = build_delaunay(&coords, TrimDist::default())?;
+            let pairs = build_delaunay(&coords, DelaunayTrim::default())?;
             let method = match settings.edges_method {
                 EdgesMethod::Delaunay => LinkMethod::Delaunay,
                 EdgesMethod::Knn => LinkMethod::Knn,

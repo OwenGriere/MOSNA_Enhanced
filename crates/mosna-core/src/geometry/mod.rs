@@ -18,7 +18,9 @@ pub mod find_trim_dist;
 pub mod link_solitaries;
 pub mod remove_duplicate_pairs;
 
-pub use build_delaunay::{build_delaunay, build_delaunay_untrimmed, TrimDist};
+pub use build_delaunay::{
+    build_delaunay, build_delaunay_untrimmed, DelaunayTrim, NodeAdaptive, TrimDist,
+};
 pub use build_knn::build_knn;
 pub use distance_neighbors::distance_neighbors;
 pub use find_trim_dist::find_trim_dist;

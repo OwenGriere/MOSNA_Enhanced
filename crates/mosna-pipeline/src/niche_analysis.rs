@@ -428,6 +428,36 @@ fn require_finite(values: &[f64], width: usize) -> Result<()> {
     )))
 }
 
+/// The k-nearest-neighbour graph as a list of undirected edges, each once.
+///
+/// The neighbour lists are directed: `j` appearing among `i`'s neighbours does
+/// not stop `i` from appearing among `j`'s, and in a k-NN graph that mutual
+/// case is the rule rather than the exception. Emitting one edge per (node,
+/// neighbour) pair therefore hands Leiden the mutual edges twice, and
+/// `leiden::Graph` sums the weights it is given — so those pairs would carry
+/// weight 2 while one-sided pairs carry 1, and the modularity being optimised
+/// would not be the modularity of this graph.
+///
+/// The reference does the same deduplication at the same point:
+/// `tysserand.pairs_from_knn` ends with `remove_duplicate_pairs(pairs)`.
+fn undirected_knn_edges(indices: &[Vec<usize>]) -> Vec<(usize, usize, f64)> {
+    let mut edges: Vec<(usize, usize)> = indices
+        .iter()
+        .enumerate()
+        .flat_map(|(i, neighbours)| {
+            neighbours
+                .iter()
+                // Canonical orientation, so `(i, j)` and `(j, i)` collapse.
+                .map(move |&j| (i.min(j), i.max(j)))
+                // A self-loop carries no information about community structure.
+                .filter(|(a, b)| a != b)
+        })
+        .collect();
+    edges.sort_unstable();
+    edges.dedup();
+    edges.into_iter().map(|(a, b)| (a, b, 1.0)).collect()
+}
+
 /// Partition the rows into niches.
 fn cluster(input: &ClusterInput, n_rows: usize, params: &NicheParams) -> Result<Vec<u32>> {
     let (values, width) = (input.values.as_slice(), input.width);
@@ -448,9 +478,7 @@ fn cluster(input: &ClusterInput, n_rows: usize, params: &NicheParams) -> Result<
         ClustererType::Leiden => {
             let k = params.effective_k_cluster();
             let graph = knn_graph(values, n_rows, width, k, Metric::Euclidean);
-            let edges: Vec<(usize, usize, f64)> = (0..n_rows)
-                .flat_map(|i| graph.indices[i].iter().map(move |&j| (i, j, 1.0)))
-                .collect();
+            let edges = undirected_knn_edges(&graph.indices);
             leiden(n_rows, &edges, params.resolution, 0)
         }
         ClustererType::Spectral => spectral_clustering(
@@ -641,6 +669,38 @@ mod tests {
         )
         .unwrap();
         assert_eq!(labels.len(), var_aggreg.n_rows);
+    }
+
+    /// A mutually-neighbouring pair must reach Leiden once, not twice.
+    ///
+    /// The neighbour lists are directed; summing them without canonicalising
+    /// gave those pairs twice the weight of one-sided pairs, which is not the
+    /// graph the reference optimises.
+    #[test]
+    fn a_mutual_neighbour_pair_becomes_one_edge() {
+        // 0 and 1 list each other; 2 lists 0 but 0 does not list 2.
+        let indices = vec![vec![1usize], vec![0usize], vec![0usize]];
+        let edges = undirected_knn_edges(&indices);
+
+        assert_eq!(edges, vec![(0, 1, 1.0), (0, 2, 1.0)]);
+    }
+
+    /// Every edge carries the same weight, and none is a self-loop.
+    #[test]
+    fn the_knn_edges_are_unweighted_and_loop_free() {
+        let indices = vec![vec![1, 2], vec![0, 2], vec![0, 1], vec![3]];
+        let edges = undirected_knn_edges(&indices);
+
+        assert!(edges.iter().all(|&(_, _, w)| w == 1.0));
+        assert!(
+            edges.iter().all(|&(a, b, _)| a != b),
+            "a self-loop survived"
+        );
+        assert!(
+            edges.windows(2).all(|w| w[0].0 <= w[1].0),
+            "not deduplicable"
+        );
+        assert_eq!(edges.len(), 3, "three distinct pairs among four nodes");
     }
 
     #[test]

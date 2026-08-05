@@ -4,10 +4,10 @@
 //!
 //! | Rust | Python |
 //! |---|---|
-//! | [`tysserand_network`] | `package/tysserand_network.py` |
-//! | [`assortativity`] | `package/assortativity.py` |
-//! | [`niche_analysis`] | `package/niche_analysis.py` |
-//! | [`clear_temporary`] | `package/clear_temporary.py` |
+//! | [`fn@tysserand_network`] | `package/tysserand_network.py` |
+//! | [`fn@assortativity`] | `package/assortativity.py` |
+//! | [`fn@niche_analysis`] | `package/niche_analysis.py` |
+//! | [`fn@clear_temporary`] | `package/clear_temporary.py` |
 //!
 //! Each takes the parsed configuration, the working directory chosen in the
 //! GUI, a progress reporter and a figure sink. Splitting the figures out behind

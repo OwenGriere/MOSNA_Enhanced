@@ -6,7 +6,7 @@
 
 use mosna_core::geometry::{
     build_delaunay, build_knn, distance_neighbors, link_solitaries, remove_duplicate_pairs,
-    LinkMethod, TrimDist,
+    DelaunayTrim, LinkMethod, TrimDist,
 };
 use mosna_testkit::strategies::point_cloud;
 use proptest::prelude::*;
@@ -31,7 +31,7 @@ fn assert_well_formed(pairs: &[(u32, u32)], n_nodes: usize, what: &str) {
 proptest! {
     #[test]
     fn prop_delaunay_edges_are_well_formed(coords in point_cloud(2, 40)) {
-        let pairs = build_delaunay(&coords, TrimDist::None).unwrap();
+        let pairs = build_delaunay(&coords, DelaunayTrim::none()).unwrap();
         assert_well_formed(&pairs, coords.len(), "delaunay");
     }
 
@@ -40,7 +40,7 @@ proptest! {
     /// emitted twice or a half-edge was mis-paired.
     #[test]
     fn prop_delaunay_is_planar(coords in point_cloud(3, 40)) {
-        let pairs = build_delaunay(&coords, TrimDist::None).unwrap();
+        let pairs = build_delaunay(&coords, DelaunayTrim::none()).unwrap();
         let n = coords.len();
         prop_assert!(
             pairs.len() <= 3 * n - 6,
@@ -52,8 +52,8 @@ proptest! {
     /// Trimming can only remove edges, never invent them.
     #[test]
     fn prop_trimming_is_a_subset(coords in point_cloud(4, 40)) {
-        let untrimmed = build_delaunay(&coords, TrimDist::None).unwrap();
-        let trimmed = build_delaunay(&coords, TrimDist::default()).unwrap();
+        let untrimmed = build_delaunay(&coords, DelaunayTrim::none()).unwrap();
+        let trimmed = build_delaunay(&coords, DelaunayTrim::default()).unwrap();
 
         prop_assert!(trimmed.len() <= untrimmed.len());
         let all: std::collections::HashSet<_> = untrimmed.iter().copied().collect();
@@ -65,8 +65,8 @@ proptest! {
     /// A stricter distance threshold can only keep fewer edges.
     #[test]
     fn prop_trimming_is_monotone_in_the_threshold(coords in point_cloud(4, 30)) {
-        let loose = build_delaunay(&coords, TrimDist::Fixed(1e9)).unwrap();
-        let tight = build_delaunay(&coords, TrimDist::Fixed(10.0)).unwrap();
+        let loose = build_delaunay(&coords, DelaunayTrim::distance(TrimDist::Fixed(1e9))).unwrap();
+        let tight = build_delaunay(&coords, DelaunayTrim::distance(TrimDist::Fixed(10.0))).unwrap();
         prop_assert!(tight.len() <= loose.len());
     }
 
@@ -95,7 +95,7 @@ proptest! {
         coords in point_cloud(4, 30),
         min_neighbors in 1usize..4,
     ) {
-        let initial = build_delaunay(&coords, TrimDist::default()).unwrap();
+        let initial = build_delaunay(&coords, DelaunayTrim::default()).unwrap();
         for method in [LinkMethod::Delaunay, LinkMethod::Knn] {
             let relinked = link_solitaries(&coords, &initial, method, min_neighbors).unwrap();
             assert_well_formed(&relinked, coords.len(), "relinked");
@@ -114,7 +114,7 @@ proptest! {
         coords in point_cloud(4, 25),
         min_neighbors in 1usize..3,
     ) {
-        let initial = build_delaunay(&coords, TrimDist::default()).unwrap();
+        let initial = build_delaunay(&coords, DelaunayTrim::default()).unwrap();
         let once = link_solitaries(&coords, &initial, LinkMethod::Delaunay, min_neighbors).unwrap();
         let twice = link_solitaries(&coords, &once, LinkMethod::Delaunay, min_neighbors).unwrap();
         prop_assert_eq!(once, twice);

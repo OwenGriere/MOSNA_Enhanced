@@ -3,11 +3,11 @@
 //! Replaces the `umap-learn` call in `mosna/clustering.py::get_reducer`. The
 //! method has four stages, one per module:
 //!
-//! 1. [`knn_graph`] — the `k` nearest neighbours of every point.
-//! 2. [`smooth_knn_dist`] — a per-point bandwidth, so that neighbourhoods are
+//! 1. [`fn@knn_graph`] — the `k` nearest neighbours of every point.
+//! 2. [`fn@smooth_knn_dist`] — a per-point bandwidth, so that neighbourhoods are
 //!    comparable across regions of different density.
-//! 3. [`fuzzy_simplicial_set`] — a weighted, symmetrised graph.
-//! 4. [`optimize_layout`] — gradient descent placing the points in the
+//! 3. [`fn@fuzzy_simplicial_set`] — a weighted, symmetrised graph.
+//! 4. [`fn@optimize_layout`] — gradient descent placing the points in the
 //!    low-dimensional space.
 //!
 //! # Relation to the Python

@@ -316,9 +316,17 @@ fn assortativity_writes_the_statistics_table() {
 
     let names = table.column_names();
     assert_eq!(names[0], "id", "the index column must come first");
-    for expected in ["# total", "% A", "% B", "assort", "assort Z", "A - B Z"] {
+    // `B - A`, not `A - B`: the reference names the elements of the lower
+    // triangle, larger index first, and the values are flattened in that same
+    // order. This test used to expect `A - B`, which is how the mismatch
+    // between the names and the values survived — it pinned the wrong shape.
+    for expected in ["# total", "% A", "% B", "assort", "assort Z", "B - A Z"] {
         assert!(names.contains(&expected), "missing column `{expected}`");
     }
+    assert!(
+        !names.contains(&"A - B Z"),
+        "the upper-triangle spelling is the one that mislabelled the values"
+    );
 
     // The ids must name the samples the way the rest of the pipeline does.
     let ids = table.string_column("id").unwrap();
