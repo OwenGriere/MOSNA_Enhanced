@@ -61,44 +61,33 @@ impl VarAggreg {
         &self.values[i * w..(i + 1) * w]
     }
 
-    /// The matrix handed to the dimensionality reduction and clustering.
+    /// The matrix handed to the dimensionality reduction and clustering: the
+    /// aggregated features, and nothing else.
     ///
-    /// # Faithful to a surprising Python behaviour
+    /// # The ids are metadata, not variables
     ///
-    /// `aggregated_niches` calls `get_clusterer(data=var_aggreg.values, ...)`,
-    /// and `var_aggreg` still carries the patient and sample id columns that
-    /// `compute_spatial_omic_features_*` appended. Those two columns therefore
-    /// enter UMAP as ordinary numeric features, and the identifiers influence
-    /// the niches that come out.
+    /// The Python reference feeds them to the reducer. `aggregated_niches`
+    /// calls `get_clusterer(data=var_aggreg.values, ...)`, and `var_aggreg`
+    /// still carries the `patient` and `sample` columns that
+    /// `compute_spatial_omic_features_*` appended for bookkeeping — so those two
+    /// columns reach `UMAP.fit_transform` as ordinary numeric variables. They
+    /// then dominate the distance, because a patient id runs 1, 2, 3, 4 while a
+    /// neighbourhood composition runs 0 to 1: measured on a four-sample cohort,
+    /// the resulting partition matches the sample of origin at ARI 0.64 and the
+    /// planted niches at ARI 0.02.
     ///
-    /// That looks unintended — an id is not a measurement — but it is what the
-    /// Python produces, and dropping the columns here would make every niche
-    /// label disagree with a Python run on the same input. The behaviour is
-    /// reproduced so results match; see `PROGRESS.log` for the flag raised
-    /// about it. Removing the ids is a one-line change in this method once the
-    /// intended semantics are confirmed.
+    /// An identifier is not a measurement, so it is dropped here. The row order
+    /// is what ties a feature vector back to its cell, and that order is
+    /// preserved: [`VarAggreg::patients`] and [`VarAggreg::samples`] keep the
+    /// pair for every row, [`VarAggreg::to_table`] writes them next to the
+    /// features, and `merge_niche_pheno` walks the same index to put each label
+    /// on the cell it came from.
     ///
-    /// The ids are parsed as numbers, mirroring the implicit conversion numpy
-    /// performs on the object array. A non-numeric id becomes `NaN` here, where
-    /// Python raises inside `check_array`.
+    /// Dropping them also removes a failure mode: an id that is not a number —
+    /// `P01`, a barcode — used to arrive as `NaN` in this matrix and take the
+    /// whole analysis down with it.
     pub fn clustering_matrix(&self) -> (Vec<f64>, usize) {
-        let n_id_columns = 1 + usize::from(self.samples.iter().any(Option::is_some));
-        let width = self.n_columns() + n_id_columns;
-        let mut out = Vec::with_capacity(self.n_rows * width);
-
-        for i in 0..self.n_rows {
-            out.extend_from_slice(self.row(i));
-            out.push(self.patients[i].parse::<f64>().unwrap_or(f64::NAN));
-            if n_id_columns == 2 {
-                out.push(
-                    self.samples[i]
-                        .as_deref()
-                        .and_then(|s| s.parse::<f64>().ok())
-                        .unwrap_or(f64::NAN),
-                );
-            }
-        }
-        (out, width)
+        (self.values.clone(), self.n_columns())
     }
 
     /// The `(patient, sample)` pair of each row, deduplicated in first-seen
@@ -481,9 +470,9 @@ mod tests {
     }
 
     #[test]
-    fn the_clustering_matrix_appends_the_id_columns() {
-        // Pins the faithful reproduction of the Python behaviour documented on
-        // `clustering_matrix`: the ids are part of the clustering input.
+    fn the_clustering_matrix_holds_the_features_alone() {
+        // The patient and sample ids are bookkeeping: they identify the row,
+        // they are not variables to cluster on. See `clustering_matrix`.
         let aggreg = VarAggreg {
             column_names: vec!["A mean".into()],
             values: vec![0.5, 0.25],
@@ -492,8 +481,24 @@ mod tests {
             samples: vec![Some("3".into()), Some("4".into())],
         };
         let (matrix, width) = aggreg.clustering_matrix();
-        assert_eq!(width, 3);
-        assert_eq!(matrix, vec![0.5, 1.0, 3.0, 0.25, 2.0, 4.0]);
+        assert_eq!(width, 1, "one column per feature, no id column");
+        assert_eq!(matrix, vec![0.5, 0.25]);
+    }
+
+    /// An id that is not a number no longer reaches the clustering input, so it
+    /// cannot poison it. It used to arrive as `NaN`.
+    #[test]
+    fn a_non_numeric_patient_id_does_not_reach_the_clustering_matrix() {
+        let aggreg = VarAggreg {
+            column_names: vec!["A mean".into()],
+            values: vec![0.5, 0.25],
+            n_rows: 2,
+            patients: vec!["P01".into(), "barcode-7".into()],
+            samples: vec![None, None],
+        };
+        let (matrix, width) = aggreg.clustering_matrix();
+        assert_eq!(width, 1);
+        assert!(matrix.iter().all(|v| v.is_finite()), "got {matrix:?}");
     }
 
     #[test]

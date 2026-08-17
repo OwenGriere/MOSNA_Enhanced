@@ -373,9 +373,9 @@ struct ClusterInput {
 /// Reduce the features, or hand them over unchanged.
 ///
 /// `reducer_type: none` is not a degenerate UMAP: the aggregated matrix goes to
-/// the clusterer exactly as it is, ids included, which is what UMAP would have
-/// consumed. Turning the reduction off therefore changes what is clustered and
-/// nothing else.
+/// the clusterer exactly as it is, which is what UMAP would have consumed.
+/// Turning the reduction off therefore changes what is clustered and nothing
+/// else.
 fn project(var_aggreg: &VarAggreg, params: &NicheParams) -> Result<ClusterInput> {
     let (matrix, width) = var_aggreg.clustering_matrix();
     require_finite(&matrix, width)?;
@@ -409,20 +409,20 @@ fn project(var_aggreg: &VarAggreg, params: &NicheParams) -> Result<ClusterInput>
 
 /// Refuse a matrix with a hole in it.
 ///
-/// `clustering_matrix` parses the patient and sample ids as numbers — numpy
-/// does the same to the object array the Python hands to `check_array` — so a
-/// patient called `P01` arrives here as `NaN`. UMAP used to swallow that and
-/// return an embedding of `NaN`s; without a reducer it would reach the
-/// clusterer directly. Python raises on it, and so does this, naming the cell
-/// so the offending column can be found.
+/// The aggregated features are means and standard deviations over a
+/// neighbourhood, so they are finite whenever the input columns are. A `NaN`
+/// here therefore means a `NaN` came in from the nodes file — an empty cell in a
+/// numeric column of `Column to aggregate`. UMAP would swallow it and return an
+/// embedding of `NaN`s; without a reducer it would reach the clusterer
+/// directly. Both are refused, naming the cell so the offending column can be
+/// found.
 fn require_finite(values: &[f64], width: usize) -> Result<()> {
     let Some(position) = values.iter().position(|value| !value.is_finite()) else {
         return Ok(());
     };
     Err(PipelineError::invalid(format!(
         "the clustering input is not a number at row {}, column {} of {width}: \
-         a patient or sample id that is not numeric arrives here as NaN, \
-         and the last columns of the matrix are those ids",
+         a column of `Column to aggregate` holds a value that is not numeric",
         position / width,
         position % width,
     )))
@@ -565,14 +565,21 @@ mod tests {
         }
     }
 
+    /// The same table with a hole punched in one feature, as an empty cell in a
+    /// numeric `Column to aggregate` would produce.
+    fn features_with_a_hole(patients: &[&str], position: usize) -> VarAggreg {
+        let mut aggreg = features(patients);
+        aggreg.values[position] = f64::NAN;
+        aggreg
+    }
+
     // -----------------------------------------------------------------------
     // What the clusterer is handed
     // -----------------------------------------------------------------------
 
     /// Without a reducer the clusterer receives the aggregated features
-    /// themselves — the very matrix UMAP would otherwise have consumed, id
-    /// columns included, so that turning the reduction off changes what is
-    /// clustered and nothing else.
+    /// themselves — the very matrix UMAP would otherwise have consumed, so that
+    /// turning the reduction off changes what is clustered and nothing else.
     #[test]
     fn without_a_reducer_the_clusterer_receives_the_feature_matrix_itself() {
         let var_aggreg = features(&["1", "1", "2", "2"]);
@@ -630,22 +637,22 @@ mod tests {
         assert!(!input.reduced);
     }
 
-    /// `clustering_matrix` parses the patient id as a number, so a
-    /// non-numeric one arrives as `NaN`. Reduction used to bury that; without
-    /// it the hole would go straight into the clusterer and come back as
-    /// niches nobody could explain.
+    /// A `NaN` in the features is refused rather than clustered. Reduction used
+    /// to bury it; without a reducer the hole would go straight into the
+    /// clusterer and come back as niches nobody could explain.
     #[test]
     fn a_clustering_input_that_is_not_all_numbers_is_refused() {
+        // Row 1, column 2 of a three-column table: value index 5.
         let err = project(
-            &features(&["P01", "P01", "P02", "P02"]),
+            &features_with_a_hole(&["1", "1", "2", "2"], 5),
             &params("reducer_type: none\n"),
         )
         .unwrap_err();
 
         let message = err.to_string();
-        assert!(message.contains("row 0"), "{message}");
-        assert!(message.contains("column 3"), "{message}");
-        assert!(message.contains("id"), "{message}");
+        assert!(message.contains("row 1"), "{message}");
+        assert!(message.contains("column 2"), "{message}");
+        assert!(message.contains("Column to aggregate"), "{message}");
     }
 
     /// And the same hole is refused when a reducer is asked for: it was never
@@ -653,10 +660,22 @@ mod tests {
     #[test]
     fn a_hole_in_the_features_is_refused_with_a_reducer_too() {
         assert!(project(
-            &features(&["P01", "P01", "P02", "P02"]),
+            &features_with_a_hole(&["1", "1", "2", "2"], 5),
             &params("reducer_type: umap\ndim_clust: 2\nn_neighbors: 2\n"),
         )
         .is_err());
+    }
+
+    /// A patient id that is not a number is no longer a problem: it never
+    /// reaches the matrix. It used to abort the whole analysis.
+    #[test]
+    fn a_non_numeric_patient_id_is_no_longer_refused() {
+        let input = project(
+            &features(&["P01", "P01", "barcode-7", "barcode-7"]),
+            &params("reducer_type: none\n"),
+        )
+        .expect("an identifier is metadata, not a variable");
+        assert_eq!(input.width, 3, "one column per feature");
     }
 
     /// The whole point: no reduction still yields one niche label per cell.
