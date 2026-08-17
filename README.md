@@ -1,4 +1,6 @@
-# MOSNA
+[![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org/)
+
+<h1 align="center">Mosna Enhanced : A version of Mosna rewritted in Rust for a better performance</h1>
 
 Spatial network construction and analysis for spatial omics: a native
 application that reconstructs a spatial network per sample, measures which cell
