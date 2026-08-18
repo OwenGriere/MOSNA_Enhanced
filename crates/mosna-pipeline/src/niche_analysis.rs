@@ -20,7 +20,7 @@ use mosna_core::niches::{
 use mosna_core::reduction::umap::{knn_graph, umap, Metric, UmapParams};
 use mosna_io::read::get_opener::{read_table, Extension};
 use mosna_io::write::write_parquet::write_parquet;
-use mosna_io::SampleId;
+use mosna_io::{SampleId, Table};
 
 use crate::assortativity::resolve_network_directory;
 use crate::error::{create_dir_all, PipelineError, Result};
@@ -173,6 +173,14 @@ fn run_aggregated(
     progress.step(2, 3, "[PROCESS] Niches Analysis");
 
     draw_clusters(&input, &labels, save_dir, progress, figures)?;
+    save_embedding(
+        &input,
+        &var_aggreg,
+        save_dir,
+        &settings.patient_column,
+        sample_column,
+        progress,
+    )?;
 
     // Writing the labels back is what lets the network be re-plotted coloured
     // by niche, and what keeps the composition aligned with the cells.
@@ -243,6 +251,14 @@ fn run_per_sample(
         let (input, labels) = reduce_and_cluster(&var_aggreg, params)?;
 
         draw_clusters(&input, &labels, &save_dir, progress, figures)?;
+        save_embedding(
+            &input,
+            &var_aggreg,
+            &save_dir,
+            &settings.patient_column,
+            sample_column,
+            progress,
+        )?;
         merge_niche_pheno(
             net_dir,
             single,
@@ -523,6 +539,68 @@ fn draw_clusters(
         return Ok(());
     }
     figures.embedding(&input.values, input.width, labels, save_dir)
+}
+
+/// Write the reduced coordinates, so the reduction can be compared on its own.
+///
+/// The Python writes its projection to `embedding.npy`. Without the equivalent
+/// here, a disagreement on the niches cannot be attributed to either of the two
+/// stages that produce them: the aggregated features are identical between the
+/// two implementations, so the difference lies in the reduction or in the
+/// clustering, and nothing on disk separates them. With both projections
+/// available, one clusterer can be run on both embeddings and one reducer on
+/// both feature matrices, which does separate them.
+///
+/// Parquet rather than `.npy`: it is what the rest of the pipeline writes, it
+/// carries its column names, and it lets the ids travel with the coordinates.
+/// `embedding.npy` is a bare array whose rows only mean something next to
+/// `var_aggreg`, in the same order — and the two implementations do not stack
+/// the samples in the same order.
+///
+/// Nothing is written when the features went to the clusterer unreduced. There
+/// is no projection in that case, and a file named `embedding` holding the raw
+/// features would invite exactly the confusion `draw_clusters` refuses.
+fn save_embedding(
+    input: &ClusterInput,
+    var_aggreg: &VarAggreg,
+    save_dir: &Path,
+    patient_column: &str,
+    sample_column: Option<&str>,
+    progress: &dyn Progress,
+) -> Result<()> {
+    if !input.reduced {
+        progress.info("[INFO] No reduction: no embedding written");
+        return Ok(());
+    }
+
+    let mut columns = Vec::with_capacity(input.width + 2);
+    for dimension in 0..input.width {
+        let values: Vec<f64> = (0..var_aggreg.n_rows)
+            .map(|row| input.values[row * input.width + dimension])
+            .collect();
+        columns.push((format!("dim_{dimension}"), Table::f64_array(values)));
+    }
+    columns.push((
+        patient_column.to_string(),
+        Table::string_array(var_aggreg.patients.iter()),
+    ));
+    if let Some(sample_column) = sample_column {
+        columns.push((
+            sample_column.to_string(),
+            Table::string_array(
+                var_aggreg
+                    .samples
+                    .iter()
+                    .map(|s| s.clone().unwrap_or_default()),
+            ),
+        ));
+    }
+
+    let table = Table::from_columns(columns).map_err(|e| PipelineError::invalid(e.to_string()))?;
+    let path = save_dir.join("embedding.parquet");
+    write_parquet(&table, &path)?;
+    progress.info(&format!("[INFO] Embedding saved in {}", path.display()));
+    Ok(())
 }
 
 /// Reduce the features and partition them into niches.
