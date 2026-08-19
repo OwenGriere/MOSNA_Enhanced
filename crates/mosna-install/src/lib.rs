@@ -9,6 +9,7 @@
 pub mod desktop;
 pub mod icon;
 pub mod plan;
+pub mod renderer;
 pub mod shell_link;
 pub mod shortcut;
 
@@ -29,6 +30,12 @@ pub struct Sources {
     /// Optional: without one, no icon is installed and the desktop entry falls
     /// back to whatever the theme provides.
     pub icon: Option<PathBuf>,
+    /// The `python/` directory holding the figure renderer.
+    ///
+    /// Optional so that an install can be done without one — a machine with no
+    /// Python still gets a working analysis, and finds out about the figures
+    /// when it asks for them rather than being refused an install.
+    pub renderer: Option<PathBuf>,
 }
 
 /// Installs and uninstalls a MOSNA prefix.
@@ -58,6 +65,14 @@ impl Installer {
 
     pub fn layout(&self) -> &Layout {
         &self.layout
+    }
+
+    /// The renderer install, when there is a source to install from.
+    pub fn renderer(&self) -> Option<renderer::RendererInstall> {
+        self.sources
+            .renderer
+            .as_ref()
+            .map(|source| renderer::RendererInstall::new(self.layout.clone(), source))
     }
 
     /// Check every artefact exists, before anything is written.
@@ -161,6 +176,17 @@ impl Installer {
             }
         }
 
+        // The Python environment is thousands of files this installer never
+        // listed one by one, so it goes as a whole. It is ours: nothing else
+        // writes into `share/mosna/venv`, and leaving it behind would leave
+        // most of an install on disk.
+        let venv = mosna_paths::python::venv_dir(&self.layout);
+        if venv.is_dir() {
+            std::fs::remove_dir_all(&venv)
+                .map_err(|e| anyhow::anyhow!("cannot remove {}: {e}", venv.display()))?;
+            done.push(format!("removed {}", venv.display()));
+        }
+
         // Deepest first, so a directory is only considered once its children
         // are gone. `remove_dir` refuses a non-empty directory, which is
         // exactly the guard needed: a prefix shared with other software keeps
@@ -193,6 +219,7 @@ mod tests {
             interface_binary: interface,
             config,
             icon: None,
+            renderer: None,
         }
     }
 

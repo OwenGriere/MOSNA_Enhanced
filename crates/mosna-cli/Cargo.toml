@@ -21,7 +21,7 @@ clap.workspace = true
 
 mosna-config.workspace = true
 mosna-pipeline.workspace = true
-mosna-viz.workspace = true
+mosna-xy.workspace = true
 mosna-paths.workspace = true
 
 [dev-dependencies]

@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mosna-xy"
+version = "0.1.0"
+description = "Draws the MOSNA figures with the xy charting library"
+requires-python = ">=3.11"
+# Pinned exactly, and deliberately. `xy` is alpha: 0.0.6 is the version every
+# figure here was written and tested against, and a charting library that
+# changes an argument name between two patch releases changes what the figures
+# look like. The pin moves when the figures have been looked at again.
+dependencies = ["xy==0.0.6", "numpy>=1.24"]
+
+[project.optional-dependencies]
+test = ["pytest>=8"]
+
+[tool.setuptools.packages.find]
+include = ["mosna_xy*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

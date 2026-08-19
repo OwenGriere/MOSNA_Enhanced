@@ -13,23 +13,30 @@ output layout and the same three-step workflow — an existing
 
 ## Install
 
-No Python, no conda, no scientific stack. What it does need, to build:
+The analyses are Rust and depend on no scientific stack. The **figures** are
+drawn by [`xy`](https://github.com/reflex-dev/xy), a Python charting library,
+which is why an interpreter is needed. What this needs, to build:
 
 * the **Rust toolchain** — `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
-* a **C compiler**, **pkg-config** and the **fontconfig** development files,
-  which the font libraries behind the figures link against:
+* **Python 3.11 or newer**, and a **C compiler**:
 
   | | |
   |---|---|
-  | Debian, Ubuntu, Mint | `sudo apt install build-essential pkg-config libfontconfig1-dev` |
-  | Fedora, RHEL | `sudo dnf install gcc pkgconf-pkg-config fontconfig-devel` |
-  | Arch, Manjaro | `sudo pacman -S base-devel pkgconf fontconfig` |
-  | openSUSE | `sudo zypper install gcc pkg-config fontconfig-devel` |
+  | Debian, Ubuntu, Mint | `sudo apt install build-essential python3 python3-venv` |
+  | Fedora, RHEL | `sudo dnf install gcc python3` |
+  | Arch, Manjaro | `sudo pacman -S base-devel python` |
+  | openSUSE | `sudo zypper install gcc python3` |
 
 `install.sh` checks for all of this before it starts building, and names the
-command to run if something is missing. The graphical interface additionally
-needs a running desktop session — X11 or Wayland, either is fine; on a headless
-machine the `mosna` command line still works in full.
+command to run if something is missing. It then creates a virtual environment
+of its own under the install prefix — `share/mosna/venv` — and installs the
+renderer into it, so nothing is written into the Python you work in. The
+graphical interface additionally needs a running desktop session — X11 or
+Wayland, either is fine; on a headless machine the `mosna` command line still
+works in full.
+
+`MOSNA_PYTHON` overrides the interpreter, which is what to set when working
+from a checkout against an environment of your own.
 
 ```bash
 # Linux / macOS
@@ -73,14 +80,30 @@ mosna-gui                        # the interface
 mosna --help                     # the command line, for scripts and clusters
 ```
 
-The command line runs the same four steps the interface's buttons do:
+Every figure is written twice: a **PNG**, which is what the interface's gallery
+shows, and an **HTML** chart beside it, which is the same figure with its axes
+live — pan, zoom, and the value of a cell under the pointer.
+
+**Generate report** gathers all of them into `report.html` at the root of the
+working directory. One tab per analysis; inside each, the cohort's figures
+first and then a patient at a time; a search box that filters by patient,
+sample or file name; and thumbnails that open full size, where the chart zooms
+and pans as it does on its own. A fourth tab lists everything else in the
+directory. It references the figures rather than copying them, so a report of
+five hundred figures is six hundred kilobytes and travels with the folder.
+
+The command line runs the same steps the interface's buttons do:
 
 ```bash
 mosna tysserand-network --file CONFIG/configuration.yaml --working_dir /data/run
 mosna assortativity     --file CONFIG/configuration.yaml --working_dir /data/run
 mosna niche-analysis    --file CONFIG/configuration.yaml --working_dir /data/run
-mosna clear-temporary   --file CONFIG/configuration.yaml --working_dir /data/run
+mosna generate-report                                    --working_dir /data/run
+mosna clear-temporary                                    --working_dir /data/run
 ```
+
+The last two take no configuration: they act on a directory that already
+exists, which is what lets them be run on results copied off a cluster.
 
 ## Design goals
 
@@ -103,11 +126,9 @@ mosna clear-temporary   --file CONFIG/configuration.yaml --working_dir /data/run
 ├── install.sh / install.ps1  build and install, per platform
 ├── CONFIG/                   the shipped starting configuration
 ├── assets/                   logo and the manual's figures
-├── test/                     small real datasets the tests run against
+├── python/                   the figure renderer, built on `xy`
+├── test/                     small real datasets, and the testing discipline
 ├── benchmark/                the bench: drift, reproducibility, recovery, timings
-├── PROGRESS.log              session journal and resumption point
-├── TASKS.md                  what is left to do
-├── TESTING.md                the testing discipline
 ├── Cargo.toml                workspace
 └── crates/
     ├── mosna-config/       configuration.yaml model, round-trip, validation
@@ -121,7 +142,7 @@ mosna clear-temporary   --file CONFIG/configuration.yaml --working_dir /data/run
     │   ├── clustering/     GMM, Leiden, spectral
     │   ├── niches/         niche composition
     │   └── stats/          percentiles, Ward linkage, CLR
-    ├── mosna-viz/          PNG figures
+    ├── mosna-xy/           figure specifications, handed to the renderer
     ├── mosna-pipeline/     the four analyses
     ├── mosna-cli/          command line interface
     ├── mosna-gui/          graphical interface, and the bilingual manual
@@ -138,31 +159,37 @@ kept because it names what each crate is responsible for.
 |---|---|
 | `GUI_MOSNA.py` | `crates/mosna-gui` |
 | `setup.sh` / `setup_windows.bat` | `install.sh` / `install.ps1`, `crates/mosna-install` |
-| `assets/documentation.html` | `crates/mosna-gui/src/docs` |
+| the manual | `crates/mosna-gui/src/docs` |
 | `package/tysserand_network.py` | `mosna-pipeline::tysserand_network` |
 | `package/assortativity.py` | `mosna-pipeline::assortativity` |
 | `package/niche_analysis.py` | `mosna-pipeline::niche_analysis` |
 | `package/clear_temporary.py` | `mosna-pipeline::clear_temporary` |
+| — (new) | `mosna-pipeline::report` |
 | `package/utils/*` | `mosna-config`, `mosna-io` |
-| `package/core/*` | `mosna-core`, `mosna-viz` |
+| `package/core/*` | `mosna-core`, `mosna-xy`, `python/mosna_xy` |
 | `mosna-package/mosna/neighbors.py` | `mosna-core::nas` |
 | `mosna-package/mosna/assortativity.py` | `mosna-core::assortativity` |
 | `mosna-package/mosna/clustering.py` | `mosna-core::{reduction, clustering}` |
 | `mosna-package/mosna/niches.py` | `mosna-core::niches` |
-| `mosna-package/mosna/plotting.py` | `mosna-viz` |
+| `mosna-package/mosna/plotting.py` | `mosna-xy`, `python/mosna_xy` |
 | `tysserand/tysserand.py` | `mosna-core::geometry` |
 
 ## Build and test
 
 ```bash
 cargo build --release
+python3 -m venv .venv && .venv/bin/pip install -e python   # the figure renderer
 cargo test --workspace
+.venv/bin/python -m pytest python                          # and its own tests
 ```
 
-The release profile uses fat LTO and a single codegen unit. There is no LAPACK,
-BLAS or Python dependency: the linear algebra needed (symmetric eigensolver,
-Cholesky, k-means) is implemented in `mosna-core::linalg`, sized for the small
-matrices that actually occur.
+The release profile uses fat LTO and a single codegen unit. There is no LAPACK
+or BLAS dependency: the linear algebra needed (symmetric eigensolver, Cholesky,
+k-means) is implemented in `mosna-core::linalg`, sized for the small matrices
+that actually occur. Python appears in one place and one only — drawing the
+figures — and the tests that check a figure was drawn run the real renderer.
+A checkout with a `.venv` at its root is found automatically, which is what
+lets `cargo test` draw figures from any crate's directory.
 
 CI runs the same checks on Linux and Windows, with `-D warnings`, plus a deep
 property-test pass — see `.github/workflows/rust.yml`.
@@ -177,5 +204,8 @@ across thread counts, recovery of planted niches, and a timing sweep. See
 
 ## Status
 
-See `PROGRESS.log`. It records what is implemented, every deliberate deviation
-from the Python behaviour and why, and a precise resumption point.
+The port is complete: the three analyses run, write their files and their
+figures, the interface drives them, and the repository is self-contained.
+`cargo test --workspace` and `pytest python` are the record of what is
+guaranteed — every module ships with the tests that pin it, and
+`test/TESTING.md` states the discipline they were written under.

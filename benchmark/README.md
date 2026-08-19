@@ -75,7 +75,7 @@ accidental one is loud.
 
 ## What the bench found
 
-Written up in `PROGRESS.log`, step 13. In short: level 2 caught Leiden
+In short: level 2 caught Leiden
 breaking ties by `HashMap` iteration order, which is seeded per thread. The
 same graph was partitioned differently on a worker thread than on the main
 one — and differently again in the next process — despite Leiden taking a

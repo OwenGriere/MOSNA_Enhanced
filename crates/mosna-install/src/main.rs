@@ -4,6 +4,7 @@ use std::path::PathBuf;
 
 use clap::Parser;
 
+use mosna_install::renderer::Subprocess;
 use mosna_install::{Installer, Sources};
 use mosna_paths::{layout::Layout, Environment};
 
@@ -26,6 +27,11 @@ struct Cli {
     /// The icon to install. Skipped when absent.
     #[arg(long)]
     icon: Option<PathBuf>,
+
+    /// The `python/` directory holding the figure renderer. Skipped when
+    /// absent, which leaves an install that analyses but does not draw.
+    #[arg(long)]
+    renderer: Option<PathBuf>,
 
     /// Remove a previous install instead of writing one.
     #[arg(long)]
@@ -58,17 +64,27 @@ fn main() -> anyhow::Result<()> {
             .config
             .unwrap_or_else(|| PathBuf::from("CONFIG/configuration.yaml")),
         icon: cli.icon.filter(|path| path.is_file()),
+        renderer: cli.renderer.filter(|path| path.is_dir()),
     };
 
     let installer = Installer::new(layout.clone(), sources, environment.clone());
 
-    let report = if cli.uninstall {
+    let mut report = if cli.uninstall {
         installer.uninstall()?
     } else if cli.dry_run {
         installer.dry_run()?
     } else {
         installer.install()?
     };
+
+    // The figures are drawn by a Python package, which is installed into an
+    // environment of its own under the prefix. Last, and only for a real
+    // install: a dry run must not create anything, and an uninstall has just
+    // removed it.
+    if let (false, false, Some(renderer)) = (cli.uninstall, cli.dry_run, installer.renderer()) {
+        let interpreter = mosna_paths::python::resolve(&environment);
+        report.extend(renderer.install(&interpreter, &Subprocess)?);
+    }
 
     for line in &report {
         println!("{line}");

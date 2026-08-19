@@ -111,7 +111,7 @@ pub fn level_1_golden(spec: &CohortSpec) -> Fingerprint {
 ///
 /// Making even that exact is possible — fold into a fixed number of chunks
 /// rather than however many rayon chose — at the cost of holding those chunk
-/// accumulators in memory. Recorded in `TASKS.md`; not worth it for 1e-15.
+/// accumulators in memory. Not worth it for 1e-15.
 pub fn level_2_reproducibility(spec: &CohortSpec) -> Reproducibility {
     let first = seeded_run(spec);
 

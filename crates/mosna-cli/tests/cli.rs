@@ -362,3 +362,69 @@ fn an_invalid_configuration_surfaces_the_validation_message() {
         "{error}"
     );
 }
+
+/// The report is the last thing a user does with a working directory, and it
+/// has to describe what the analyses actually left there — the real files, drawn
+/// by the real renderer, not a fixture.
+#[test]
+fn the_report_describes_what_the_analyses_wrote() {
+    let fixture = Fixture::new();
+
+    for step in ["tysserand-network", "assortativity"] {
+        run(Cli::parse_from([
+            "mosna",
+            step,
+            "--file",
+            fixture.config().to_str().unwrap(),
+            "--working_dir",
+            fixture.working_dir().to_str().unwrap(),
+        ])
+        .unwrap())
+        .unwrap();
+    }
+
+    run(Cli::parse_from([
+        "mosna",
+        "generate-report",
+        "--working_dir",
+        fixture.working_dir().to_str().unwrap(),
+    ])
+    .unwrap())
+    .unwrap();
+
+    let report = fixture.working_dir().join("report.html");
+    assert!(report.is_file(), "no report was written");
+    let page = std::fs::read_to_string(&report).unwrap();
+
+    assert!(page.starts_with("<!doctype html>"));
+    // The figures of step 2, under the names the analyses wrote them with.
+    assert!(
+        page.contains("abundance"),
+        "the abundance figure is missing"
+    );
+    assert!(
+        page.contains("Assortativity/abundance.html"),
+        "the interactive chart is not linked"
+    );
+    // And the table beside them, which is not a figure but is in the directory.
+    assert!(page.contains("net_stat.csv"), "the listing is incomplete");
+}
+
+/// Generating a report on a directory nothing has been run in is the first
+/// thing a new user will do by accident. It must produce a page, not an error.
+#[test]
+fn a_report_on_an_empty_directory_is_not_a_failure() {
+    let dir = tempfile::tempdir().unwrap();
+
+    run(Cli::parse_from([
+        "mosna",
+        "generate-report",
+        "--working_dir",
+        dir.path().to_str().unwrap(),
+    ])
+    .unwrap())
+    .unwrap();
+
+    let page = std::fs::read_to_string(dir.path().join("report.html")).unwrap();
+    assert!(page.to_lowercase().contains("no figure"));
+}

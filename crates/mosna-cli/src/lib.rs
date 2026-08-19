@@ -18,6 +18,13 @@
 //! mosna clear-temporary                --working_dir <dir>
 //! ```
 //!
+//! and one command the Python never had, for the same reason it never had the
+//! figures it reports on:
+//!
+//! ```text
+//! mosna generate-report                --working_dir <dir>
+//! ```
+//!
 //! The flag names are kept exactly — including `--working_dir` with its
 //! underscore, which is not the usual CLI spelling but is what the Python
 //! `argparse` declares and therefore what any existing script passes.
@@ -27,9 +34,10 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 use mosna_pipeline::{
-    assortativity, clear_temporary, niche_analysis, tysserand_network, StdoutProgress,
+    assortativity, clear_temporary, generate_report, niche_analysis, tysserand_network,
+    StdoutProgress,
 };
-use mosna_viz::Figures;
+use mosna_xy::Figures;
 
 /// Spatial network construction and analysis for spatial omics.
 #[derive(Debug, Parser)]
@@ -52,7 +60,7 @@ impl Cli {
     }
 }
 
-/// The four analyses.
+/// The four analyses, plus the two operations on a finished directory.
 #[derive(Debug, Subcommand)]
 pub enum Command {
     /// Step 1 — reconstruct a spatial network for every sample.
@@ -90,6 +98,16 @@ pub enum Command {
         #[arg(long = "working_dir")]
         working_dir: PathBuf,
     },
+
+    /// Collect everything in the working directory into one HTML report.
+    ///
+    /// Takes no configuration: the report describes the directory as it stands,
+    /// which is what lets it be run on results copied off a cluster.
+    #[command(name = "generate-report")]
+    GenerateReport {
+        #[arg(long = "working_dir")]
+        working_dir: PathBuf,
+    },
 }
 
 impl Command {
@@ -100,6 +118,7 @@ impl Command {
             Command::Assortativity { .. } => "assortativity",
             Command::NicheAnalysis { .. } => "niche-analysis",
             Command::ClearTemporary { .. } => "clear-temporary",
+            Command::GenerateReport { .. } => "generate-report",
         }
     }
 }
@@ -107,26 +126,42 @@ impl Command {
 /// Execute a parsed command.
 ///
 /// Progress goes to stdout in the `[QT_INFO]` / `[QT_PROGRESS]` form the
-/// interface parses, and figures are drawn by `mosna-viz`.
+/// interface parses, and figures are drawn by the Python `xy` package.
+///
+/// # Two phases, and why
+///
+/// The analysis queues its figures as it goes and they are all drawn at the
+/// end, in one pass. One interpreter is started per run rather than one per
+/// figure — a cohort of two hundred samples would otherwise spend more time
+/// starting Python than drawing — and the renderer reports its own progress
+/// through the same protocol, so the interface's bar keeps moving.
 pub fn run(cli: Cli) -> anyhow::Result<()> {
     let progress = StdoutProgress;
-    let figures = Figures::new();
 
     match cli.command {
         Command::TysserandNetwork { file, working_dir } => {
             let config = mosna_config::get_config(&file)?;
+            let figures = Figures::new(&working_dir);
             tysserand_network(&config, &working_dir, &progress, &figures)?;
+            figures.render()?;
         }
         Command::Assortativity { file, working_dir } => {
             let config = mosna_config::get_config(&file)?;
+            let figures = Figures::new(&working_dir);
             assortativity(&config, &working_dir, &progress, &figures)?;
+            figures.render()?;
         }
         Command::NicheAnalysis { file, working_dir } => {
             let config = mosna_config::get_config(&file)?;
+            let figures = Figures::new(&working_dir);
             niche_analysis(&config, &working_dir, &progress, &figures)?;
+            figures.render()?;
         }
         Command::ClearTemporary { working_dir } => {
             clear_temporary(&working_dir, &progress)?;
+        }
+        Command::GenerateReport { working_dir } => {
+            generate_report(&working_dir, &progress)?;
         }
     }
 
@@ -137,6 +172,11 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
 mod tests {
     use super::*;
 
+    /// The commands that take no configuration: they act on a directory that
+    /// already exists, so asking for a YAML would be asking for something the
+    /// user does not need to have.
+    const WITHOUT_CONFIG: [&str; 2] = ["clear-temporary", "generate-report"];
+
     #[test]
     fn every_command_reports_its_own_name() {
         let names = [
@@ -144,9 +184,10 @@ mod tests {
             "assortativity",
             "niche-analysis",
             "clear-temporary",
+            "generate-report",
         ];
         for name in names {
-            let argv: Vec<&str> = if name == "clear-temporary" {
+            let argv: Vec<&str> = if WITHOUT_CONFIG.contains(&name) {
                 vec!["mosna", name, "--working_dir", "/w"]
             } else {
                 vec!["mosna", name, "--file", "c.yaml", "--working_dir", "/w"]
@@ -154,6 +195,23 @@ mod tests {
             let cli = Cli::parse_from(argv).unwrap();
             assert_eq!(cli.command.name(), name);
         }
+    }
+
+    /// The report is built from the directory, not from the configuration: it
+    /// must be possible to report on a folder copied off a cluster, whose YAML
+    /// is somewhere else entirely.
+    #[test]
+    fn the_report_needs_only_a_directory() {
+        assert!(Cli::parse_from(["mosna", "generate-report", "--working_dir", "/w"]).is_ok());
+        assert!(Cli::parse_from([
+            "mosna",
+            "generate-report",
+            "--file",
+            "c.yaml",
+            "--working_dir",
+            "/w"
+        ])
+        .is_err());
     }
 
     #[test]

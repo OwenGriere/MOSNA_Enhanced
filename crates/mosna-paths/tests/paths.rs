@@ -20,6 +20,7 @@ fn bare(exe_dir: &Path) -> Environment {
         xdg_data_home: None,
         mosna_config: None,
         mosna_bin: None,
+        mosna_python: None,
         current_dir: None,
         desktop_dir: None,
         user_profile: None,

@@ -1,6 +1,6 @@
 //! The manual, rendered inside the interface.
 //!
-//! The Python interface shows `assets/documentation.html` in a web view. Here
+//! The Python interface showed a bundled HTML manual in a web view. Here
 //! the same material is a structured document the interface draws itself, which
 //! buys three things: it inherits the palette, it can be navigated with real
 //! buttons, and it can switch language without reloading.

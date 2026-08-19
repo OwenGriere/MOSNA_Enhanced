@@ -72,6 +72,12 @@ pub const STEP_TYSSERAND: Color32 = Color32::from_rgb(0x6B, 0x52, 0x0C);
 pub const STEP_ASSORTATIVITY: Color32 = Color32::from_rgb(0xA8, 0x86, 0x2A);
 pub const STEP_NICHES: Color32 = Color32::from_rgb(0xDC, 0xC2, 0x72);
 pub const STEP_CLEAR: Color32 = Color32::from_rgb(0x4E, 0x55, 0x5C);
+/// The report button, beside the clear.
+///
+/// Off the gold ramp the three analyses share, and off the graphite of the
+/// button next to it: the two that share a row have to be told apart at a
+/// glance, because one of them deletes.
+pub const STEP_REPORT: Color32 = Color32::from_rgb(0x2E, 0x6B, 0x63);
 /// A failed run turns the progress bar this colour.
 pub const STEP_FAILED: Color32 = Color32::from_rgb(0xA3, 0x24, 0x1B);
 
@@ -334,6 +340,7 @@ pub fn step_colour(step: crate::model::runner::Step) -> Color32 {
         Step::Tysserand => STEP_TYSSERAND,
         Step::Assortativity => STEP_ASSORTATIVITY,
         Step::NicheAnalysis => STEP_NICHES,
+        Step::GenerateReport => STEP_REPORT,
         Step::ClearTemporary => STEP_CLEAR,
     }
 }
@@ -384,6 +391,7 @@ mod tests {
             STEP_TYSSERAND,
             STEP_ASSORTATIVITY,
             STEP_NICHES,
+            STEP_REPORT,
             STEP_CLEAR,
             STEP_FAILED,
             ACCENT,

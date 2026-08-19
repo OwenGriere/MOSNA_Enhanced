@@ -46,6 +46,7 @@ impl Build {
                 // The icon is optional; the tests that need one point at the
                 // repository's.
                 icon: None,
+                renderer: None,
             },
         }
     }

@@ -621,7 +621,26 @@ fn every_step_has_a_button_label_naming_its_position() {
     assert!(Step::Tysserand.label().contains("Step 1"));
     assert!(Step::Assortativity.label().contains("Step 2"));
     assert!(Step::NicheAnalysis.label().contains("Step 3"));
-    assert_eq!(Step::ClearTemporary.label(), "Clear Temp Files");
+    // The two that operate on a finished directory are numbered by neither:
+    // they are not a stage of the workflow, they are what you do with its
+    // output, and they say so instead.
+    assert_eq!(Step::GenerateReport.label(), "Generate report");
+    assert_eq!(Step::ClearTemporary.label(), "Clear temporary data");
+}
+
+/// Every button says what it does before it is pressed. The one that deletes
+/// has to say what it deletes, and the one that writes has to say where.
+#[test]
+fn every_step_explains_itself_under_the_pointer() {
+    for step in Step::all() {
+        assert!(
+            step.hint().len() > 30,
+            "{step:?} has no real explanation: {}",
+            step.hint()
+        );
+    }
+    assert!(Step::ClearTemporary.hint().contains("temp"));
+    assert!(Step::GenerateReport.hint().contains("report.html"));
 }
 
 #[test]

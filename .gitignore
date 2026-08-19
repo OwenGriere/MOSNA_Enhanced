@@ -8,14 +8,19 @@ target/
 
 /dist
 /out
+# What an analysis writes, in case one is run with the checkout as its working
+# directory. The report and the figure queue belong to a run, not to the source.
 temp/
 Tysserand_Network/
 Assortativity/
 Niche_Analysis/
-reports/
+report.html
+.mosna-figures/
 
+# Except the failing seeds of the property tests, which are part of the suite:
+# a committed regression file turns a one-off discovery into a permanent test.
 !**/proptest-regressions/
-TASKS.md
+
 /benchmark/reports/
 /benchmark/results/
 
@@ -51,3 +56,15 @@ Desktop.ini
 .env
 .env.local
 *.local
+
+# ---------------------------------------------------------------------------
+# Python: the checkout's own environment for the figure renderer, and what
+# building and testing it leaves behind.
+# ---------------------------------------------------------------------------
+
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+/python/build/
+.pytest_cache/

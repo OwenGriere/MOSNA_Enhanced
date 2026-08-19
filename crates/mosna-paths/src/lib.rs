@@ -12,6 +12,7 @@
 pub mod binary;
 pub mod config_file;
 pub mod layout;
+pub mod python;
 pub mod user_dirs;
 
 use std::path::PathBuf;
@@ -28,6 +29,8 @@ pub struct Environment {
     pub mosna_config: Option<PathBuf>,
     /// `MOSNA_BIN`: an explicit analysis binary.
     pub mosna_bin: Option<PathBuf>,
+    /// `MOSNA_PYTHON`: an explicit interpreter for the figure renderer.
+    pub mosna_python: Option<PathBuf>,
     pub current_dir: Option<PathBuf>,
 
     /// `XDG_DESKTOP_DIR`, when the desktop has been relocated or localised.
@@ -54,6 +57,7 @@ impl Environment {
             xdg_data_home: variable("XDG_DATA_HOME"),
             mosna_config: variable("MOSNA_CONFIG"),
             mosna_bin: variable("MOSNA_BIN"),
+            mosna_python: variable("MOSNA_PYTHON"),
             current_dir: std::env::current_dir().ok(),
             desktop_dir: variable("XDG_DESKTOP_DIR"),
             user_profile: variable("USERPROFILE"),

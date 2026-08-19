@@ -1,6 +1,6 @@
 //! The manual's text, in English and French.
 //!
-//! Adapted from `assets/documentation.html`, with an installation chapter the
+//! Adapted from the Python interface's HTML manual, with an installation chapter the
 //! Python version does not have — the Python was always run from a checkout,
 //! this is installed.
 //!
@@ -38,12 +38,26 @@ fn installation() -> Chapter {
                 title: T::new("Requirements", "Prérequis"),
                 blocks: vec![
                     Block::Paragraph(T::new(
-                        "MOSNA is a native application. It needs no Python, no conda \
-                         environment and no scientific stack: everything it computes, it \
-                         computes itself.",
-                        "MOSNA est une application native. Elle ne demande ni Python, ni \
-                         environnement conda, ni pile scientifique : tout ce qu'elle calcule, \
-                         elle le calcule elle-même.",
+                        "MOSNA is a native application: everything it computes, it computes \
+                         itself — no conda environment, no scientific stack.",
+                        "MOSNA est une application native : tout ce qu'elle calcule, elle le \
+                         calcule elle-même — pas d'environnement conda, pas de pile \
+                         scientifique.",
+                    )),
+                    Block::Paragraph(T::new(
+                        "The figures are the one exception. They are drawn by xy, a Python \
+                         charting library, which is what makes each of them both an image and \
+                         a chart you can pan, zoom and read values off. So the machine needs \
+                         Python 3.11 or newer — and nothing else from it: the installer builds \
+                         a small environment of its own under the install directory and puts \
+                         the renderer there, leaving whatever Python you work in untouched.",
+                        "Les figures sont la seule exception. Elles sont dessinées par xy, une \
+                         bibliothèque graphique Python, ce qui fait de chacune à la fois une \
+                         image et un graphique que l'on peut déplacer, zoomer et dont on peut \
+                         lire les valeurs. La machine a donc besoin de Python 3.11 ou plus \
+                         récent — et de rien d'autre : l'installateur construit un petit \
+                         environnement à lui sous le dossier d'installation et y place le \
+                         moteur de rendu, sans toucher au Python dans lequel vous travaillez.",
                     )),
                     Block::Paragraph(T::new(
                         "Building it requires the Rust toolchain. Installing it requires \
@@ -59,6 +73,28 @@ fn installation() -> Chapter {
                         lines: vec![
                             "curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh",
                         ],
+                    },
+                    Block::Code {
+                        caption: T::new(
+                            "And Python, if the machine has none",
+                            "Et Python, si la machine n'en a pas",
+                        ),
+                        lines: vec![
+                            "sudo apt install python3 python3-venv    # Debian, Ubuntu, Mint",
+                            "sudo dnf install python3                 # Fedora, RHEL",
+                            "sudo pacman -S python                    # Arch, Manjaro",
+                            "winget install Python.Python.3.13        # Windows",
+                        ],
+                    },
+                    Block::Callout {
+                        kind: CalloutKind::Note,
+                        text: T::new(
+                            "Setting MOSNA_PYTHON points MOSNA at a particular interpreter, \
+                             which is what to do when you already keep an environment with xy \
+                             in it.",
+                            "Définir MOSNA_PYTHON désigne un interpréteur particulier, ce qu'il \
+                             faut faire si vous entretenez déjà un environnement contenant xy.",
+                        ),
                     },
                     Block::Callout {
                         kind: CalloutKind::Note,
@@ -427,20 +463,62 @@ fn workflow() -> Chapter {
                         ),
                         lines: vec![
                             "temp/net_dir_mosna/   nodes_*.parquet, edges_*.parquet",
-                            "Tysserand_Network/    net_{patient}-{sample}.png",
+                            "Tysserand_Network/    net_{patient}-{sample}.png and .html",
                             "Assortativity/        net_stat.csv and its figures",
                             "Niche_Analysis/       niches, their composition, the projection",
+                            "report.html           every figure above, on one page",
                         ],
                     },
+                    Block::Paragraph(T::new(
+                        "Under the three step buttons sit two more, side by side. Neither \
+                         computes anything: they are what you do with a directory the steps \
+                         have already filled.",
+                        "Sous les trois boutons d'étape s'en trouvent deux autres, côte à \
+                         côte. Aucun des deux ne calcule quoi que ce soit : ils servent à \
+                         traiter un répertoire que les étapes ont déjà rempli.",
+                    )),
+                    Block::List(vec![
+                        T::new(
+                            "Generate report — walks the working directory and writes \
+                             report.html next to the results. One tab per analysis; inside \
+                             each, the figures about the whole cohort first and then one \
+                             patient at a time; and a box at the top that filters everything \
+                             by patient, by sample or by file name. Figures are shown small, \
+                             several to a row; clicking one opens it large, and the chart \
+                             inside it zooms and pans as it does anywhere else. Press it as \
+                             often as you like: it replaces the previous report rather than \
+                             adding to it.",
+                            "Generate report — parcourt le répertoire de travail et écrit \
+                             report.html à côté des résultats. Un onglet par analyse ; dans \
+                             chacun, d'abord les figures qui portent sur toute la cohorte, \
+                             puis un patient à la fois ; et en haut un champ qui filtre le \
+                             tout par patient, par échantillon ou par nom de fichier. Les \
+                             figures sont affichées en petit, plusieurs par ligne ; un clic \
+                             en ouvre une en grand, et le graphique qu'elle contient se zoome \
+                             et se déplace comme partout ailleurs. Appuyez autant de fois que \
+                             voulu : il remplace le rapport précédent au lieu de s'y ajouter.",
+                        ),
+                        T::new(
+                            "Clear temporary data — deletes the temp folder and the \
+                             intermediate networks in it. The figures, the tables and the \
+                             report are kept.",
+                            "Clear temporary data — supprime le dossier temp et les réseaux \
+                             intermédiaires qu'il contient. Les figures, les tableaux et le \
+                             rapport sont conservés.",
+                        ),
+                    ]),
                     Block::Callout {
                         kind: CalloutKind::Tip,
                         text: T::new(
                             "Once step 1 has run you can clear the temporary files at any \
                              time, but steps 2 and 3 read them — clear them only when you are \
-                             done.",
+                             done. The report reads only the figures, so it can be generated \
+                             before or after clearing, and either way describes what is left.",
                             "Une fois l'étape 1 passée, vous pouvez vider les fichiers \
                              temporaires à tout moment, mais les étapes 2 et 3 les lisent — ne \
-                             les videz qu'une fois terminé.",
+                             les videz qu'une fois terminé. Le rapport ne lit que les figures : \
+                             il peut être généré avant ou après le vidage, et décrit dans les \
+                             deux cas ce qui reste.",
                         ),
                     },
                     Block::Image {
@@ -1106,14 +1184,26 @@ fn credits() -> Chapter {
                              above all.",
                             "Les lois non uniformes dont ont besoin les tirages, la loi normale \
                              en premier lieu.")),
-                        C::new("plotters", T::new(
+                        C::new("xy", T::new(
                             "Draws every figure: the networks, the assortativity heatmaps, the \
-                             niche compositions and the projections. It replaces matplotlib, and \
-                             its ttf backend is what renders accented phenotype names correctly.",
+                             niche compositions and the projections. A Python package, and the \
+                             one place in this application that is not Rust — it produces the \
+                             interactive chart and the image from a single description, which is \
+                             what lets the report be explored rather than only looked at.",
                             "Dessine toutes les figures : réseaux, cartes de chaleur \
-                             d'assortativité, compositions de niches et projections. Il remplace \
-                             matplotlib, et son backend ttf est ce qui rend correctement les noms \
-                             de phénotypes accentués.")),
+                             d'assortativité, compositions de niches et projections. Un paquet \
+                             Python, et le seul endroit de cette application qui ne soit pas du \
+                             Rust — il produit le graphique interactif et l'image à partir d'une \
+                             seule description, ce qui permet d'explorer le rapport et pas \
+                             seulement de le regarder.")),
+                        C::new("numpy", T::new(
+                            "Reads the arrays the analyses hand the renderer. The coordinates of \
+                             a hundred thousand cells are written as raw doubles and read back \
+                             in one call, which is what keeps drawing a cohort quick.",
+                            "Lit les tableaux que les analyses transmettent au moteur de rendu. \
+                             Les coordonnées de cent mille cellules sont écrites en réels bruts \
+                             et relues en un appel, ce qui garde le dessin d'une cohorte \
+                             rapide.")),
                     ]),
                 ],
             },

@@ -1,0 +1,22 @@
+[package]
+name = "mosna-xy"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Figure specifications handed to the Python `xy` renderer"
+
+[dependencies]
+anyhow.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+mosna-core.workspace = true
+mosna-paths.workspace = true
+mosna-io.workspace = true
+mosna-pipeline.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+image = { version = "0.25", default-features = false, features = ["png"] }

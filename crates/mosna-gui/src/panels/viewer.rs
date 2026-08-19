@@ -214,6 +214,18 @@ fn log(app: &mut MosnaApp, ui: &mut egui::Ui) {
         });
 }
 
+/// Height of the bar, and how round its ends are.
+const BAR_HEIGHT: f32 = theme::size::BODY + 10.0;
+const BAR_RADIUS: f32 = 5.0;
+
+/// How many strips the gradient is painted in.
+///
+/// `egui` fills a rectangle with one colour, so a gradient is a row of narrow
+/// rectangles. Ninety-six of them is a strip of two or three pixels on any
+/// panel this is drawn in — below what an eye resolves as a step — and ninety-
+/// six rectangles is nothing to draw.
+const SLICES: usize = 96;
+
 fn status_bar(app: &mut MosnaApp, ui: &mut egui::Ui) {
     ui.label(
         egui::RichText::new(&app.status)
@@ -222,30 +234,137 @@ fn status_bar(app: &mut MosnaApp, ui: &mut egui::Ui) {
     );
     ui.add_space(5.0);
 
-    let colour = if app.last_run_failed {
-        theme::STEP_FAILED
-    } else {
-        app.active_step
-            .map(theme::step_colour)
-            .unwrap_or(theme::ACCENT_SOFT)
+    let running = app.run.is_some();
+    let caption = match app.progress {
+        Some((current, total)) if total > 0 => format!("{current} / {total}"),
+        _ => String::new(),
     };
 
-    let bar = match app.progress {
-        Some((current, total)) if total > 0 => {
-            egui::ProgressBar::new((current as f32 / total as f32).clamp(0.0, 1.0))
-                .text(format!("{current} / {total}"))
+    ui.horizontal(|ui| {
+        // The count sits beside the bar rather than on it. On it, it would have
+        // to be legible against both ends of a ramp that runs from dark bronze
+        // to pale champagne, and no single colour is.
+        let reserved = if caption.is_empty() {
+            0.0
+        } else {
+            crate::panels::label_width(ui, &caption) + ui.spacing().item_spacing.x
+        };
+        let width =
+            (crate::panels::layout::content_width(ui.available_width()) - reserved).max(48.0);
+
+        let (rect, _) = ui.allocate_exact_size(
+            egui::vec2(width, BAR_HEIGHT),
+            egui::Sense::focusable_noninteractive(),
+        );
+        paint_bar(app, ui, rect, running);
+
+        if !caption.is_empty() {
+            ui.label(
+                egui::RichText::new(caption)
+                    .color(theme::TEXT_MUTED)
+                    .size(theme::size::LABEL)
+                    .monospace(),
+            );
         }
-        // No count yet: an animated bar says "working" without claiming a
-        // position it does not know.
-        _ if app.run.is_some() => egui::ProgressBar::new(0.0).animate(true),
-        _ => egui::ProgressBar::new(0.0),
-    };
+    });
 
-    ui.add(
-        bar.fill(colour)
-            .desired_height(theme::size::BODY + 10.0)
-            .corner_radius(egui::CornerRadius::same(4)),
+    if running {
+        // Nothing else asks for a frame while a step runs, so without this the
+        // gold would freeze the moment the pointer stopped moving — which is
+        // the opposite of what it is there to say. Thirty a second is smooth
+        // and costs a fraction of a core.
+        ui.ctx()
+            .request_repaint_after(std::time::Duration::from_millis(33));
+    }
+}
+
+/// The track, and whatever is flowing along it.
+fn paint_bar(app: &MosnaApp, ui: &egui::Ui, rect: egui::Rect, running: bool) {
+    let painter = ui.painter();
+    let radius = egui::CornerRadius::same(BAR_RADIUS as u8);
+    painter.rect_filled(rect, radius, theme::SURFACE);
+    painter.rect_stroke(
+        rect,
+        radius,
+        egui::Stroke::new(1.0, theme::BORDER),
+        egui::StrokeKind::Inside,
     );
+
+    let phase = crate::model::flow::phase(ui.input(|input| input.time));
+
+    match app.progress {
+        // A position to show: the ramp fills it, and the highlight travels
+        // along what has been done.
+        Some((current, total)) if total > 0 => {
+            let done = (current as f32 / total as f32).clamp(0.0, 1.0);
+            let shade: Box<dyn Fn(f32) -> egui::Color32> = if app.last_run_failed {
+                Box::new(|_| theme::STEP_FAILED)
+            } else if running {
+                Box::new(move |t| crate::model::flow::shade(t, phase))
+            } else {
+                // Finished, and still on screen: the ramp stays, the movement
+                // stops. A bar that keeps flowing after the process exited
+                // says the wrong thing.
+                Box::new(crate::model::flow::base)
+            };
+            paint_ramp(painter, rect, (0.0, done), &shade);
+        }
+        // No count yet: a band sweeps the track. It says "working" without
+        // claiming a position it does not know.
+        _ if running => {
+            let (start, end) = crate::model::flow::band(phase);
+            paint_ramp(painter, rect, (start, end), &|t| {
+                // Bright in the middle: the band is a comet, and its own
+                // movement is the flow.
+                crate::model::flow::shade(t, 0.5)
+            });
+        }
+        _ => {}
+    }
+}
+
+/// Fill `span` of `rect` with a colour that changes along it.
+fn paint_ramp(
+    painter: &egui::Painter,
+    rect: egui::Rect,
+    span: (f32, f32),
+    shade: &dyn Fn(f32) -> egui::Color32,
+) {
+    let (start, end) = span;
+    let left = rect.left() + rect.width() * start;
+    let right = rect.left() + rect.width() * end;
+    if right - left < 1.0 {
+        return;
+    }
+
+    let step = (right - left) / SLICES as f32;
+    for index in 0..SLICES {
+        let from = left + step * index as f32;
+        // Half a pixel of overlap, or a seam shows between two strips whose
+        // edges land either side of a device pixel.
+        let to = (from + step + 0.5).min(right);
+
+        let corner = egui::CornerRadius {
+            nw: if index == 0 { BAR_RADIUS as u8 } else { 0 },
+            sw: if index == 0 { BAR_RADIUS as u8 } else { 0 },
+            ne: if index + 1 == SLICES {
+                BAR_RADIUS as u8
+            } else {
+                0
+            },
+            se: if index + 1 == SLICES {
+                BAR_RADIUS as u8
+            } else {
+                0
+            },
+        };
+
+        painter.rect_filled(
+            egui::Rect::from_min_max(egui::pos2(from, rect.top()), egui::pos2(to, rect.bottom())),
+            corner,
+            shade((index as f32 + 0.5) / SLICES as f32),
+        );
+    }
 }
 
 fn label(name: &str, selected: bool) -> egui::RichText {

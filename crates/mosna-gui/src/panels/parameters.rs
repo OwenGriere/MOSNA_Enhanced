@@ -322,14 +322,66 @@ fn actions(app: &mut MosnaApp, ui: &mut egui::Ui) {
     });
 
     ui.add_space(4.0);
-    for step in Step::all() {
-        ui.add_enabled_ui(!running, |ui| {
-            if accent_button(ui, step.label(), theme::step_colour(step)).clicked() {
-                app.start(step);
+    // The rows are decided in `Step::rows`, where the arrangement can be
+    // stated as a test rather than discovered by dragging the panel.
+    for row in Step::rows() {
+        ui.add_enabled_ui(!running, |ui| match row.as_slice() {
+            [step] => {
+                if step_button(ui, *step, None).clicked() {
+                    app.start(*step);
+                }
+            }
+            steps => {
+                let widest = steps
+                    .iter()
+                    .map(|step| crate::panels::button_width(ui, step.label()))
+                    .fold(0.0f32, f32::max);
+                let spacing = ui.spacing().item_spacing.x;
+
+                // Side by side while both captions fit; one per line once they
+                // do not. `add_sized` is a maximum in name only, so a button
+                // whose caption is too long lays itself out at its own width
+                // and hangs out of the panel.
+                match crate::panels::layout::buttons_in_a_row(
+                    ui.available_width(),
+                    spacing,
+                    steps.len(),
+                    widest,
+                ) {
+                    Some(width) => {
+                        ui.horizontal(|ui| {
+                            for step in steps {
+                                if step_button(ui, *step, Some(width)).clicked() {
+                                    app.start(*step);
+                                }
+                            }
+                        });
+                    }
+                    None => {
+                        for step in steps {
+                            if step_button(ui, *step, None).clicked() {
+                                app.start(*step);
+                            }
+                        }
+                    }
+                }
             }
         });
         ui.add_space(3.0);
     }
+}
+
+/// One step's button, with what it does under the pointer.
+///
+/// The hint matters most for the two that share a row: three words of caption
+/// cannot say that one of them deletes a directory, and the tooltip can.
+fn step_button(ui: &mut egui::Ui, step: Step, width: Option<f32>) -> egui::Response {
+    let colour = theme::step_colour(step);
+    let response = match width {
+        Some(width) => crate::panels::accent_button_sized(ui, step.label(), colour, width),
+        None => accent_button(ui, step.label(), colour),
+    };
+    response.on_hover_text(step.hint())
 }
 
 fn tab_label(name: &str, selected: bool) -> egui::RichText {

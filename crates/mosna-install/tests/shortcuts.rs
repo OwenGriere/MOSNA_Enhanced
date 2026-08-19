@@ -24,6 +24,7 @@ fn sources(dir: &Path, platform: Platform) -> Sources {
         interface_binary: interface,
         config,
         icon: None,
+        renderer: None,
     }
 }
 

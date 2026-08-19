@@ -7,7 +7,7 @@ members = [
     "crates/mosna-install",
     "crates/mosna-io",
     "crates/mosna-core",
-    "crates/mosna-viz",
+    "crates/mosna-xy",
     "crates/mosna-pipeline",
     "crates/mosna-cli",
     "crates/mosna-gui",
@@ -28,7 +28,7 @@ mosna-testkit = { path = "crates/mosna-testkit" }
 mosna-paths = { path = "crates/mosna-paths" }
 mosna-io = { path = "crates/mosna-io" }
 mosna-core = { path = "crates/mosna-core" }
-mosna-viz = { path = "crates/mosna-viz" }
+mosna-xy = { path = "crates/mosna-xy" }
 mosna-pipeline = { path = "crates/mosna-pipeline" }
 
 anyhow = "1"

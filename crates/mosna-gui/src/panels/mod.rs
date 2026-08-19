@@ -180,17 +180,29 @@ pub fn path_field(ui: &mut egui::Ui, title: &str, path: &mut String) -> bool {
     changed
 }
 
-/// A button filled with a step's colour.
+/// A button filled with a step's colour, across the width it is offered.
 pub fn accent_button(ui: &mut egui::Ui, text: &str, colour: egui::Color32) -> egui::Response {
+    accent_button_sized(
+        ui,
+        text,
+        colour,
+        layout::content_width(ui.available_width()),
+    )
+}
+
+/// The same, at a chosen width, for the two buttons that share a row.
+pub fn accent_button_sized(
+    ui: &mut egui::Ui,
+    text: &str,
+    colour: egui::Color32,
+    width: f32,
+) -> egui::Response {
     // Dark text on a light fill, light text on a dark one, so the caption stays
     // readable across the whole step palette.
     let foreground = theme::text_on(colour);
 
     ui.add_sized(
-        [
-            layout::content_width(ui.available_width()),
-            theme::STEP_BUTTON_HEIGHT,
-        ],
+        [width, theme::STEP_BUTTON_HEIGHT],
         egui::Button::new(
             egui::RichText::new(text)
                 .color(foreground)

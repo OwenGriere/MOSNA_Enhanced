@@ -396,3 +396,63 @@ fn no_figure_is_embedded_without_being_shown() {
         "these figures are compiled into the binary but never shown: {unused:?}"
     );
 }
+
+/// The manual used to promise "no Python, no conda, no scientific stack". The
+/// figures are drawn by a Python package now, and a manual that tells a reader
+/// to prepare a machine that will not run the application is worse than a
+/// manual with a gap in it.
+#[test]
+fn the_manual_does_not_promise_an_installation_without_python() {
+    let documentation = documentation();
+    let text = [Language::English, Language::French]
+        .map(|language| all_text(&documentation, language).join(" "))
+        .join(" ");
+    assert!(
+        !text.contains("needs no Python") && !text.contains("ne demande ni Python"),
+        "the manual still promises an install with no Python"
+    );
+}
+
+/// And it has to say which version, in both languages, because that is the one
+/// thing a reader has to check before starting.
+#[test]
+fn the_manual_names_the_python_version_the_renderer_needs() {
+    let documentation = documentation();
+    for language in [Language::English, Language::French] {
+        assert!(
+            all_text(&documentation, language)
+                .join(" ")
+                .contains("3.11"),
+            "the {language:?} manual does not name the Python version the figures need"
+        );
+    }
+}
+
+/// The report button is new, and a button whose effect is not written down is
+/// a button people do not press. Both languages, because the manual is read in
+/// both.
+#[test]
+fn the_manual_explains_the_report_button() {
+    let documentation = documentation();
+    for language in [Language::English, Language::French] {
+        let text = all_text(&documentation, language).join(" ");
+        assert!(
+            text.contains("report.html"),
+            "the {language:?} manual does not name the file the report is written to"
+        );
+    }
+}
+
+/// And it has to say that the two buttons share a row and do opposite things,
+/// since one of them deletes.
+#[test]
+fn the_manual_warns_that_clearing_is_not_reversible() {
+    let documentation = documentation();
+    for language in [Language::English, Language::French] {
+        let text = all_text(&documentation, language).join(" ").to_lowercase();
+        assert!(
+            text.contains("temp"),
+            "the {language:?} manual does not say what clearing removes"
+        );
+    }
+}

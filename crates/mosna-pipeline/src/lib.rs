@@ -20,6 +20,7 @@ pub mod error;
 pub mod figures;
 pub mod niche_analysis;
 pub mod progress;
+pub mod report;
 pub mod tysserand_network;
 pub mod verif_cpu;
 
@@ -29,5 +30,6 @@ pub use error::{PipelineError, Result};
 pub use figures::{FigureSink, NoFigures};
 pub use niche_analysis::niche_analysis;
 pub use progress::{Progress, SilentProgress, StdoutProgress};
+pub use report::generate_report;
 pub use tysserand_network::tysserand_network;
 pub use verif_cpu::verif_cpu;

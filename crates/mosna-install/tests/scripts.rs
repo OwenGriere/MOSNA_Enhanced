@@ -282,27 +282,54 @@ fn the_readme_one_liner_matches_the_shipped_script() {
 // Build prerequisites beyond Rust
 // ---------------------------------------------------------------------------
 
-/// Rust is not the only thing the build needs.
+/// Rust is not the only thing this needs.
 ///
-/// `yeslogic-fontconfig-sys` and `freetype-sys` resolve their libraries through
-/// `pkg-config`, so a machine with a perfectly good Rust toolchain and no
-/// fontconfig headers fails in the middle of a two-minute build with an error
-/// about `PKG_CONFIG_PATH` that names nothing a user could install. Checking
-/// first costs nothing and turns that into one line of instruction.
+/// It used to be fontconfig, which the `plotters` figure backend linked
+/// against. The figures are drawn by a Python package now, so fontconfig is
+/// gone from the dependency tree entirely and Python has taken its place —
+/// and a machine with a perfectly good Rust toolchain and no interpreter must
+/// be told so before it spends two minutes building.
 #[test]
 fn the_shell_script_checks_the_build_prerequisites() {
     let text = script("install.sh");
     assert!(
-        text.contains("pkg-config"),
-        "install.sh does not check for pkg-config"
+        text.contains("command -v cc"),
+        "install.sh does not check for a C compiler"
     );
     assert!(
-        text.contains("fontconfig"),
-        "install.sh does not check for the fontconfig development files"
+        text.contains("python3"),
+        "install.sh does not check for a Python interpreter"
     );
 }
 
-/// And it must say what to type, per distribution family — "install fontconfig"
+/// And the renderer has to actually be handed to the installer, or the install
+/// silently produces an application that analyses and draws nothing.
+///
+/// Both scripts, because an install that draws figures on one platform and not
+/// on the other is the kind of difference nobody finds until a user reports it.
+#[test]
+fn both_scripts_install_the_figure_renderer() {
+    for name in ["install.sh", "install.ps1"] {
+        assert!(
+            script(name).contains("--renderer"),
+            "{name} does not pass the figure renderer to the installer"
+        );
+    }
+}
+
+/// The Windows script has to ask for Python too. It cannot check the version —
+/// that rule lives in the installer, where it is tested — but a machine with no
+/// interpreter at all should be told before it builds.
+#[test]
+fn the_windows_script_checks_for_an_interpreter() {
+    let text = script("install.ps1");
+    assert!(
+        text.contains("python"),
+        "install.ps1 does not check for a Python interpreter"
+    );
+}
+
+/// And it must say what to type, per distribution family — "install Python"
 /// is not an instruction anyone can follow blind.
 #[test]
 fn a_missing_prerequisite_names_the_command_that_installs_it() {
@@ -321,7 +348,7 @@ fn a_missing_prerequisite_names_the_command_that_installs_it() {
 fn uninstalling_does_not_demand_the_build_prerequisites() {
     let text = script("install.sh");
     let checks = text
-        .find("pkg-config")
+        .find("command -v cc")
         .expect("the prerequisite check is gone");
     let guard = text
         .find("skip_build")
@@ -339,11 +366,15 @@ fn uninstalling_does_not_demand_the_build_prerequisites() {
 fn the_readme_lists_the_same_prerequisites() {
     let readme = std::fs::read_to_string(root().join("README.md")).unwrap();
     assert!(
-        readme.contains("pkg-config"),
-        "the README does not mention pkg-config"
+        readme.contains("Python"),
+        "the README does not mention Python, which the figures now need"
     );
     assert!(
-        readme.contains("fontconfig"),
-        "the README does not mention fontconfig"
+        readme.contains("3.11"),
+        "the README does not say which Python version is needed"
+    );
+    assert!(
+        !readme.contains("fontconfig"),
+        "the README still asks for fontconfig, which nothing links against now"
     );
 }

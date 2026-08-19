@@ -1,8 +1,9 @@
 name: CI
 
-# Every unit test of the Rust port runs here. A red build blocks the change:
-# the port's contract is that each module ships with the tests that pin its
-# behaviour against the Python implementation it replaces.
+# Every test in the repository runs here, in both languages. A red build blocks
+# the change: the port's contract is that each module ships with the tests that
+# pin its behaviour, and the figures are drawn by a Python package whose own
+# suite is no less part of that.
 
 on:
   push:
@@ -14,8 +15,18 @@ env:
   CARGO_TERM_COLOR: always
   # Fail on warnings so dead code and unused results cannot accumulate.
   RUSTFLAGS: -D warnings
+  # The version the renderer is pinned to, in one place.
+  PYTHON_VERSION: '3.13'
 
 jobs:
+  # ---------------------------------------------------------------------------
+  # The suite itself: formatting, lints, and every Rust test.
+  #
+  # Python is installed here too, and the renderer with it. Without them the
+  # tests that check a figure was actually drawn say why and stop — which would
+  # turn the checks that matter most into silence, on the one machine where
+  # nobody is watching them run.
+  # ---------------------------------------------------------------------------
   test:
     name: test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
@@ -32,6 +43,18 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
+
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      # Into the interpreter on PATH rather than a virtual environment: that is
+      # the last of the four places MOSNA looks, so this also exercises the
+      # fallback the tests cannot reach on a developer's machine.
+      - name: Install the figure renderer
+        run: python -m pip install --quiet -e "python[test]"
 
       - name: Cache cargo registry and build output
         uses: Swatinem/rust-cache@v2
@@ -51,6 +74,35 @@ jobs:
       - name: Documentation tests
         run: cargo test --workspace --doc
 
+  # ---------------------------------------------------------------------------
+  # The renderer's own suite. Its own job, and no Rust toolchain in it: what
+  # each figure is made of, and what it does with an empty one, is settled
+  # without compiling anything, and a failure here should be legible without
+  # reading past a build log.
+  # ---------------------------------------------------------------------------
+  renderer:
+    name: figure renderer
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: pip
+
+      - name: Install the renderer and its test dependencies
+        run: python -m pip install --quiet -e "python[test]"
+
+      - name: Renderer tests
+        run: python -m pytest python -q
+
+      # The two sides agree on a vocabulary of figure kinds. A kind added on one
+      # side and not the other is a figure that silently stops being drawn, so
+      # the check that they match is worth its own line in the log.
+      - name: The renderer reports itself
+        run: python -m mosna_xy check
+
+  # ---------------------------------------------------------------------------
   # Agreement with the implementation this port replaces, which is the one
   # thing every other job here does not check: they all ask whether the code is
   # consistent with itself. That gap is how a wrong Delaunay default and a
@@ -58,7 +110,8 @@ jobs:
   # suite and a comment explaining they were harmless.
   #
   # Its own job, so a parity failure is legible at a glance rather than buried
-  # among the unit tests.
+  # among the unit tests. It draws no figures, so it needs no Python.
+  # ---------------------------------------------------------------------------
   parity:
     name: parity with the reference implementation
     runs-on: ubuntu-latest
@@ -69,9 +122,11 @@ jobs:
       - name: Compare against test/parity/reference.json
         run: cargo test -p mosna-pipeline --test parity -- --nocapture
 
+  # ---------------------------------------------------------------------------
   # Property-based tests explore far more inputs than the example-based ones.
   # `PROPTEST_CASES` is read by proptest itself, so the same test bodies run
   # with a much larger budget here than in a local `cargo test`.
+  # ---------------------------------------------------------------------------
   proptest:
     name: property tests (deep)
     runs-on: ubuntu-latest
@@ -86,6 +141,7 @@ jobs:
           PROPTEST_MAX_SHRINK_ITERS: '10000'
         run: cargo test --workspace prop_ -- --nocapture
 
+  # ---------------------------------------------------------------------------
   # The bench's level 1 is a golden test: it recomputes the deterministic core
   # and compares it against the references committed under `benchmark/golden/`.
   # It exits non-zero on drift, which is only a guard rail if it is automatic.
@@ -93,6 +149,7 @@ jobs:
   # Release, because a golden reference recorded from an optimised build is what
   # it has to be checked against — and because a debug run of the same work
   # would take long enough to be worth skipping.
+  # ---------------------------------------------------------------------------
   bench:
     name: numerical drift
     runs-on: ubuntu-latest
@@ -112,6 +169,12 @@ jobs:
       - name: Level 2 — reproducibility
         run: cargo run --release -p mosna-bench -- --samples 1 --cells 2000 reproduce
 
+  # ---------------------------------------------------------------------------
+  # `RUSTFLAGS` above covers rustc, not rustdoc — they are separate variables,
+  # and the difference let a broken intra-doc link sit in the tree unnoticed:
+  # the documentation promised an approximate k-NN fallback that was never
+  # written.
+  # ---------------------------------------------------------------------------
   docs:
     name: rustdoc
     runs-on: ubuntu-latest
@@ -119,10 +182,6 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-      # `RUSTFLAGS` above covers rustc, not rustdoc — they are separate
-      # variables, and the difference let a broken intra-doc link sit in the
-      # tree unnoticed: the documentation promised an approximate k-NN fallback
-      # that was never written.
       - name: Build documentation
         env:
           RUSTDOCFLAGS: -D warnings

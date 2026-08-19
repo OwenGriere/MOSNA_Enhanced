@@ -37,31 +37,38 @@ for argument in "$@"; do
     esac
 done
 
-# Rust is not the only thing the build needs. `freetype-sys` and
-# `yeslogic-fontconfig-sys` resolve their libraries through pkg-config, so
-# without the development files the build dies two minutes in with an error
-# about PKG_CONFIG_PATH that names nothing anyone could install. Ask first.
+# Rust is not the only thing this needs. A C compiler, for the few dependencies
+# that carry native code; and Python, because the figures are drawn by the `xy`
+# charting library, which the installer puts into an environment of its own
+# under the prefix. Ask for both up front: finding out two minutes into a build
+# is finding out too late.
 if [ "$skip_build" = false ]; then
     missing=""
     command -v cc >/dev/null 2>&1 || missing="$missing a C compiler"
-    command -v pkg-config >/dev/null 2>&1 || missing="$missing pkg-config"
-    if command -v pkg-config >/dev/null 2>&1; then
-        pkg-config --exists fontconfig || missing="$missing fontconfig"
+
+    python=""
+    for candidate in python3 python; do
+        if command -v "$candidate" >/dev/null 2>&1; then
+            python="$candidate"
+            break
+        fi
+    done
+    if [ -z "$python" ]; then
+        missing="$missing python3 (3.11 or newer)"
     fi
 
     if [ -n "$missing" ]; then
         cat >&2 <<MSG
-error: the build needs more than Rust, and this machine is missing:$missing
+error: this needs more than Rust, and this machine is missing:$missing
 
 Install them with whichever of these fits your distribution:
 
-    Debian, Ubuntu, Mint    sudo apt install build-essential pkg-config libfontconfig1-dev
-    Fedora, RHEL            sudo dnf install gcc pkgconf-pkg-config fontconfig-devel
-    Arch, Manjaro           sudo pacman -S base-devel pkgconf fontconfig
-    openSUSE                sudo zypper install gcc pkg-config fontconfig-devel
+    Debian, Ubuntu, Mint    sudo apt install build-essential python3 python3-venv
+    Fedora, RHEL            sudo dnf install gcc python3
+    Arch, Manjaro           sudo pacman -S base-devel python
+    openSUSE                sudo zypper install gcc python3
 
-then run this script again. (They are needed only to build; the figures the
-analysis draws are rendered with fontconfig at run time.)
+then run this script again.
 MSG
         exit 1
     fi
@@ -70,8 +77,13 @@ MSG
     cargo build --release --bin mosna --bin mosna-gui
 fi
 
+# `--renderer` points at the Python package that draws the figures. The
+# installer checks the interpreter's version, builds the environment and
+# installs into it; the version rules live there, where they are tested, not in
+# this script.
 cargo run --release --quiet --bin mosna-install -- \
     --build-dir "$here/target/release" \
     --config "$here/CONFIG/configuration.yaml" \
     --icon "$here/assets/logo.ico" \
+    --renderer "$here/python" \
     "$@"

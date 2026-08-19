@@ -15,12 +15,54 @@ fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
+/// Every third-party package the project declares, whatever language it is
+/// written in.
+///
+/// The figures are drawn by a Python package now, so a credits page that read
+/// only the Cargo manifests would acknowledge everything *except* the library
+/// that produces what the user actually looks at.
+fn declared_dependencies() -> BTreeSet<String> {
+    let mut found = declared_crates();
+    found.extend(declared_python_packages());
+    found
+}
+
+/// The Python packages the renderer needs, from `python/pyproject.toml`.
+///
+/// The shape being read is `dependencies = ["xy==0.0.6", "numpy>=1.24"]`: a
+/// name, then a version constraint in one of a handful of spellings.
+fn declared_python_packages() -> BTreeSet<String> {
+    let manifest = root().join("python/pyproject.toml");
+    let text = std::fs::read_to_string(&manifest).unwrap();
+
+    let mut found = BTreeSet::new();
+    let Some(list) = text.split("dependencies = [").nth(1) else {
+        return found;
+    };
+    let Some(list) = list.split(']').next() else {
+        return found;
+    };
+
+    for item in list.split(',') {
+        let item = item.trim().trim_matches('"').trim_matches('\'');
+        let name = item
+            .split(['=', '>', '<', '!', '~', ';', '['])
+            .next()
+            .unwrap_or("")
+            .trim();
+        if !name.is_empty() {
+            found.insert(name.to_string());
+        }
+    }
+    found
+}
+
 /// Every third-party crate the workspace declares, from the manifests.
 ///
 /// Parsed by hand rather than with a TOML crate: adding a dependency in order
 /// to check the dependency list is a circularity worth avoiding, and the shape
 /// being read is three lines of `name = ...` under a known header.
-fn declared_dependencies() -> BTreeSet<String> {
+fn declared_crates() -> BTreeSet<String> {
     let mut manifests = vec![
         root().join("Cargo.toml"),
         root().join("benchmark/Cargo.toml"),
@@ -148,9 +190,24 @@ fn the_manifests_are_actually_read() {
         "only {} dependencies found — the parser is broken",
         declared.len()
     );
-    for expected in ["egui", "rayon", "parquet", "plotters"] {
+    for expected in ["egui", "rayon", "parquet"] {
         assert!(declared.contains(expected), "`{expected}` was not found");
     }
+}
+
+/// The renderer's own dependencies have to be found too, or the page would
+/// quietly stop covering the half of the project that draws the figures.
+#[test]
+fn the_python_manifest_is_read_as_well() {
+    let python = declared_python_packages();
+    assert!(
+        python.contains("xy"),
+        "the charting library was not found in the Python manifest: {python:?}"
+    );
+    assert!(
+        declared_dependencies().contains("xy"),
+        "the Python packages did not reach the dependency list"
+    );
 }
 
 /// Every citation says what the crate is for. A bare list of names credits
