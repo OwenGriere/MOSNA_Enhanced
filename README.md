@@ -1,6 +1,31 @@
-[![Rust](https://img.shields.io/badge/rust-1.75+-orange.svg)](https://www.rust-lang.org/)
-
 <h1 align="center">Mosna Enhanced : A version of Mosna rewritted in Rust for a better performance</h1>
+
+<p align="center">
+  <a href="https://www.rust-lang.org/"><img alt="Rust 1.82 or newer" src="https://img.shields.io/badge/Rust-1.82%2B-CE422B?style=flat-square&logo=rust&logoColor=white"></a>
+  <a href="https://www.python.org/downloads/"><img alt="Python 3.11 or newer" src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white"></a>
+  <a href="https://opensource.org/licenses/MIT"><img alt="MIT licence" src="https://img.shields.io/badge/Licence-MIT-75590C?style=flat-square"></a>
+</p>
+
+<p align="center">
+  <sub><b>Figures</b> — drawn by a Python renderer, pinned exactly</sub><br>
+  <a href="https://github.com/reflex-dev/xy"><img alt="xy 0.0.6" src="https://img.shields.io/badge/xy-0.0.6-4B8BBE?style=flat-square&labelColor=2B2F36"></a>
+  <a href="https://numpy.org/"><img alt="numpy 1.24 or newer" src="https://img.shields.io/badge/numpy-%E2%89%A51.24-4DABCF?style=flat-square&labelColor=2B2F36&logo=numpy&logoColor=white"></a>
+</p>
+
+<p align="center">
+  <sub><b>Analyses, I/O and interface</b> — from crates.io, at the versions <code>Cargo.lock</code> resolves</sub><br>
+  <a href="https://crates.io/crates/egui"><img alt="egui 0.35" src="https://img.shields.io/badge/egui-0.35-6D747C?style=flat-square&labelColor=2B2F36"></a>
+  <a href="https://crates.io/crates/eframe"><img alt="eframe 0.35" src="https://img.shields.io/badge/eframe-0.35-6D747C?style=flat-square&labelColor=2B2F36"></a>
+  <a href="https://crates.io/crates/arrow-array"><img alt="arrow-array 56.2" src="https://img.shields.io/badge/arrow--array-56.2-6D747C?style=flat-square&labelColor=2B2F36"></a>
+  <a href="https://crates.io/crates/parquet"><img alt="parquet 56.2" src="https://img.shields.io/badge/parquet-56.2-6D747C?style=flat-square&labelColor=2B2F36"></a>
+  <a href="https://crates.io/crates/rayon"><img alt="rayon 1.12" src="https://img.shields.io/badge/rayon-1.12-6D747C?style=flat-square&labelColor=2B2F36"></a>
+  <a href="https://crates.io/crates/ndarray"><img alt="ndarray 0.16" src="https://img.shields.io/badge/ndarray-0.16-6D747C?style=flat-square&labelColor=2B2F36"></a>
+  <a href="https://crates.io/crates/kiddo"><img alt="kiddo 5.3" src="https://img.shields.io/badge/kiddo-5.3-6D747C?style=flat-square&labelColor=2B2F36"></a>
+  <a href="https://crates.io/crates/delaunator"><img alt="delaunator 1.1" src="https://img.shields.io/badge/delaunator-1.1-6D747C?style=flat-square&labelColor=2B2F36"></a>
+  <a href="https://crates.io/crates/clap"><img alt="clap 4.6" src="https://img.shields.io/badge/clap-4.6-6D747C?style=flat-square&labelColor=2B2F36"></a>
+  <a href="https://crates.io/crates/serde"><img alt="serde 1.0" src="https://img.shields.io/badge/serde-1.0-6D747C?style=flat-square&labelColor=2B2F36"></a>
+  <a href="https://crates.io/crates/proptest"><img alt="proptest 1.11" src="https://img.shields.io/badge/proptest-1.11-6D747C?style=flat-square&labelColor=2B2F36"></a>
+</p>
 
 Spatial network construction and analysis for spatial omics: a native
 application that reconstructs a spatial network per sample, measures which cell
