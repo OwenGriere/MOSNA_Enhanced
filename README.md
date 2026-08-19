@@ -42,7 +42,7 @@ The analyses are Rust and depend on no scientific stack. The **figures** are
 drawn by [`xy`](https://github.com/reflex-dev/xy), a Python charting library,
 which is why an interpreter is needed. What this needs, to build:
 
-* the **Rust toolchain** — `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
+* the **Rust toolchain**, 1.82 or newer — `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
 * **Python 3.11 or newer**, and a **C compiler**:
 
   | | |
