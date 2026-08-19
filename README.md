@@ -1,5 +1,3 @@
-<h1 align="center">Mosna Enhanced : A version of Mosna rewritted in Rust for a better performance</h1>
-
 <p align="center">
   <a href="https://www.rust-lang.org/"><img alt="Rust 1.82 or newer" src="https://img.shields.io/badge/Rust-1.82%2B-CE422B?style=flat-square&logo=rust&logoColor=white"></a>
   <a href="https://www.python.org/downloads/"><img alt="Python 3.11 or newer" src="https://img.shields.io/badge/Python-3.11%2B-3776AB?style=flat-square&logo=python&logoColor=white"></a>
@@ -26,6 +24,8 @@
   <a href="https://crates.io/crates/serde"><img alt="serde 1.0" src="https://img.shields.io/badge/serde-1.0-6D747C?style=flat-square&labelColor=2B2F36"></a>
   <a href="https://crates.io/crates/proptest"><img alt="proptest 1.11" src="https://img.shields.io/badge/proptest-1.11-6D747C?style=flat-square&labelColor=2B2F36"></a>
 </p>
+
+<h1 align="center">Mosna Enhanced : A version of Mosna rewritted in Rust for a better performance</h1>
 
 Spatial network construction and analysis for spatial omics: a native
 application that reconstructs a spatial network per sample, measures which cell
