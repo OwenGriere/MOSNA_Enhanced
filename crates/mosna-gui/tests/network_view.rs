@@ -159,7 +159,7 @@ fn the_network_tab_draws_a_sample_and_reads_a_cell() {
 
     // Colour by labels, inspect two columns, and put the pointer in the middle
     // of the canvas — which is where the sample is, since the camera fits it.
-    app.network.colour_column = Some("Cluster".into());
+    app.network.toggle_layer("Cluster");
     app.network.inspected = vec!["CD8".into(), "niches".into()];
     draw(&mut app, &ctx, 3, Some(Pos2::new(600.0, 450.0)));
     assert!(app.network.error.is_none(), "{:?}", app.network.error);
@@ -173,8 +173,10 @@ fn the_network_tab_draws_a_sample_and_reads_a_cell() {
         "sixteen hundred cells is not too crowded for edges"
     );
 
-    // And by a measurement, which takes the other legend and the other ramp.
-    app.network.colour_column = Some("CD8".into());
+    // Add a measurement beside it: two views now, on one camera, one taking
+    // the list legend and the other a ramp.
+    app.network.toggle_layer("CD8");
+    assert_eq!(app.network.layers().len(), 2);
     draw(&mut app, &ctx, 3, Some(Pos2::new(600.0, 450.0)));
     assert!(app.network.error.is_none(), "{:?}", app.network.error);
 }
@@ -189,7 +191,7 @@ fn the_canvas_survives_being_scrolled_and_dragged() {
     let mut app = app(directory.path());
     draw(&mut app, &ctx, 1, None);
     app.network.load(0, "parquet");
-    app.network.colour_column = Some("niches".into());
+    app.network.toggle_layer("niches");
 
     // Frame it first, so there is a zoom to compare against.
     draw(&mut app, &ctx, 2, Some(Pos2::new(600.0, 450.0)));
@@ -256,7 +258,7 @@ fn a_sample_over_the_budget_still_draws() {
 
     app.network.load(0, "parquet");
     assert_eq!(app.network.n_cells(), 62_500);
-    app.network.colour_column = Some("Cluster".into());
+    app.network.toggle_layer("Cluster");
 
     let started = std::time::Instant::now();
     draw(&mut app, &ctx, 3, Some(Pos2::new(600.0, 450.0)));
@@ -312,4 +314,137 @@ fn the_tab_is_one_of_the_viewers_pages() {
         app.viewer_tab = tab;
         draw(&mut app, &ctx, 2, None);
     }
+}
+
+/// Four columns blended into one picture — through the real paint loop.
+///
+/// The tab builds one geometry, resolves four colour maps over it and blends
+/// them per cell. Every one of those steps indexes a vector sized by something
+/// else, which is the kind of mistake that only shows up when it crashes in
+/// front of the user.
+#[test]
+fn four_columns_blend_into_one_picture() {
+    let directory = tempfile::tempdir().unwrap();
+    write_network(directory.path(), 40);
+
+    let ctx = egui::Context::default();
+    let mut app = app(directory.path());
+    draw(&mut app, &ctx, 1, None);
+    app.network.load(0, "parquet");
+
+    for column in ["Cluster", "CD8", "niches", "X_position"] {
+        app.network.toggle_layer(column);
+    }
+    assert_eq!(app.network.layers().len(), 4);
+
+    draw(&mut app, &ctx, 3, Some(Pos2::new(600.0, 450.0)));
+    assert!(app.network.error.is_none(), "{:?}", app.network.error);
+    assert_eq!(app.network.drawn_cells(), 1600);
+
+    // Dropping one of the four re-blends the rest rather than leaving the
+    // colours of a column that is no longer chosen.
+    app.network.toggle_layer("niches");
+    draw(&mut app, &ctx, 2, Some(Pos2::new(600.0, 450.0)));
+    assert_eq!(app.network.layers().len(), 3);
+    assert!(app.network.error.is_none(), "{:?}", app.network.error);
+    assert_eq!(app.network.drawn_cells(), 1600);
+}
+
+/// Changing one channel's ramp redraws, and does not disturb the others.
+#[test]
+fn changing_a_palette_redraws_without_disturbing_the_others() {
+    use mosna_gui::model::network::Palette;
+
+    let directory = tempfile::tempdir().unwrap();
+    write_network(directory.path(), 20);
+
+    let ctx = egui::Context::default();
+    let mut app = app(directory.path());
+    draw(&mut app, &ctx, 1, None);
+    app.network.load(0, "parquet");
+    app.network.toggle_layer("CD8");
+    app.network.toggle_layer("niches");
+    draw(&mut app, &ctx, 2, Some(Pos2::new(600.0, 450.0)));
+
+    let others: Vec<Palette> = app.network.layers()[1..].iter().map(|l| l.palette).collect();
+    app.network.set_palette(0, Palette::Purples);
+    draw(&mut app, &ctx, 2, Some(Pos2::new(600.0, 450.0)));
+
+    assert_eq!(app.network.layers()[0].palette, Palette::Purples);
+    assert_eq!(
+        others,
+        app.network.layers()[1..]
+            .iter()
+            .map(|l| l.palette)
+            .collect::<Vec<_>>(),
+        "recolouring one channel moved another"
+    );
+    assert!(app.network.error.is_none(), "{:?}", app.network.error);
+    assert!(app.network.drawn_cells() > 0, "the redraw drew nothing");
+}
+
+/// Adding a column must not move the picture.
+///
+/// A channel is a change of colour, not a change of view: the cells the reader
+/// was looking at have to still be under the pointer afterwards, or every
+/// added marker costs them their place.
+#[test]
+fn adding_a_column_leaves_the_framing_alone() {
+    let directory = tempfile::tempdir().unwrap();
+    write_network(directory.path(), 20);
+
+    let ctx = egui::Context::default();
+    let mut app = app(directory.path());
+    draw(&mut app, &ctx, 1, None);
+    app.network.load(0, "parquet");
+    app.network.toggle_layer("CD8");
+    draw(&mut app, &ctx, 2, Some(Pos2::new(600.0, 450.0)));
+    let alone = app.network.zoom().expect("the sample was framed");
+
+    app.network.toggle_layer("niches");
+    draw(&mut app, &ctx, 2, Some(Pos2::new(600.0, 450.0)));
+    let blended = app.network.zoom().expect("the sample was framed again");
+
+    assert_eq!(
+        alone, blended,
+        "adding a column moved the camera: {alone} became {blended}"
+    );
+    assert!(app.network.error.is_none(), "{:?}", app.network.error);
+}
+
+/// Folding a side panel gives its width to the viewer, and unfolding gives it
+/// back — through the real layout, since that is the only place it happens.
+#[test]
+fn folding_a_side_panel_widens_the_viewer() {
+    let directory = tempfile::tempdir().unwrap();
+    write_network(directory.path(), 20);
+
+    let ctx = egui::Context::default();
+    let mut app = app(directory.path());
+    draw(&mut app, &ctx, 1, None);
+    app.network.load(0, "parquet");
+    app.network.toggle_layer("CD8");
+    draw(&mut app, &ctx, 3, None);
+    let both_open = app.network.canvas_size();
+    assert!(both_open[0] > 0.0, "the canvas was never drawn");
+
+    app.browser_folded = true;
+    app.parameters_folded = true;
+    draw(&mut app, &ctx, 3, None);
+    let both_folded = app.network.canvas_size();
+
+    assert!(
+        both_folded[0] > both_open[0] + 100.0,
+        "folding both panels gained only {} points",
+        both_folded[0] - both_open[0]
+    );
+    assert!(app.network.error.is_none(), "{:?}", app.network.error);
+
+    app.browser_folded = false;
+    app.parameters_folded = false;
+    draw(&mut app, &ctx, 3, None);
+    assert!(
+        (app.network.canvas_size()[0] - both_open[0]).abs() < 1.0,
+        "unfolding did not give the width back"
+    );
 }

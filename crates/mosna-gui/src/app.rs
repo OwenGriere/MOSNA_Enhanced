@@ -76,6 +76,14 @@ pub struct MosnaApp {
     pub documentation: Documentation,
     pub manual: ManualState,
 
+    /// Whether the side panels have been folded away to a band.
+    ///
+    /// The viewer between them takes whatever they leave, so folding one is
+    /// how the Network tab gets a screen's width to draw in. The Viewer itself
+    /// does not fold: it is what the window is for.
+    pub browser_folded: bool,
+    pub parameters_folded: bool,
+
     /// Shown as a modal until a working directory is chosen.
     pub needs_working_dir: bool,
     /// A message the user must acknowledge.
@@ -117,6 +125,8 @@ impl MosnaApp {
             run: None,
             documentation: Documentation::build(),
             manual: ManualState::default(),
+            browser_folded: false,
+            parameters_folded: false,
             needs_working_dir: true,
             notice,
         }

@@ -180,6 +180,14 @@ pub const PARAMETERS_WIDTH: f32 = 300.0;
 pub const PARAMETERS_MIN_WIDTH: f32 = 250.0;
 pub const PARAMETERS_MAX_WIDTH: f32 = 1000.0;
 
+/// Width of a panel that has been folded away.
+///
+/// The panel does not disappear — it becomes a band carrying its own name,
+/// written up it, and clicking the band brings it back. Wide enough for a line
+/// of text on its side plus air on both sides of it, and no wider: the whole
+/// point of folding is the space it gives back to what is between the panels.
+pub const FOLDED_WIDTH: f32 = 30.0;
+
 /// Space to the left of the manual's text.
 ///
 /// Text that starts where the panel starts is uncomfortable to read and looks

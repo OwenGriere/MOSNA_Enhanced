@@ -115,6 +115,46 @@ pub fn reds() -> Gradient {
     ])
 }
 
+/// `Greens`, `Purples` — the other sequential maps the network offers.
+///
+/// The ColorBrewer 9-class maps, built exactly as [`reds`] is and for exactly
+/// the same job: the interactive network can colour four columns at once, and
+/// four views coloured by the same ramp are four pictures nobody can tell
+/// apart at a glance. A hue per view, and the view is named by its colour.
+///
+/// The four are chosen to stay apart at every step of their ramps, not only at
+/// the dark end: red, blue, green and purple are the four sequential maps
+/// ColorBrewer builds from hues far enough apart that a mid-value of one is
+/// never a mid-value of another.
+pub fn greens() -> Gradient {
+    Gradient::new(vec![
+        [0xf7, 0xfc, 0xf5],
+        [0xe5, 0xf5, 0xe0],
+        [0xc7, 0xe9, 0xc0],
+        [0xa1, 0xd9, 0x9b],
+        [0x74, 0xc4, 0x76],
+        [0x41, 0xab, 0x5d],
+        [0x23, 0x8b, 0x45],
+        [0x00, 0x6d, 0x2c],
+        [0x00, 0x44, 0x1b],
+    ])
+}
+
+/// See [`greens`].
+pub fn purples() -> Gradient {
+    Gradient::new(vec![
+        [0xfc, 0xfb, 0xfd],
+        [0xef, 0xed, 0xf5],
+        [0xda, 0xda, 0xeb],
+        [0xbc, 0xbd, 0xdc],
+        [0x9e, 0x9a, 0xc8],
+        [0x80, 0x7d, 0xba],
+        [0x6a, 0x51, 0xa3],
+        [0x54, 0x27, 0x8f],
+        [0x3f, 0x00, 0x7d],
+    ])
+}
+
 /// `tab20`, used by the abundance bar chart.
 pub fn tab20() -> Vec<Rgb> {
     vec![
@@ -307,6 +347,109 @@ mod tests {
     #[test]
     fn the_palest_red_is_not_the_missing_value_grey() {
         assert_ne!(reds().sample(0.0), Gradient::BAD);
+    }
+
+    /// Everything asserted of `Reds` above is asserted of the other three: they
+    /// are offered as alternatives to it in the same picker, and an alternative
+    /// that behaves differently is a trap rather than a choice.
+    #[test]
+    fn every_sequential_map_runs_from_almost_white_to_a_deep_colour() {
+        for (name, map) in sequential() {
+            let (low, high) = (map.sample(0.0), map.sample(1.0));
+            assert!(
+                low.iter().all(|c| *c > 0xE0),
+                "{name} starts at {low:?}, which is not near-white"
+            );
+            assert!(
+                high.iter().all(|c| *c < 0x90),
+                "{name} ends at {high:?}, which is not deep"
+            );
+            assert_ne!(map.sample(0.0), Gradient::BAD, "{name}");
+        }
+    }
+
+    #[test]
+    fn every_sequential_map_only_ever_darkens() {
+        for (name, map) in sequential() {
+            let mut previous = lightness(map.sample(0.0));
+            for step in 1..=20 {
+                let next = lightness(map.sample(step as f64 / 20.0));
+                assert!(
+                    next < previous,
+                    "{name} brightens between {} and {step} of 20",
+                    step - 1
+                );
+                previous = next;
+            }
+        }
+    }
+
+    /// The whole point of having four: wherever there is a signal to see, no
+    /// two of them show it in the same colour.
+    ///
+    /// From the half-way point up, which is where the maps are carrying
+    /// anything at all. Below it they converge — that is not a flaw in the set
+    /// but the shape of every sequential map: they all begin at the same
+    /// near-white, because a low value is meant to recede into the interface
+    /// rather than announce which map it belongs to. Which map a *faint* cell
+    /// was drawn with is read off the colour bar beside its view, not off the
+    /// cell.
+    #[test]
+    fn the_four_sequential_maps_stay_apart_wherever_there_is_signal() {
+        let maps = sequential();
+        for step in 10..=20 {
+            let t = step as f64 / 20.0;
+            for (index, (name, map)) in maps.iter().enumerate() {
+                for (other_name, other) in &maps[index + 1..] {
+                    let (a, b) = (map.sample(t), other.sample(t));
+                    let distance: i32 = (0..3).map(|c| (a[c] as i32 - b[c] as i32).abs()).sum();
+                    assert!(
+                        distance > 60,
+                        "{name} and {other_name} are {distance} apart at {t}: {a:?} {b:?}"
+                    );
+                }
+            }
+        }
+    }
+
+    /// And the converse, stated so that it is a decision rather than an
+    /// oversight: at the pale end they are all but the same colour.
+    #[test]
+    fn the_four_sequential_maps_all_begin_near_white() {
+        for (name, map) in sequential() {
+            assert!(
+                lightness(map.sample(0.0)) > 245.0,
+                "{name} does not begin near-white"
+            );
+        }
+    }
+
+    /// Each keeps one hue the whole way, so nothing in a ramp reads as another
+    /// colour competing with the intensity.
+    #[test]
+    fn every_sequential_map_keeps_its_hue() {
+        for step in 0..=20 {
+            let t = step as f64 / 20.0;
+            let [r, g, b] = greens().sample(t);
+            assert!(g >= r && g >= b, "step {step} of Greens is not green");
+            let [r, _, b] = purples().sample(t);
+            assert!(b >= r, "step {step} of Purples has lost its blue");
+            let [r, g, b] = blues().sample(t);
+            assert!(b >= r && b >= g, "step {step} of Blues is not blue");
+        }
+    }
+
+    fn sequential() -> Vec<(&'static str, Gradient)> {
+        vec![
+            ("Reds", reds()),
+            ("Blues", blues()),
+            ("Greens", greens()),
+            ("Purples", purples()),
+        ]
+    }
+
+    fn lightness(c: Rgb) -> f32 {
+        0.2126 * c[0] as f32 + 0.7152 * c[1] as f32 + 0.0722 * c[2] as f32
     }
 
     #[test]

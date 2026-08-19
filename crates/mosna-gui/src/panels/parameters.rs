@@ -3,11 +3,22 @@
 use crate::app::MosnaApp;
 use crate::model::field::{FieldKind, NO_SELECTION};
 use crate::model::runner::Step;
-use crate::panels::{accent_button, field_row, group, header, label_column_for, path_field};
+use crate::panels::{
+    accent_button, field_row, folded_spine, folding_header, group, label_column_for, path_field,
+    Fold,
+};
 use crate::theme;
 
 /// Draw the right panel: one tab per configuration section, then the actions.
+///
+/// Or, when it has been folded away, the band that brings it back. See
+/// [`crate::panels::browser::show`] for why the two use different ids.
 pub fn show(app: &mut MosnaApp, ui: &mut egui::Ui) {
+    if app.parameters_folded {
+        folded(app, ui);
+        return;
+    }
+
     egui::containers::Panel::right("parameters")
         .resizable(true)
         .default_size(theme::PARAMETERS_WIDTH)
@@ -18,13 +29,32 @@ pub fn show(app: &mut MosnaApp, ui: &mut egui::Ui) {
                 .inner_margin(egui::Margin::same(theme::PANEL_MARGIN as i8)),
         )
         .show(ui, |ui| {
-            header(ui, "Parameters");
+            if folding_header(ui, "Parameters", Fold::Right) {
+                app.parameters_folded = true;
+            }
 
             egui::containers::Panel::bottom("actions")
                 .frame(egui::Frame::new().inner_margin(egui::Margin::symmetric(0, 6)))
                 .show(ui, |ui| actions(app, ui));
 
             sections(app, ui);
+        });
+}
+
+/// The folded panel: a band down the right edge, with its name up it.
+fn folded(app: &mut MosnaApp, ui: &mut egui::Ui) {
+    egui::containers::Panel::right("parameters_folded")
+        .resizable(false)
+        .exact_size(theme::FOLDED_WIDTH)
+        .frame(
+            egui::Frame::new()
+                .fill(theme::PANEL)
+                .inner_margin(egui::Margin::symmetric(2, theme::PANEL_MARGIN as i8)),
+        )
+        .show(ui, |ui| {
+            if folded_spine(ui, "Parameters") {
+                app.parameters_folded = false;
+            }
         });
 }
 

@@ -1,11 +1,23 @@
 //! The Browser panel — port of `BrowserPanel`.
 
 use crate::app::MosnaApp;
-use crate::panels::{field_row, group, header, label_column_for, path_field};
+use crate::panels::{
+    field_row, folded_spine, folding_header, group, label_column_for, path_field, Fold,
+};
 use crate::theme;
 
 /// Draw the left panel: data sources, naming pattern, and the files found.
+///
+/// Or, when it has been folded away, the band that brings it back. The panel
+/// is folded and unfolded under two different ids, so that the width it was
+/// dragged to is still there when it comes back — egui remembers a panel's
+/// size against its id, and one id cannot remember two.
 pub fn show(app: &mut MosnaApp, ui: &mut egui::Ui) {
+    if app.browser_folded {
+        folded(app, ui);
+        return;
+    }
+
     egui::containers::Panel::left("browser")
         .resizable(true)
         .default_size(theme::BROWSER_WIDTH)
@@ -22,13 +34,32 @@ pub fn show(app: &mut MosnaApp, ui: &mut egui::Ui) {
                 .inner_margin(egui::Margin::same(theme::PANEL_MARGIN as i8)),
         )
         .show(ui, |ui| {
-            header(ui, "Browser");
+            if folding_header(ui, "Browser", Fold::Left) {
+                app.browser_folded = true;
+            }
             egui::ScrollArea::vertical().show(ui, |ui| {
                 sources(app, ui);
                 pattern(app, ui);
                 actions(app, ui);
                 results(app, ui);
             });
+        });
+}
+
+/// The folded panel: a band down the left edge, with its name up it.
+fn folded(app: &mut MosnaApp, ui: &mut egui::Ui) {
+    egui::containers::Panel::left("browser_folded")
+        .resizable(false)
+        .exact_size(theme::FOLDED_WIDTH)
+        .frame(
+            egui::Frame::new()
+                .fill(theme::PANEL)
+                .inner_margin(egui::Margin::symmetric(2, theme::PANEL_MARGIN as i8)),
+        )
+        .show(ui, |ui| {
+            if folded_spine(ui, "Browser") {
+                app.browser_folded = false;
+            }
         });
 }
 

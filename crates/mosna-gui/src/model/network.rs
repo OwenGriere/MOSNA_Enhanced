@@ -15,7 +15,7 @@
 
 use std::path::Path;
 
-use mosna_core::colormap::{make_cluster_cmap, reds, Gradient, Rgb};
+use mosna_core::colormap::{blues, greens, make_cluster_cmap, purples, reds, Gradient, Rgb};
 use mosna_io::read::get_opener::{read_table, Extension};
 use mosna_io::Table;
 
@@ -98,6 +98,74 @@ impl Bounds {
 // What a column means
 // ---------------------------------------------------------------------------
 
+/// A ramp a measured column can be drawn with.
+///
+/// Four, because the tab draws up to [`MAX_LAYERS`] columns side by side and
+/// two views on the same ramp are two pictures nobody can tell apart. Which
+/// one a view uses is the user's to change: the default is only an opening
+/// position, and the right hue for a marker is whatever the person reading it
+/// has been looking at for a year.
+///
+/// A column of *labels* ignores all of this — its colours come from the
+/// cluster palette the figures use, so a niche keeps the colour it has in
+/// every other output of the toolchain.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default)]
+pub enum Palette {
+    #[default]
+    Reds,
+    Blues,
+    Greens,
+    Purples,
+}
+
+impl Palette {
+    /// The four, in the order they are offered and handed out.
+    pub const ALL: [Palette; 4] = [
+        Palette::Reds,
+        Palette::Blues,
+        Palette::Greens,
+        Palette::Purples,
+    ];
+
+    /// What the picker calls it.
+    pub fn label(self) -> &'static str {
+        match self {
+            Palette::Reds => "Reds",
+            Palette::Blues => "Blues",
+            Palette::Greens => "Greens",
+            Palette::Purples => "Purples",
+        }
+    }
+
+    /// The ramp itself.
+    pub fn gradient(self) -> Gradient {
+        match self {
+            Palette::Reds => reds(),
+            Palette::Blues => blues(),
+            Palette::Greens => greens(),
+            Palette::Purples => purples(),
+        }
+    }
+
+    /// The palette the `index`-th view opens with.
+    ///
+    /// Distinct for as long as there are palettes, which — since a view cannot
+    /// be added past the fourth — means always. Adding a column has to give it
+    /// a colour of its own without asking, or the second view arrives looking
+    /// exactly like the first.
+    pub fn nth(index: usize) -> Palette {
+        Palette::ALL[index % Palette::ALL.len()]
+    }
+
+    /// A swatch of the ramp, for the picker and the legend.
+    pub fn ramp(self) -> Vec<Rgb> {
+        let gradient = self.gradient();
+        (0..RAMP_STEPS)
+            .map(|step| gradient.sample(step as f64 / (RAMP_STEPS - 1) as f64))
+            .collect()
+    }
+}
+
 /// A column of the nodes file, read as something that can colour a cell.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Attribute {
@@ -158,8 +226,8 @@ impl Attribute {
     /// For a handful of cells — a legend swatch, a test. Colouring a whole
     /// sample goes through [`Self::colouring`], which builds the map once
     /// instead of once per cell.
-    pub fn colour(&self, row: usize) -> Rgb {
-        self.colouring().colour(row)
+    pub fn colour(&self, row: usize, palette: Palette) -> Rgb {
+        self.colouring(palette).colour(row)
     }
 
     /// The colour map, resolved once, ready to colour many cells.
@@ -169,23 +237,46 @@ impl Attribute {
     /// up to sixty thousand colours in one pass. Building the map inside that
     /// loop was sixty thousand allocations per rebuild, for one answer that
     /// never changes.
-    pub fn colouring(&self) -> Colouring<'_> {
+    pub fn colouring(&self, palette: Palette) -> Colouring<'_> {
         match self {
             Attribute::Categorical { levels, .. } => Colouring {
                 attribute: self,
-                palette: make_cluster_cmap(levels.len()),
+                levels: make_cluster_cmap(levels.len()),
                 gradient: None,
             },
             Attribute::Continuous { .. } => Colouring {
                 attribute: self,
-                palette: Vec::new(),
-                gradient: Some(reds()),
+                levels: Vec::new(),
+                gradient: Some(palette.gradient()),
             },
         }
     }
 
+    /// How strongly a cell expresses this column, in `[0, 1]`, or `None` when
+    /// it has no value for that cell.
+    ///
+    /// This is what [`fuse`] weighs the columns by. A measurement weighs where
+    /// its value sits in its own range — so a blend is a blend of what is
+    /// *high* here, not of what happens to be measured in large numbers, and a
+    /// column in counts does not shout down a column in fractions.
+    ///
+    /// A label weighs one: a phenotype is a fact about a cell, not a degree of
+    /// one, and a cell either has it or has nothing there.
+    pub fn weight(&self, row: usize) -> Option<f32> {
+        match self {
+            Attribute::Categorical { levels, codes } => codes
+                .get(row)
+                .filter(|code| (**code as usize) < levels.len())
+                .map(|_| 1.0),
+            Attribute::Continuous { values, min, max } => values
+                .get(row)
+                .filter(|value| value.is_finite())
+                .map(|value| normalise(*value, *min, *max) as f32),
+        }
+    }
+
     /// What the legend should show.
-    pub fn legend(&self) -> Legend {
+    pub fn legend(&self, palette: Palette) -> Legend {
         match self {
             Attribute::Categorical { levels, .. } => {
                 let palette = make_cluster_cmap(levels.len());
@@ -197,17 +288,11 @@ impl Attribute {
                         .collect(),
                 )
             }
-            Attribute::Continuous { min, max, .. } => {
-                let gradient = reds();
-                let ramp = (0..RAMP_STEPS)
-                    .map(|step| gradient.sample(step as f64 / (RAMP_STEPS - 1) as f64))
-                    .collect();
-                Legend::Colorbar {
-                    ramp,
-                    min: *min,
-                    max: *max,
-                }
-            }
+            Attribute::Continuous { min, max, .. } => Legend::Colorbar {
+                ramp: palette.ramp(),
+                min: *min,
+                max: *max,
+            },
         }
     }
 
@@ -293,7 +378,7 @@ impl Attribute {
 pub struct Colouring<'a> {
     attribute: &'a Attribute,
     /// One colour per level, for a vocabulary.
-    palette: Vec<Rgb>,
+    levels: Vec<Rgb>,
     /// The ramp, for a measurement.
     gradient: Option<Gradient>,
 }
@@ -308,7 +393,7 @@ impl Colouring<'_> {
         match self.attribute {
             Attribute::Categorical { codes, .. } => codes
                 .get(row)
-                .and_then(|code| self.palette.get(*code as usize))
+                .and_then(|code| self.levels.get(*code as usize))
                 .copied()
                 .unwrap_or(Gradient::BAD),
             Attribute::Continuous { values, min, max } => match (values.get(row), &self.gradient) {
@@ -714,6 +799,77 @@ pub fn covers(built: Bounds, visible: Bounds) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Several columns at once
+// ---------------------------------------------------------------------------
+
+/// How many columns the tab can colour by at once.
+///
+/// Four. Not a technical ceiling — the cost is a colour lookup per cell per
+/// column — but a legible one: a blend of four hues is already a colour no
+/// legend can name, and a fifth would only make it harder to say which column
+/// put the colour there.
+pub const MAX_LAYERS: usize = 4;
+
+/// What one column contributes to a cell: the colour it would give that cell
+/// on its own, and how strongly it applies.
+///
+/// `None` when the column has no value for that cell.
+pub type Channel = Option<(Rgb, f32)>;
+
+/// Blend the columns' contributions into the one colour a cell is drawn in.
+///
+/// A weighted mean, the weights being how strongly each column is expressed.
+/// Which means:
+///
+/// * one column is unchanged — a mean of one thing is that thing, so choosing
+///   a single column draws exactly what it drew before there were four;
+/// * a column that dominates a cell gives the cell its colour, including its
+///   darkness, so a strong marker still reads as strong;
+/// * two columns equally strong give the colour between them, which is the
+///   whole point: a cell high in the red column and the blue one is neither
+///   red nor blue;
+/// * a cell low in everything is left at the pale end of the ramps, so it
+///   recedes exactly as it does with one column.
+///
+/// # What it cannot do
+///
+/// A blend cannot be read back. There is no colour bar for "half red, half
+/// blue", and there is no way to recover two values from one colour — the bars
+/// in the margin describe each column *alone*, and the exact values are on the
+/// tooltip. That is the price of one picture instead of four, and it is the
+/// reason the tooltip lists every coloured column rather than only the one
+/// under the pointer.
+///
+/// A cell with no value in any of the columns is [`Gradient::BAD`] — the same
+/// grey the figures use — so "no data" never reads as "low".
+pub fn fuse(channels: &[Channel]) -> Rgb {
+    let mut present = 0usize;
+    let mut total = 0.0f32;
+    for (_, weight) in channels.iter().flatten() {
+        present += 1;
+        total += weight.max(0.0);
+    }
+    if present == 0 {
+        return Gradient::BAD;
+    }
+
+    // Every column present but every one of them at the bottom of its range:
+    // there is no expression to weigh, so the columns are given equal say and
+    // the cell comes out at the pale end, which is the truth about it.
+    let flat = total <= f32::EPSILON;
+    let total = if flat { present as f32 } else { total };
+
+    let mut blended = [0.0f32; 3];
+    for (colour, weight) in channels.iter().flatten() {
+        let weight = if flat { 1.0 } else { weight.max(0.0) };
+        for (sum, value) in blended.iter_mut().zip(*colour) {
+            *sum += f32::from(value) * weight;
+        }
+    }
+    blended.map(|sum| (sum / total).round().clamp(0.0, 255.0) as u8)
+}
+
+// ---------------------------------------------------------------------------
 // A loaded sample
 // ---------------------------------------------------------------------------
 
@@ -928,14 +1084,14 @@ mod tests {
         .unwrap();
         let attribute = Attribute::read(&table, "phenotype").unwrap();
 
-        assert_eq!(attribute.colour(0), attribute.colour(3), "same label");
-        assert_ne!(attribute.colour(0), attribute.colour(1));
+        assert_eq!(attribute.colour(0, Palette::Reds), attribute.colour(3, Palette::Reds), "same label");
+        assert_ne!(attribute.colour(0, Palette::Reds), attribute.colour(1, Palette::Reds));
 
-        match attribute.legend() {
+        match attribute.legend(Palette::Reds) {
             Legend::Categories(entries) => {
                 assert_eq!(entries.len(), 3);
                 assert_eq!(entries[0].0, "a");
-                assert_eq!(entries[0].1, attribute.colour(0), "the legend must not lie");
+                assert_eq!(entries[0].1, attribute.colour(0, Palette::Reds), "the legend must not lie");
             }
             other => panic!("expected a list, got {other:?}"),
         }
@@ -947,12 +1103,12 @@ mod tests {
             Table::from_columns(vec![("CD8".into(), Table::f64_array([0.5, 1.5, 2.5]))]).unwrap();
         let attribute = Attribute::read(&table, "CD8").unwrap();
 
-        match attribute.legend() {
+        match attribute.legend(Palette::Reds) {
             Legend::Colorbar { ramp, min, max } => {
                 assert_eq!((min, max), (0.5, 2.5));
                 assert_eq!(ramp.len(), RAMP_STEPS);
-                assert_eq!(ramp[0], attribute.colour(0), "the low end is the low value");
-                assert_eq!(*ramp.last().unwrap(), attribute.colour(2));
+                assert_eq!(ramp[0], attribute.colour(0, Palette::Reds), "the low end is the low value");
+                assert_eq!(*ramp.last().unwrap(), attribute.colour(2, Palette::Reds));
             }
             other => panic!("expected a colour bar, got {other:?}"),
         }
@@ -966,8 +1122,8 @@ mod tests {
             Table::from_columns(vec![("flat".into(), Table::f64_array([2.5, 2.5]))]).unwrap();
         let attribute = Attribute::read(&table, "flat").unwrap();
 
-        let colour = attribute.colour(0);
-        assert_eq!(colour, attribute.colour(1), "one value, one colour");
+        let colour = attribute.colour(0, Palette::Reds);
+        assert_eq!(colour, attribute.colour(1, Palette::Reds), "one value, one colour");
         assert_ne!(
             colour,
             Gradient::BAD,
@@ -986,8 +1142,8 @@ mod tests {
         .unwrap();
         let attribute = Attribute::read(&table, "CD8").unwrap();
 
-        assert_eq!(attribute.colour(1), Gradient::BAD);
-        assert_ne!(attribute.colour(0), attribute.colour(1));
+        assert_eq!(attribute.colour(1, Palette::Reds), Gradient::BAD);
+        assert_ne!(attribute.colour(0, Palette::Reds), attribute.colour(1, Palette::Reds));
         assert_eq!(attribute.text(1), "—");
     }
 
@@ -1012,11 +1168,11 @@ mod tests {
             }
             other => panic!("expected labels, got {other:?}"),
         }
-        assert_eq!(attribute.colour(1), Gradient::BAD);
+        assert_eq!(attribute.colour(1, Palette::Reds), Gradient::BAD);
         assert_eq!(attribute.text(1), "—");
-        assert_eq!(attribute.colour(0), attribute.colour(3));
+        assert_eq!(attribute.colour(0, Palette::Reds), attribute.colour(3, Palette::Reds));
 
-        match attribute.legend() {
+        match attribute.legend(Palette::Reds) {
             Legend::Categories(entries) => assert_eq!(entries.len(), 2),
             other => panic!("expected a list, got {other:?}"),
         }
@@ -1239,23 +1395,30 @@ mod tests {
 
     /// The two ways of asking for a colour must agree, or the legend and the
     /// canvas would disagree about what a cell is.
-    #[test]
-    fn the_resolved_map_gives_the_same_colours_as_the_single_lookups() {
-        let table = Table::from_columns(vec![
+    /// A table with a column of labels and a measurement that is missing in
+    /// one row — the two things a cell's colour can come from, and the row
+    /// where they have to agree that there is nothing there.
+    fn table_of_columns() -> Table {
+        Table::from_columns(vec![
             (
                 "phenotype".into(),
                 Table::string_array(["a", "b", "c", "a"]),
             ),
             ("CD8".into(), Table::f64_array([0.25, 1.5, f64::NAN, 9.75])),
         ])
-        .unwrap();
+        .unwrap()
+    }
+
+    #[test]
+    fn the_resolved_map_gives_the_same_colours_as_the_single_lookups() {
+        let table = table_of_columns();
 
         for column in ["phenotype", "CD8"] {
             let attribute = Attribute::read(&table, column).unwrap();
-            let colouring = attribute.colouring();
+            let colouring = attribute.colouring(Palette::Reds);
             for row in 0..5 {
                 assert_eq!(
-                    attribute.colour(row),
+                    attribute.colour(row, Palette::Reds),
                     colouring.colour(row),
                     "`{column}` disagrees about row {row}"
                 );
@@ -1406,5 +1569,199 @@ mod tests {
         let error =
             NetworkSample::load(&nodes, None, Extension::Parquet, "x_pos", "Y").unwrap_err();
         assert!(error.to_string().contains("x_pos"), "{error}");
+    }
+
+    // -----------------------------------------------------------------------
+    // Palettes and the tiles they are drawn in
+    // -----------------------------------------------------------------------
+
+    /// Adding a column must not hand it a colour another view already has.
+    #[test]
+    fn every_view_opens_on_a_palette_of_its_own() {
+        let handed: Vec<Palette> = (0..MAX_LAYERS).map(Palette::nth).collect();
+        for (index, palette) in handed.iter().enumerate() {
+            assert!(
+                !handed[index + 1..].contains(palette),
+                "{} was handed out twice",
+                palette.label()
+            );
+        }
+    }
+
+    #[test]
+    fn a_palette_names_itself_and_produces_a_ramp() {
+        for palette in Palette::ALL {
+            assert!(!palette.label().is_empty());
+            assert_eq!(palette.ramp().len(), RAMP_STEPS);
+            assert_eq!(palette.ramp()[0], palette.gradient().sample(0.0));
+            assert_eq!(*palette.ramp().last().unwrap(), palette.gradient().sample(1.0));
+        }
+    }
+
+    /// The palette is what the picker changes, so changing it has to change
+    /// the picture — for a measurement.
+    #[test]
+    fn a_measured_column_changes_colour_with_its_palette() {
+        let attribute = Attribute::Continuous {
+            values: vec![0.0, 1.0],
+            min: 0.0,
+            max: 1.0,
+        };
+        assert_ne!(
+            attribute.colour(1, Palette::Reds),
+            attribute.colour(1, Palette::Blues)
+        );
+    }
+
+    /// And a column of labels has to ignore it: a niche's colour is shared
+    /// with every figure the pipeline writes, and a view that recoloured it
+    /// would be disagreeing with them.
+    #[test]
+    fn a_labelled_column_ignores_the_palette() {
+        let attribute = Attribute::labels(vec![Some("a".into()), Some("b".into())]);
+        for palette in Palette::ALL {
+            assert_eq!(
+                attribute.colour(0, palette),
+                attribute.colour(0, Palette::Reds),
+                "{} recoloured a label",
+                palette.label()
+            );
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Blending several columns into one picture
+    // -----------------------------------------------------------------------
+
+    fn channel(colour: Rgb, weight: f32) -> Channel {
+        Some((colour, weight))
+    }
+
+    /// One column has to draw exactly what it drew before there were four, at
+    /// any weight: a mean of one thing is that thing.
+    #[test]
+    fn one_column_is_left_exactly_as_it_was() {
+        for weight in [0.0, 0.01, 0.5, 1.0] {
+            assert_eq!(
+                fuse(&[channel([0x67, 0x00, 0x0d], weight)]),
+                [0x67, 0x00, 0x0d],
+                "a single column was changed at weight {weight}"
+            );
+        }
+    }
+
+    /// Two columns equally strong give the colour between them — which is the
+    /// whole point of blending rather than picking one.
+    #[test]
+    fn two_equal_columns_give_the_colour_between_them() {
+        let red = [0xC0, 0x20, 0x20];
+        let blue = [0x20, 0x20, 0xC0];
+        let blended = fuse(&[channel(red, 1.0), channel(blue, 1.0)]);
+
+        assert_eq!(blended, [0x70, 0x20, 0x70]);
+        assert_ne!(blended, red);
+        assert_ne!(blended, blue);
+    }
+
+    /// A column that dominates a cell gives the cell its colour, so a strong
+    /// marker still reads as that marker and not as a muddle.
+    #[test]
+    fn the_dominant_column_carries_the_cell() {
+        let red = [0xC0, 0x20, 0x20];
+        let blue = [0x20, 0x20, 0xC0];
+        let blended = fuse(&[channel(red, 1.0), channel(blue, 0.02)]);
+
+        let distance = |a: Rgb, b: Rgb| (0..3).map(|c| (a[c] as i32 - b[c] as i32).abs()).sum::<i32>();
+        assert!(
+            distance(blended, red) < distance(blended, blue) / 4,
+            "{blended:?} is not close enough to the column that dominates it"
+        );
+    }
+
+    /// A cell low in every column stays at the pale end of the ramps, so it
+    /// recedes exactly as it does with one column — and does not divide by a
+    /// total weight of nothing on the way.
+    #[test]
+    fn a_cell_low_in_everything_stays_pale() {
+        let pale = [0xFF, 0xF5, 0xF0];
+        let blended = fuse(&[channel(pale, 0.0), channel(pale, 0.0)]);
+        assert_eq!(blended, pale);
+    }
+
+    /// No value in any coloured column is grey, never a colour: "no data" must
+    /// not read as "low".
+    #[test]
+    fn a_cell_with_nothing_in_it_is_the_missing_grey() {
+        assert_eq!(fuse(&[None, None, None, None]), Gradient::BAD);
+        assert_eq!(fuse(&[]), Gradient::BAD);
+    }
+
+    /// A column that is missing for *this* cell drops out of the blend rather
+    /// than dragging it towards grey: three markers read and one not measured
+    /// is still three markers.
+    #[test]
+    fn a_missing_column_leaves_the_others_alone() {
+        let red = [0xC0, 0x20, 0x20];
+        assert_eq!(fuse(&[channel(red, 1.0), None]), red);
+    }
+
+    /// The blend is a colour whatever it is handed — including the weights a
+    /// column of one repeated value, or a range of zero, can produce.
+    #[test]
+    fn the_blend_survives_strange_weights() {
+        let white = [255, 255, 255];
+        let black = [0, 0, 0];
+
+        // A negative weight drops its column out; it cannot pull the blend the
+        // other way.
+        assert_eq!(fuse(&[channel(white, -1.0), channel(black, 1.0)]), black);
+        // No weight anywhere is equal say, not a division by nothing.
+        assert_eq!(
+            fuse(&[channel(white, 0.0), channel(black, 0.0)]),
+            [128, 128, 128]
+        );
+        // And a vanishing weight beside a real one leaves the real one.
+        assert_eq!(fuse(&[channel(white, 1e-9), channel(black, 1.0)]), black);
+    }
+
+    /// A measurement weighs where it sits in its own range, so a column in
+    /// counts cannot shout down a column in fractions.
+    #[test]
+    fn a_measurement_weighs_its_place_in_its_own_range() {
+        let attribute = Attribute::Continuous {
+            values: vec![100.0, 200.0, 300.0, f64::NAN],
+            min: 100.0,
+            max: 300.0,
+        };
+        assert_eq!(attribute.weight(0), Some(0.0));
+        assert_eq!(attribute.weight(1), Some(0.5));
+        assert_eq!(attribute.weight(2), Some(1.0));
+        assert_eq!(attribute.weight(3), None, "a missing value has no weight");
+    }
+
+    /// A label is a fact, not a degree: it weighs one, or it is not there.
+    #[test]
+    fn a_label_weighs_one() {
+        let attribute = Attribute::labels(vec![Some("a".into()), None]);
+        assert_eq!(attribute.weight(0), Some(1.0));
+        assert_eq!(attribute.weight(1), None);
+        assert_eq!(attribute.weight(9), None, "past the end is not a cell");
+    }
+
+    /// The weight and the colour have to agree about what is missing, or a
+    /// cell drops out of the blend while still contributing a colour to it.
+    #[test]
+    fn the_weight_and_the_colour_agree_about_missing_values() {
+        let table = table_of_columns();
+        for column in ["phenotype", "CD8"] {
+            let attribute = Attribute::read(&table, column).unwrap();
+            for row in 0..attribute.len() {
+                assert_eq!(
+                    attribute.weight(row).is_none(),
+                    attribute.colour(row, Palette::Reds) == Gradient::BAD,
+                    "`{column}` disagrees about row {row}"
+                );
+            }
+        }
     }
 }

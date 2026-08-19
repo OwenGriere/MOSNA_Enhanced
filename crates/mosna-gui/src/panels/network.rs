@@ -25,8 +25,8 @@ use egui::{Color32, Mesh, Pos2, Rect, Sense, Stroke, Vec2};
 
 use crate::app::MosnaApp;
 use crate::model::network::{
-    circle_segments, covers, flip, mesh_region, point_radius, stride_for, Attribute, Bounds,
-    Camera, Legend, NetworkSample, Point,
+    circle_segments, covers, flip, fuse, mesh_region, point_radius, stride_for, Attribute, Bounds,
+    Camera, Channel, Legend, NetworkSample, Palette, Point, MAX_LAYERS,
 };
 use crate::theme;
 
@@ -72,9 +72,9 @@ pub struct NetworkState {
     sample: Option<NetworkSample>,
     camera: Option<Camera>,
 
-    /// The column the cells are coloured by, and that column read.
-    pub colour_column: Option<String>,
-    attribute: Option<Attribute>,
+    /// The columns the cells are coloured by, blended into one colour each, in
+    /// the order they were chosen. Empty draws the cells plain.
+    pub layers: Vec<Layer>,
 
     /// Columns the tooltip prints, and their values.
     pub inspected: Vec<String>,
@@ -90,8 +90,33 @@ pub struct NetworkState {
     /// The middle of the canvas as the last frame drew it, so the zoom buttons
     /// have somewhere to zoom about — the wheel has the pointer, they do not.
     canvas_centre: Point,
+    /// The whole canvas as the last frame drew it, which is what the side
+    /// panels being folded away changes.
+    canvas_size: [f32; 2],
 
     prepared: Option<Prepared>,
+}
+
+/// One column, its palette, and that column read.
+///
+/// A channel of the picture. Every layer contributes its colour to every cell,
+/// weighted by how strongly that cell expresses its column — one network in
+/// which four columns can be seen at once, rather than four networks.
+pub struct Layer {
+    pub column: String,
+    pub palette: Palette,
+    attribute: Option<Attribute>,
+}
+
+impl Layer {
+    /// The column read, when it could be.
+    ///
+    /// `None` while the column names something the loaded sample does not
+    /// have — a layer kept from a sample that had it, which the error line
+    /// reports rather than the layer quietly disappearing.
+    pub fn attribute(&self) -> Option<&Attribute> {
+        self.attribute.as_ref()
+    }
 }
 
 /// A drop-down of the tab's own size.
@@ -144,13 +169,17 @@ fn list_of_width<R>(
 /// Geometry resolved for a region of the sample, re-used while the view stays
 /// inside it.
 struct Prepared {
-    /// Cell centres in mesh space, with the colour they were resolved to.
-    cells: Vec<(Point, Color32)>,
+    /// Cell centres in mesh space.
+    cells: Vec<Point>,
+    /// One colour per cell: every chosen column's contribution, blended.
+    colours: Vec<Color32>,
     /// Edge endpoints in mesh space, empty when the sample has none or the
     /// user has turned them off.
     edges: Vec<(Point, Point)>,
     region: Bounds,
-    colouring: Option<String>,
+    /// The colouring the cells were resolved with, so a change of column or of
+    /// palette is noticed.
+    colouring: Vec<(String, Palette)>,
     with_edges: bool,
 }
 
@@ -165,14 +194,14 @@ impl Default for NetworkState {
             show_edges: true,
             sample: None,
             camera: None,
-            colour_column: None,
-            attribute: None,
+            layers: Vec::new(),
             inspected: Vec::new(),
             inspected_values: Vec::new(),
             x_column: String::new(),
             y_column: String::new(),
             error: None,
             canvas_centre: [0.0, 0.0],
+            canvas_size: [0.0, 0.0],
             prepared: None,
         }
     }
@@ -237,6 +266,11 @@ impl NetworkState {
 
     /// How far the camera is zoomed in, or `None` before the first frame has
     /// framed the sample.
+    /// The space the tab's canvas was given by the last frame.
+    pub fn canvas_size(&self) -> [f32; 2] {
+        self.canvas_size
+    }
+
     pub fn zoom(&self) -> Option<f32> {
         self.camera.map(|camera| camera.scale)
     }
@@ -276,11 +310,10 @@ impl NetworkState {
                 self.selected = Some(row);
                 self.sample = Some(loaded);
                 self.camera = None;
-                self.attribute = None;
                 self.prepared = None;
                 self.inspected_values.clear();
                 self.error = None;
-                self.refresh_attribute();
+                self.refresh_layers();
                 self.refresh_inspected();
             }
             Err(error) => {
@@ -291,25 +324,74 @@ impl NetworkState {
         }
     }
 
-    /// Re-read the colouring column.
-    fn refresh_attribute(&mut self) {
-        let Some(sample) = &self.sample else { return };
-        let Some(column) = &self.colour_column else {
-            self.attribute = None;
-            self.prepared = None;
+    /// The channels, in the order they were chosen.
+    pub fn layers(&self) -> &[Layer] {
+        &self.layers
+    }
+
+    /// Add a column as a channel, or drop the channel that already shows it.
+    ///
+    /// Refused past [`MAX_LAYERS`] rather than silently dropping the oldest:
+    /// the picker greys out what it will not accept, and a click that is
+    /// refused there should do nothing at all rather than something the user
+    /// did not ask for.
+    pub fn toggle_layer(&mut self, column: &str) {
+        match self.layers.iter().position(|layer| layer.column == column) {
+            Some(index) => {
+                self.layers.remove(index);
+            }
+            None if self.layers.len() < MAX_LAYERS => {
+                // The first palette no channel is already using, so a new
+                // channel's colour is its own even after one in the middle has
+                // been removed.
+                let palette = Palette::ALL
+                    .into_iter()
+                    .find(|palette| !self.layers.iter().any(|layer| layer.palette == *palette))
+                    .unwrap_or_default();
+                self.layers.push(Layer {
+                    column: column.to_string(),
+                    palette,
+                    attribute: None,
+                });
+            }
+            None => return,
+        }
+        self.refresh_layers();
+    }
+
+    /// Draw one channel with another ramp.
+    pub fn set_palette(&mut self, index: usize, palette: Palette) {
+        let Some(layer) = self.layers.get_mut(index) else {
             return;
         };
-        match sample.attribute(column) {
-            Ok(attribute) => {
-                self.attribute = Some(attribute);
-                self.error = None;
-            }
-            Err(error) => {
-                self.attribute = None;
-                self.error = Some(error.to_string());
+        if layer.palette != palette {
+            layer.palette = palette;
+            // The colours are resolved into the prepared geometry, so the
+            // picture does not change until that is thrown away.
+            self.prepared = None;
+        }
+    }
+
+    /// Re-read every channel's column.
+    fn refresh_layers(&mut self) {
+        self.prepared = None;
+        let Some(sample) = &self.sample else { return };
+
+        let mut missing: Option<String> = None;
+        for layer in &mut self.layers {
+            match sample.attribute(&layer.column) {
+                Ok(attribute) => layer.attribute = Some(attribute),
+                Err(error) => {
+                    layer.attribute = None;
+                    missing.get_or_insert_with(|| error.to_string());
+                }
             }
         }
-        self.prepared = None;
+        // One line, for the first column that could not be read: four
+        // channels over a sample that has none of their columns would
+        // otherwise report the same thing four times over, and only the last
+        // would be seen.
+        self.error = missing;
     }
 
     /// Re-read the columns the tooltip prints.
@@ -643,33 +725,46 @@ fn colour_picker(app: &mut MosnaApp, ui: &mut egui::Ui) {
             .size(theme::size::HEADING)
             .strong(),
     );
+    ui.label(
+        egui::RichText::new(format!(
+            "Up to {MAX_LAYERS} columns, blended into one picture."
+        ))
+        .color(theme::TEXT_MUTED)
+        .size(theme::size::SMALL),
+    );
 
     let columns: Vec<String> = app.network.columns().to_vec();
-    let caption = app
+    let chosen: Vec<String> = app
         .network
-        .colour_column
-        .clone()
-        .unwrap_or_else(|| "— none —".to_string());
+        .layers
+        .iter()
+        .map(|layer| layer.column.clone())
+        .collect();
 
-    let mut chosen: Option<Option<String>> = None;
+    let caption = match chosen.len() {
+        0 => "— none —".to_string(),
+        1 => chosen[0].clone(),
+        n => format!("{n} columns"),
+    };
+
+    let mut toggled: Option<String> = None;
     wide_list("network_colour", &caption, ui, |ui| {
-        if ui
-            .selectable_label(app.network.colour_column.is_none(), "— none —")
-            .clicked()
-        {
-            chosen = Some(None);
-        }
+        let full = chosen.len() >= MAX_LAYERS;
         for column in &columns {
-            let picked = app.network.colour_column.as_ref() == Some(column);
-            if ui.selectable_label(picked, column).clicked() {
-                chosen = Some(Some(column.clone()));
-            }
+            let mut on = chosen.contains(column);
+            // A column that is not chosen when four already are cannot be
+            // ticked; the ones that *are* chosen stay live, so there is always
+            // a way back out of a full set.
+            ui.add_enabled_ui(on || !full, |ui| {
+                if ui.checkbox(&mut on, column).changed() {
+                    toggled = Some(column.clone());
+                }
+            });
         }
     });
 
-    if let Some(column) = chosen {
-        app.network.colour_column = column;
-        app.network.refresh_attribute();
+    if let Some(column) = toggled {
+        app.network.toggle_layer(&column);
     }
 }
 
@@ -715,43 +810,115 @@ fn tooltip_picker(app: &mut MosnaApp, ui: &mut egui::Ui) {
 }
 
 fn legend(app: &mut MosnaApp, ui: &mut egui::Ui) {
-    let Some(attribute) = &app.network.attribute else {
+    if app.network.layers.is_empty() {
         return;
-    };
-    let column = app.network.colour_column.clone().unwrap_or_default();
+    }
 
-    ui.add_space(6.0);
-    ui.label(
-        egui::RichText::new(&column)
-            .color(theme::ACCENT)
-            .size(theme::size::HEADING)
-            .strong(),
-    );
-    ui.add_space(4.0);
+    // Said once, above the bars: each bar describes its column *alone*, and
+    // with more than one column no bar describes what is actually on screen.
+    // The tooltip is where a blended cell is read.
+    if app.network.layers.len() > 1 {
+        ui.add_space(6.0);
+        ui.label(
+            egui::RichText::new(
+                "Each cell blends the columns below, weighted by how strongly it \
+                 expresses each. Hover a cell for its values.",
+            )
+            .color(theme::TEXT_MUTED)
+            .size(theme::size::SMALL)
+            .italics(),
+        );
+    }
 
-    match attribute.legend() {
-        Legend::Categories(entries) => {
-            let scroll = entries.len() > LEGEND_ROWS_BEFORE_SCROLL;
-            let area = egui::ScrollArea::vertical()
-                .id_salt("network_legend")
-                .max_height(if scroll { 260.0 } else { f32::INFINITY });
-            area.show(ui, |ui| {
-                for (label, colour) in entries {
-                    ui.horizontal(|ui| {
-                        swatch(ui, to_colour(colour));
-                        ui.label(
-                            egui::RichText::new(label)
-                                .color(theme::TEXT)
-                                .size(theme::size::LABEL),
-                        );
-                    });
+    let mut repalette: Option<(usize, Palette)> = None;
+    for index in 0..app.network.layers.len() {
+        let layer = &app.network.layers[index];
+        let column = layer.column.clone();
+        let palette = layer.palette;
+        let legend = layer.attribute().map(|attribute| attribute.legend(palette));
+
+        ui.add_space(index.min(1) as f32 * 4.0);
+        ui.label(
+            egui::RichText::new(&column)
+                .color(theme::ACCENT)
+                .size(theme::size::HEADING)
+                .strong(),
+        );
+
+        match legend {
+            Some(Legend::Categories(entries)) => {
+                let scroll = entries.len() > LEGEND_ROWS_BEFORE_SCROLL;
+                let area = egui::ScrollArea::vertical()
+                    .id_salt(("network_legend", index))
+                    .max_height(if scroll { 260.0 } else { f32::INFINITY });
+                area.show(ui, |ui| {
+                    for (label, colour) in entries {
+                        ui.horizontal(|ui| {
+                            swatch(ui, to_colour(colour));
+                            ui.label(
+                                egui::RichText::new(label)
+                                    .color(theme::TEXT)
+                                    .size(theme::size::LABEL),
+                            );
+                        });
+                    }
+                });
+            }
+            Some(Legend::Colorbar { ramp, min, max }) => {
+                // The picker sits on the bar it changes, so choosing a ramp is
+                // choosing between things that are on screen rather than
+                // between four names.
+                if let Some(picked) = palette_picker(ui, index, palette) {
+                    repalette = Some((index, picked));
+                }
+                colour_bar(ui, &ramp, min, max);
+            }
+            None => {
+                ui.label(
+                    egui::RichText::new("not in this sample")
+                        .color(theme::TEXT_MUTED)
+                        .size(theme::size::SMALL)
+                        .italics(),
+                );
+            }
+        }
+        ui.add_space(6.0);
+    }
+
+    if let Some((index, palette)) = repalette {
+        app.network.set_palette(index, palette);
+    }
+}
+
+/// The ramp a measured column is drawn with.
+///
+/// Offered only for a measurement: a column of labels takes its colours from
+/// the cluster palette the rest of the toolchain uses, and a picker that did
+/// nothing would be worse than no picker.
+fn palette_picker(ui: &mut egui::Ui, index: usize, current: Palette) -> Option<Palette> {
+    let mut picked = None;
+    ui.horizontal(|ui| {
+        ui.label(
+            egui::RichText::new("Palette")
+                .color(theme::TEXT_MUTED)
+                .size(theme::size::SMALL),
+        );
+        egui::ComboBox::from_id_salt(("network_palette", index))
+            .selected_text(current.label())
+            .width(ui.available_width().min(120.0))
+            .wrap_mode(egui::TextWrapMode::Truncate)
+            .show_ui(ui, |ui| {
+                for palette in Palette::ALL {
+                    if ui
+                        .selectable_label(palette == current, palette.label())
+                        .clicked()
+                    {
+                        picked = Some(palette);
+                    }
                 }
             });
-        }
-        Legend::Colorbar { ramp, min, max } => {
-            colour_bar(ui, &ramp, min, max);
-        }
-    }
+    });
+    picked
 }
 
 /// A square of colour, the size of a line of text.
@@ -827,6 +994,7 @@ fn canvas(app: &mut MosnaApp, ui: &mut egui::Ui) {
     // of the interface rather than as a hole cut in it.
     ui.painter().rect_filled(rect, 4.0, theme::SURFACE);
     app.network.canvas_centre = [rect.width() * 0.5, rect.height() * 0.5];
+    app.network.canvas_size = [rect.width(), rect.height()];
 
     let Some(sample) = &app.network.sample else {
         return;
@@ -869,12 +1037,19 @@ fn canvas(app: &mut MosnaApp, ui: &mut egui::Ui) {
 
 /// Rebuild the prepared geometry when what is on screen has left it.
 fn prepare_if_stale(app: &mut MosnaApp, visible: Bounds, with_edges: bool) {
+    let colouring: Vec<(String, Palette)> = app
+        .network
+        .layers
+        .iter()
+        .map(|layer| (layer.column.clone(), layer.palette))
+        .collect();
+
     let stale = match &app.network.prepared {
         None => true,
         Some(prepared) => {
             !covers(prepared.region, visible)
                 || prepared.with_edges != with_edges
-                || prepared.colouring != app.network.colour_column
+                || prepared.colouring != colouring
         }
     };
     if !stale {
@@ -893,18 +1068,42 @@ fn prepare_if_stale(app: &mut MosnaApp, visible: Bounds, with_edges: bool) {
     let stride = stride_for(rows.len());
     let rows: Vec<u32> = rows.into_iter().step_by(stride).collect();
 
-    // The colour map is built once for the whole pass, not once per cell.
-    let colouring = app.network.attribute.as_ref().map(Attribute::colouring);
-    let cells: Vec<(Point, Color32)> = rows
+    let cells: Vec<Point> = rows
         .iter()
-        .map(|&row| {
-            let colour = match &colouring {
-                Some(colouring) => to_colour(colouring.colour(row as usize)),
-                None => theme::STEEL,
-            };
-            (flip(sample.positions[row as usize]), colour)
+        .map(|&row| flip(sample.positions[row as usize]))
+        .collect();
+
+    // One colour map per chosen column, built once for the whole pass rather
+    // than once per cell: the panel asks for up to sixty thousand colours in
+    // one go, and up to four times over.
+    let channels: Vec<(crate::model::network::Colouring<'_>, &Attribute)> = app
+        .network
+        .layers
+        .iter()
+        .filter_map(|layer| {
+            let attribute = layer.attribute()?;
+            Some((attribute.colouring(layer.palette), attribute))
         })
         .collect();
+
+    let colours: Vec<Color32> = if channels.is_empty() {
+        vec![theme::STEEL; rows.len()]
+    } else {
+        rows.iter()
+            .map(|&row| {
+                let row = row as usize;
+                // A fixed array, not a `Vec`: this runs once per cell, and
+                // there are at most `MAX_LAYERS` of them.
+                let mut blend: [Channel; MAX_LAYERS] = [None; MAX_LAYERS];
+                for (slot, (colouring, attribute)) in blend.iter_mut().zip(&channels) {
+                    *slot = attribute
+                        .weight(row)
+                        .map(|weight| (colouring.colour(row), weight));
+                }
+                to_colour(fuse(&blend))
+            })
+            .collect()
+    };
 
     let edges = if with_edges {
         let mut kept: Vec<bool> = vec![false; sample.n_cells()];
@@ -932,9 +1131,10 @@ fn prepare_if_stale(app: &mut MosnaApp, visible: Bounds, with_edges: bool) {
 
     app.network.prepared = Some(Prepared {
         cells,
+        colours,
         edges,
         region,
-        colouring: app.network.colour_column.clone(),
+        colouring,
         with_edges,
     });
 }
@@ -971,8 +1171,13 @@ fn paint(app: &MosnaApp, ui: &mut egui::Ui, rect: Rect, camera: Camera) {
     // and translated, rather than a sine and a cosine per cell per side.
     let ring = ring_offsets(radius);
     let mut mesh = Mesh::default();
-    for (centre, colour) in &prepared.cells {
-        add_disc(&mut mesh, to_screen(*centre), &ring, *colour);
+    for (index, centre) in prepared.cells.iter().enumerate() {
+        let colour = prepared
+            .colours
+            .get(index)
+            .copied()
+            .unwrap_or(theme::STEEL);
+        add_disc(&mut mesh, to_screen(*centre), &ring, colour);
     }
     painter.add(mesh);
 }
@@ -1025,6 +1230,10 @@ fn add_disc(mesh: &mut Mesh, centre: Pos2, ring: &[Vec2], colour: Color32) {
 }
 
 /// Name the cell under the pointer, and say what it carries.
+///
+/// Every coloured column, not only one: the cell's colour is a blend of all of
+/// them and cannot be read back into values, so the tooltip is where the
+/// values are. That is the trade the single picture makes.
 fn hover(app: &MosnaApp, ui: &mut egui::Ui, rect: Rect, camera: Camera, response: &egui::Response) {
     let Some(pointer) = response.hover_pos() else {
         return;
@@ -1071,11 +1280,21 @@ fn hover(app: &MosnaApp, ui: &mut egui::Ui, rect: Rect, camera: Camera, response
                     .size(theme::size::SMALL),
             );
 
-            if let (Some(column), Some(attribute)) =
-                (&app.network.colour_column, &app.network.attribute)
-            {
+            let coloured: Vec<(&str, String)> = app
+                .network
+                .layers
+                .iter()
+                .filter_map(|layer| {
+                    layer
+                        .attribute()
+                        .map(|attribute| (layer.column.as_str(), attribute.text(row)))
+                })
+                .collect();
+            if !coloured.is_empty() {
                 ui.separator();
-                entry(ui, column, &attribute.text(row));
+                for (column, value) in coloured {
+                    entry(ui, column, &value);
+                }
             }
 
             if !app.network.inspected.is_empty() {
@@ -1189,11 +1408,10 @@ mod tests {
         let mut network = state(directory.path(), true);
         network.load(0, "parquet");
 
-        network.colour_column = Some("phenotype".into());
-        network.refresh_attribute();
+        network.toggle_layer("phenotype");
 
-        let attribute = network.attribute.as_ref().expect("the column was read");
-        match attribute.legend() {
+        let layer = &network.layers[0];
+        match layer.attribute().expect("the column was read").legend(layer.palette) {
             Legend::Categories(entries) => {
                 assert_eq!(entries.len(), 3, "cancer, immune, stroma");
             }
@@ -1207,13 +1425,87 @@ mod tests {
         let mut network = state(directory.path(), true);
         network.load(0, "parquet");
 
-        network.colour_column = Some("CD8".into());
-        network.refresh_attribute();
+        network.toggle_layer("CD8");
 
-        match network.attribute.as_ref().unwrap().legend() {
+        let layer = &network.layers[0];
+        match layer.attribute().unwrap().legend(layer.palette) {
             Legend::Colorbar { min, max, .. } => assert_eq!((min, max), (0.25, 2.25)),
             other => panic!("expected a colour bar, got {other:?}"),
         }
+    }
+
+    /// Four channels, and no more: the fifth click is refused rather than
+    /// silently replacing one of the four.
+    #[test]
+    fn no_more_than_four_columns_can_be_chosen() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut network = state(directory.path(), true);
+        network.load(0, "parquet");
+
+        for column in ["phenotype", "CD8", "niches", "x", "y"] {
+            network.toggle_layer(column);
+        }
+        assert_eq!(network.layers().len(), MAX_LAYERS);
+        assert!(
+            !network.layers().iter().any(|layer| layer.column == "y"),
+            "the fifth column got in"
+        );
+    }
+
+    /// And each of them opens on a ramp of its own: two channels on the same
+    /// ramp blend into a colour that says nothing about which is which.
+    #[test]
+    fn each_channel_opens_on_a_palette_no_other_channel_has() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut network = state(directory.path(), true);
+        network.load(0, "parquet");
+
+        for column in ["phenotype", "CD8", "niches", "x"] {
+            network.toggle_layer(column);
+        }
+        let palettes: Vec<Palette> = network.layers().iter().map(|l| l.palette).collect();
+        for (index, palette) in palettes.iter().enumerate() {
+            assert!(
+                !palettes[index + 1..].contains(palette),
+                "{} is used by two channels",
+                palette.label()
+            );
+        }
+    }
+
+    /// A channel removed from the middle frees its colour for the next one, so
+    /// a set of four never ends up with two channels on the same ramp.
+    #[test]
+    fn a_removed_channel_gives_its_palette_back() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut network = state(directory.path(), true);
+        network.load(0, "parquet");
+
+        for column in ["phenotype", "CD8", "niches"] {
+            network.toggle_layer(column);
+        }
+        let freed = network.layers()[1].palette;
+        network.toggle_layer("CD8");
+        network.toggle_layer("x");
+
+        assert_eq!(network.layers().len(), 3);
+        assert_eq!(
+            network.layers()[2].palette,
+            freed,
+            "the new channel did not take the freed palette"
+        );
+    }
+
+    /// Clicking a column that is already a view removes it.
+    #[test]
+    fn choosing_the_same_column_twice_removes_its_channel() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut network = state(directory.path(), true);
+        network.load(0, "parquet");
+
+        network.toggle_layer("CD8");
+        network.toggle_layer("CD8");
+        assert!(network.layers().is_empty());
     }
 
     /// Changing the colouring must drop the prepared geometry, or the cells
@@ -1223,20 +1515,45 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let mut network = state(directory.path(), true);
         network.load(0, "parquet");
-        network.prepared = Some(Prepared {
+
+        network.prepared = Some(prepared());
+        network.toggle_layer("phenotype");
+        assert!(network.prepared.is_none(), "adding a view kept the geometry");
+    }
+
+    /// And so must changing a palette: the colours are resolved into the
+    /// prepared geometry, so the picture does not change until it is dropped.
+    #[test]
+    fn changing_a_palette_invalidates_the_prepared_geometry() {
+        let directory = tempfile::tempdir().unwrap();
+        let mut network = state(directory.path(), true);
+        network.load(0, "parquet");
+        network.toggle_layer("CD8");
+
+        network.prepared = Some(prepared());
+        network.set_palette(0, Palette::Greens);
+        assert_eq!(network.layers()[0].palette, Palette::Greens);
+        assert!(network.prepared.is_none());
+
+        // The same palette again is not a change, and must not throw away the
+        // geometry every frame the picker is looked at.
+        network.prepared = Some(prepared());
+        network.set_palette(0, Palette::Greens);
+        assert!(network.prepared.is_some());
+    }
+
+    fn prepared() -> Prepared {
+        Prepared {
             cells: Vec::new(),
+            colours: Vec::new(),
             edges: Vec::new(),
             region: Bounds {
                 min: [0.0, 0.0],
                 max: [1.0, 1.0],
             },
-            colouring: None,
+            colouring: Vec::new(),
             with_edges: false,
-        });
-
-        network.colour_column = Some("phenotype".into());
-        network.refresh_attribute();
-        assert!(network.prepared.is_none());
+        }
     }
 
     #[test]
@@ -1259,10 +1576,9 @@ mod tests {
         let mut network = state(directory.path(), true);
         network.load(0, "parquet");
 
-        network.colour_column = Some("CD99".into());
-        network.refresh_attribute();
+        network.toggle_layer("CD99");
 
-        assert!(network.attribute.is_none());
+        assert!(network.layers()[0].attribute().is_none());
         assert!(network.error.as_deref().unwrap().contains("CD99"));
     }
 
@@ -1284,8 +1600,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let mut network = state(directory.path(), true);
         network.load(0, "parquet");
-        network.colour_column = Some("phenotype".into());
-        network.refresh_attribute();
+        network.toggle_layer("phenotype");
         network.inspected = vec!["CD8".into()];
         network.refresh_inspected();
         network.patient = Some("1".into());
@@ -1302,8 +1617,7 @@ mod tests {
         assert!(network.selected.is_none());
         assert!(network.patient.is_none());
         assert!(network.camera.is_none());
-        assert!(network.attribute.is_none());
-        assert!(network.colour_column.is_none());
+        assert!(network.layers().is_empty());
         assert!(network.inspected.is_empty());
         assert!(network.inspected_values.is_empty());
         assert!(network.prepared.is_none());

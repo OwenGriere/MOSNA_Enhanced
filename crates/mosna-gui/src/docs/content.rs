@@ -419,13 +419,31 @@ fn workflow() -> Chapter {
                         ),
                     },
                     Block::Paragraph(T::new(
+                        "Click the Browser's or the Parameters' title to fold that panel down \
+                         to a band carrying its name; click the band to bring it back, at the \
+                         width it had. The Viewer between them takes whatever they leave, \
+                         which is how the Network tab gets a screen's width to draw in. The \
+                         Viewer itself does not fold.",
+                        "Cliquez sur le titre du Browser ou des Parameters pour replier ce \
+                         panneau en une bande portant son nom ; cliquez sur la bande pour le \
+                         rouvrir, à la largeur qu'il avait. Le Viewer entre les deux prend \
+                         tout ce qu'ils laissent, ce qui donne à l'onglet Network la largeur \
+                         d'un écran pour tracer. Le Viewer, lui, ne se replie pas.",
+                    )),
+                    Block::Paragraph(T::new(
                         "The Viewer's Network tab draws a sample from its nodes and edges \
                          files rather than from a figure. Choose the patient, then the sample; \
                          a dataset with no sample column asks only for the patient. Drag to \
                          pan, scroll or use the zoom buttons, and hover a cell to read the \
                          columns you ticked in the margin. Colouring by a column of labels — a \
                          phenotype, a niche — gives a legend of its values; colouring by a \
-                         measured column gives a colour bar over its range. Past sixty \
+                         measured column gives a colour bar over its range, in a ramp you \
+                         choose. Tick up to four columns and each cell is drawn in a blend of \
+                         their ramps, weighted by how strongly that cell expresses each one — \
+                         so a cell high in the red column and the blue one is neither red nor \
+                         blue. A blend cannot be read back: the bars in the margin describe \
+                         each column on its own, and the tooltip carries the values. A cell \
+                         with no value in any of the chosen columns stays grey. Past sixty \
                          thousand cells in view only a fraction are drawn, with the edges \
                          between them: at that size a cell is under a pixel and they overlap \
                          several deep, so the rest would cost frames and show nothing. Zoom \
@@ -437,7 +455,14 @@ fn workflow() -> Chapter {
                          de zoom, survoler une cellule pour lire les colonnes cochées en \
                          marge. Colorer par une colonne d'étiquettes — un phénotype, une niche \
                          — donne une légende de ses valeurs ; colorer par une colonne mesurée \
-                         donne une barre de couleur sur son étendue. Au-delà de soixante mille \
+                         donne une barre de couleur sur son étendue, dans une palette que \
+                         vous choisissez. Cochez jusqu'à quatre colonnes et chaque cellule est \
+                         tracée dans un mélange de leurs palettes, pondéré par la force avec \
+                         laquelle elle exprime chacune — une cellule forte dans la colonne \
+                         rouge et dans la bleue n'est ni rouge ni bleue. Un mélange ne se \
+                         relit pas : les barres en marge décrivent chaque colonne seule, et \
+                         l'infobulle porte les valeurs. Une cellule sans valeur dans aucune \
+                         des colonnes choisies reste grise. Au-delà de soixante mille \
                          cellules à l'écran, seule une fraction est tracée, avec les arêtes qui \
                          les relient : à cette taille une cellule fait moins d'un pixel et \
                          elles se recouvrent, le reste coûterait des images par seconde sans \

@@ -29,6 +29,97 @@ pub fn header(ui: &mut egui::Ui, text: &str) {
     ui.add_space(2.0);
 }
 
+/// Which way a panel folds, which is the way its chevron points.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Fold {
+    /// A left-hand panel, folding off the left edge.
+    Left,
+    /// A right-hand panel, folding off the right edge.
+    Right,
+}
+
+impl Fold {
+    /// The mark on the title, pointing the way the panel will go.
+    fn chevron(self) -> &'static str {
+        match self {
+            Fold::Left => "\u{2039}",
+            Fold::Right => "\u{203a}",
+        }
+    }
+}
+
+/// A panel heading that is also the control that folds the panel away.
+///
+/// The title *is* the button, rather than a separate widget beside it: a panel
+/// has one obvious thing to click at the top of it, and giving that thing two
+/// jobs is cheaper in space and in explanation than adding a second control to
+/// a panel whose whole problem is that it is taking up room.
+///
+/// Returns `true` on the frame the user asked to fold it.
+pub fn folding_header(ui: &mut egui::Ui, text: &str, fold: Fold) -> bool {
+    ui.add_space(6.0);
+    let title = egui::RichText::new(format!("{text}  {}", fold.chevron()))
+        .color(theme::ACCENT)
+        .size(theme::size::PANEL_TITLE)
+        .strong();
+    let clicked = ui
+        .add(egui::Button::new(title).frame(false))
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text("Fold this panel away")
+        .clicked();
+    ui.add_space(6.0);
+    ui.separator();
+    ui.add_space(2.0);
+    clicked
+}
+
+/// The whole of a folded panel: a band carrying its name, written up it.
+///
+/// Written bottom to top, which is the way a spine is read when a book is
+/// standing up, and the only way that keeps the letters in order when the text
+/// is turned onto its side.
+///
+/// Returns `true` on the frame the user asked to unfold it.
+pub fn folded_spine(ui: &mut egui::Ui, text: &str) -> bool {
+    let (rect, response) = ui.allocate_exact_size(
+        ui.available_size(),
+        egui::Sense::click(),
+    );
+    let response = response
+        .on_hover_cursor(egui::CursorIcon::PointingHand)
+        .on_hover_text(format!("Open {text}"));
+
+    let painter = ui.painter_at(rect);
+    if response.hovered() {
+        painter.rect_filled(rect, egui::CornerRadius::same(4), theme::SURFACE_HOVER);
+    }
+
+    // A step down from the panel title it stands in for: turned on its side,
+    // a line of text is as wide as its glyphs are tall, and the band is
+    // [`theme::FOLDED_WIDTH`] across. At the title's size the name would be
+    // shaved on both sides by the clip.
+    let galley = painter.layout_no_wrap(
+        text.to_owned(),
+        egui::FontId::proportional(theme::size::HEADING),
+        theme::ACCENT,
+    );
+    // A quarter turn anticlockwise, about the position the shape is given. The
+    // text then runs upwards from that point and downwards to the right of it,
+    // which is why the anchor is the *bottom left* of where the line is to end
+    // up rather than its top left.
+    let size = galley.size();
+    let anchor = egui::pos2(
+        rect.center().x - size.y * 0.5,
+        rect.center().y + size.x * 0.5,
+    );
+    painter.add(
+        egui::epaint::TextShape::new(anchor, galley, theme::ACCENT)
+            .with_angle(-std::f32::consts::FRAC_PI_2),
+    );
+
+    response.clicked()
+}
+
 /// A titled box, the equivalent of Qt's `QGroupBox`.
 pub fn group<R>(ui: &mut egui::Ui, title: &str, contents: impl FnOnce(&mut egui::Ui) -> R) -> R {
     ui.add_space(8.0);

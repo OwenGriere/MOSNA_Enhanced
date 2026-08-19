@@ -3,6 +3,7 @@
 use std::path::PathBuf;
 
 use crate::app::{AnalysisTab, MosnaApp, ViewerTab};
+use crate::model::flow;
 use crate::model::viewer::AnalysisImages;
 use crate::panels::header;
 use crate::theme;
@@ -218,13 +219,21 @@ fn log(app: &mut MosnaApp, ui: &mut egui::Ui) {
 const BAR_HEIGHT: f32 = theme::size::BODY + 10.0;
 const BAR_RADIUS: f32 = 5.0;
 
-/// How many strips the gradient is painted in.
+/// How far apart the colours of the fill are sampled, in points.
 ///
-/// `egui` fills a rectangle with one colour, so a gradient is a row of narrow
-/// rectangles. Ninety-six of them is a strip of two or three pixels on any
-/// panel this is drawn in — below what an eye resolves as a step — and ninety-
-/// six rectangles is nothing to draw.
-const SLICES: usize = 96;
+/// The metal is painted as one mesh whose vertices carry the colour, so the
+/// question is how often the colour is worked out along the bar rather than how
+/// many rectangles it takes. Two points samples the tightest stripe of
+/// [`flow::grain`] three times over, which is enough for the interpolation
+/// between two columns to keep the stripe instead of averaging it away.
+const COLUMN: f32 = 2.0;
+
+/// How many rows the bevel is sampled at.
+///
+/// Four, because the colours between the rows are interpolated: the bevel comes
+/// out as a smooth gradient, not as four bands. More rows would only sample the
+/// same curve more finely.
+const BEVEL_ROWS: usize = 4;
 
 fn status_bar(app: &mut MosnaApp, ui: &mut egui::Ui) {
     ui.label(
@@ -278,7 +287,7 @@ fn status_bar(app: &mut MosnaApp, ui: &mut egui::Ui) {
     }
 }
 
-/// The track, and whatever is flowing along it.
+/// The track, and the metal on it.
 fn paint_bar(app: &MosnaApp, ui: &egui::Ui, rect: egui::Rect, running: bool) {
     let painter = ui.painter();
     let radius = egui::CornerRadius::same(BAR_RADIUS as u8);
@@ -290,45 +299,51 @@ fn paint_bar(app: &MosnaApp, ui: &egui::Ui, rect: egui::Rect, running: bool) {
         egui::StrokeKind::Inside,
     );
 
-    let phase = crate::model::flow::phase(ui.input(|input| input.time));
+    let phase = flow::phase(ui.input(|input| input.time));
 
     match app.progress {
-        // A position to show: the ramp fills it, and the highlight travels
-        // along what has been done.
+        // A position to show: the metal fills it, and the light crosses what
+        // has been done.
         Some((current, total)) if total > 0 => {
             let done = (current as f32 / total as f32).clamp(0.0, 1.0);
-            let shade: Box<dyn Fn(f32) -> egui::Color32> = if app.last_run_failed {
-                Box::new(|_| theme::STEP_FAILED)
+            let shade: Box<dyn Fn(f32, f32) -> egui::Color32> = if app.last_run_failed {
+                // The same surface, the wrong colour: a failed run is still the
+                // bar it was a moment ago, which is what makes the colour read.
+                Box::new(|_, x| flow::lit(theme::STEP_FAILED, flow::grain(x)))
             } else if running {
-                Box::new(move |t| crate::model::flow::shade(t, phase))
+                Box::new(move |t, x| flow::shade(t, x, phase))
             } else {
-                // Finished, and still on screen: the ramp stays, the movement
-                // stops. A bar that keeps flowing after the process exited
-                // says the wrong thing.
-                Box::new(crate::model::flow::base)
+                Box::new(flow::still)
             };
-            paint_ramp(painter, rect, (0.0, done), &shade);
+            paint_fill(painter, rect, (0.0, done), &shade);
         }
-        // No count yet: a band sweeps the track. It says "working" without
-        // claiming a position it does not know.
+        // No count yet: the whole track is washed with gold, and the light
+        // still crosses it. It says "working" without claiming a position it
+        // does not know.
         _ if running => {
-            let (start, end) = crate::model::flow::band(phase);
-            paint_ramp(painter, rect, (start, end), &|t| {
-                // Bright in the middle: the band is a comet, and its own
-                // movement is the flow.
-                crate::model::flow::shade(t, 0.5)
-            });
+            paint_fill(painter, rect, (0.0, 1.0), &move |t, x| flow::wash(t, x, phase));
         }
         _ => {}
     }
 }
 
-/// Fill `span` of `rect` with a colour that changes along it.
-fn paint_ramp(
+/// Fill `span` of `rect` with metal whose colour changes along it.
+///
+/// `shade` is handed the position along the fill, in `[0, 1]`, and the distance
+/// in points from the left edge of the *bar* — the first is where the ramp and
+/// the light are read from, the second is where the grain is, and the two are
+/// not the same thing once the fill is shorter than the track.
+///
+/// Painted as a round cap at each end and one mesh between them. The mesh is
+/// what makes the bevel possible at all: `egui` fills a shape with a single
+/// colour, but interpolates colour between the vertices of a mesh, so a
+/// gradient across the height of the bar costs five rows of vertices rather
+/// than a rectangle per row per column.
+fn paint_fill(
     painter: &egui::Painter,
     rect: egui::Rect,
     span: (f32, f32),
-    shade: &dyn Fn(f32) -> egui::Color32,
+    shade: &dyn Fn(f32, f32) -> egui::Color32,
 ) {
     let (start, end) = span;
     let left = rect.left() + rect.width() * start;
@@ -337,34 +352,81 @@ fn paint_ramp(
         return;
     }
 
-    let step = (right - left) / SLICES as f32;
-    for index in 0..SLICES {
-        let from = left + step * index as f32;
-        // Half a pixel of overlap, or a seam shows between two strips whose
-        // edges land either side of a device pixel.
-        let to = (from + step + 0.5).min(right);
+    let colour_at = |x: f32| shade(((x - left) / (right - left)).clamp(0.0, 1.0), x - rect.left());
+    let strip = |from: f32, to: f32| {
+        egui::Rect::from_min_max(
+            egui::pos2(from, rect.top()),
+            egui::pos2(to, rect.bottom()),
+        )
+    };
 
-        let corner = egui::CornerRadius {
-            nw: if index == 0 { BAR_RADIUS as u8 } else { 0 },
-            sw: if index == 0 { BAR_RADIUS as u8 } else { 0 },
-            ne: if index + 1 == SLICES {
-                BAR_RADIUS as u8
-            } else {
-                0
-            },
-            se: if index + 1 == SLICES {
-                BAR_RADIUS as u8
-            } else {
-                0
-            },
-        };
-
-        painter.rect_filled(
-            egui::Rect::from_min_max(egui::pos2(from, rect.top()), egui::pos2(to, rect.bottom())),
-            corner,
-            shade((index as f32 + 0.5) / SLICES as f32),
-        );
+    // Too short to have two round ends and a middle: one stub, and there is no
+    // bevel worth drawing on ten points of metal anyway.
+    if right - left < BAR_RADIUS * 4.0 {
+        let radius = egui::CornerRadius::same(BAR_RADIUS as u8);
+        painter.rect_filled(strip(left, right), radius, colour_at((left + right) * 0.5));
+        return;
     }
+
+    // The ends. `egui` shrinks a corner radius to fit the rectangle it is on,
+    // so a cap has to be twice its own radius wide — narrower, and the bar ends
+    // up with ends that are only half round. Each is filled with the colour the
+    // mesh starts from, so the two meet without a seam.
+    let body = (left + BAR_RADIUS, right - BAR_RADIUS);
+    painter.rect_filled(
+        strip(left, left + BAR_RADIUS * 2.0),
+        egui::CornerRadius {
+            nw: BAR_RADIUS as u8,
+            sw: BAR_RADIUS as u8,
+            ne: 0,
+            se: 0,
+        },
+        colour_at(body.0),
+    );
+    painter.rect_filled(
+        strip(right - BAR_RADIUS * 2.0, right),
+        egui::CornerRadius {
+            ne: BAR_RADIUS as u8,
+            se: BAR_RADIUS as u8,
+            nw: 0,
+            sw: 0,
+        },
+        colour_at(body.1),
+    );
+
+    // The middle.
+    let columns = (((body.1 - body.0) / COLUMN).round() as usize).max(1);
+    let mut mesh = egui::epaint::Mesh::default();
+    mesh.reserve_vertices((columns + 1) * (BEVEL_ROWS + 1));
+    mesh.reserve_triangles(columns * BEVEL_ROWS * 2);
+    for column in 0..=columns {
+        let x = body.0 + (body.1 - body.0) * column as f32 / columns as f32;
+        let colour = colour_at(x);
+        // The bevel fades out over the last few points at either end, so that
+        // the top and bottom edges of the mesh arrive at the round caps holding
+        // the caps' own flat colour.
+        let fade = ((x - body.0) / BAR_RADIUS)
+            .min((body.1 - x) / BAR_RADIUS)
+            .clamp(0.0, 1.0);
+        for row in 0..=BEVEL_ROWS {
+            let u = row as f32 / BEVEL_ROWS as f32;
+            let profile = 1.0 + (flow::bevel(u) - 1.0) * fade;
+            mesh.colored_vertex(
+                egui::pos2(x, rect.top() + rect.height() * u),
+                flow::lit(colour, profile),
+            );
+        }
+    }
+    let stride = (BEVEL_ROWS + 1) as u32;
+    for column in 0..columns as u32 {
+        for row in 0..BEVEL_ROWS as u32 {
+            let top = column * stride + row;
+            let next = top + stride;
+            mesh.add_triangle(top, next, top + 1);
+            mesh.add_triangle(next, next + 1, top + 1);
+        }
+    }
+    painter.add(egui::Shape::mesh(mesh));
 }
 
 fn label(name: &str, selected: bool) -> egui::RichText {
