@@ -2,6 +2,8 @@
 
 use std::path::{Path, PathBuf};
 
+use rayon::prelude::*;
+
 use mosna_config::model::niche_params::{
     ClustererType, Metric as ConfigMetric, NicheParams, ReducerType,
 };
@@ -17,8 +19,8 @@ use mosna_core::niches::{
     aggregate_cell_types, find_all_phenotypes, make_niches_composition, merge_niche_pheno,
     Normalize,
 };
-use mosna_core::reduction::umap::{knn_graph, umap, Metric, UmapParams};
-use mosna_io::read::get_opener::{read_table, Extension};
+use mosna_core::reduction::umap::{cluster_neighbours, umap, Metric, Scalar, UmapParams};
+use mosna_io::read::get_opener::{read_table, read_table_columns, Extension};
 use mosna_io::write::write_parquet::write_parquet;
 use mosna_io::{SampleId, Table};
 
@@ -65,17 +67,29 @@ pub fn niche_analysis(
     }
 
     // Every file must carry the columns to aggregate before anything runs.
+    //
+    // Only those columns are read. This used to decode every column of every
+    // nodes file in the cohort — gigabytes, to answer a question the parquet
+    // footer already holds — and did it one file at a time. `read_table_columns`
+    // raises the same `MissingColumn` naming the same file, so a configuration
+    // that names a column nothing has fails exactly as it did; the delimited
+    // formats still have to be parsed in full, which is why the check below is
+    // kept rather than left to the reader.
     let aggregate_columns = settings.column_to_aggregate.to_vec();
-    for id in &data_index {
-        let path = net_dir.join(id.nodes_file_name(
-            &settings.patient_column,
-            sample_column,
-            extension.as_str(),
-        ));
-        let table = read_table(&path, extension)?;
-        let names: Vec<&str> = aggregate_columns.iter().map(String::as_str).collect();
-        table.require_columns(&names)?;
-    }
+    let names: Vec<&str> = aggregate_columns.iter().map(String::as_str).collect();
+    data_index
+        .par_iter()
+        .map(|id| {
+            let path = net_dir.join(id.nodes_file_name(
+                &settings.patient_column,
+                sample_column,
+                extension.as_str(),
+            ));
+            let table = read_table_columns(&path, extension, &names)?;
+            table.require_columns(&names)?;
+            Ok(())
+        })
+        .collect::<Result<Vec<()>>>()?;
     progress.info("[INFO] Verification and Convertion of the files");
 
     // When a single categorical column is aggregated, the feature vocabulary is
@@ -394,11 +408,11 @@ struct ClusterInput {
 /// else.
 fn project(var_aggreg: &VarAggreg, params: &NicheParams) -> Result<ClusterInput> {
     let (matrix, width) = var_aggreg.clustering_matrix();
-    require_finite(&matrix, width)?;
+    require_finite(matrix, width)?;
 
     match params.reducer_type {
         ReducerType::None => Ok(ClusterInput {
-            values: matrix,
+            values: matrix.to_vec(),
             width,
             reduced: false,
         }),
@@ -414,8 +428,14 @@ fn project(var_aggreg: &VarAggreg, params: &NicheParams) -> Result<ClusterInput>
                 min_dist: params.min_dist,
                 ..UmapParams::default()
             };
+            // Narrowed on the way in and widened on the way out: the
+            // reduction runs in `umap::Scalar`, single precision like
+            // umap-learn, while everything the pipeline writes to disk —
+            // embedding, composition, figures — stays `f64`.
+            let narrowed: Vec<Scalar> = matrix.iter().map(|&v| v as Scalar).collect();
+            let embedding = umap(&narrowed, var_aggreg.n_rows, width, &umap_params)?;
             Ok(ClusterInput {
-                values: umap(&matrix, var_aggreg.n_rows, width, &umap_params)?,
+                values: embedding.into_iter().map(|v| v as f64).collect(),
                 width: params.dim_clust,
                 reduced: true,
             })
@@ -474,6 +494,15 @@ fn undirected_knn_edges(indices: &[Vec<usize>]) -> Vec<(usize, usize, f64)> {
     edges.into_iter().map(|(a, b)| (a, b, 1.0)).collect()
 }
 
+/// The seed the clustering stage runs on.
+///
+/// Leiden has always been given `0` here; the neighbour search above it now
+/// takes a seed too, and shares this one so that a run turns on a single
+/// number. The reference seeds neither — `leidenalg` is called without a seed
+/// and `knn_pairs` has nothing to seed — so there is no value to match, only a
+/// value to fix.
+const CLUSTER_SEED: u64 = 0;
+
 /// Partition the rows into niches.
 fn cluster(input: &ClusterInput, n_rows: usize, params: &NicheParams) -> Result<Vec<u32>> {
     let (values, width) = (input.values.as_slice(), input.width);
@@ -493,9 +522,24 @@ fn cluster(input: &ClusterInput, n_rows: usize, params: &NicheParams) -> Result<
         }
         ClustererType::Leiden => {
             let k = params.effective_k_cluster();
-            let graph = knn_graph(values, n_rows, width, k, Metric::Euclidean);
+            // Single precision, like the neighbour query the reference runs
+            // here. When a reduction took place these coordinates *came* from
+            // single precision — umap-learn's embedding is `float32` and
+            // `knn_pairs` builds its tree on it as it is — so nothing is
+            // narrowed that was ever wider. When it did not, the NAS features
+            // are narrowed: three significant digits where single precision
+            // carries seven, and rows that were exactly equal stay exactly
+            // equal, which is what the tie-break depends on.
+            let narrowed: Vec<Scalar> = values.iter().map(|&v| v as Scalar).collect();
+            // Exact while the cohort is small enough to afford it, approximate
+            // above — the embedding's coordinates are all distinct, so the
+            // exact search has nothing to group and runs at `O(n^2)`. The seed
+            // is the one Leiden is given below, so the whole clustering stage
+            // turns on a single number.
+            let graph =
+                cluster_neighbours(&narrowed, n_rows, width, k, Metric::Euclidean, CLUSTER_SEED);
             let edges = undirected_knn_edges(&graph.indices);
-            leiden(n_rows, &edges, params.resolution, 0)
+            leiden(n_rows, &edges, params.resolution, CLUSTER_SEED)
         }
         ClustererType::Spectral => spectral_clustering(
             values,

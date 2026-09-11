@@ -321,7 +321,9 @@ fn paint_bar(app: &MosnaApp, ui: &egui::Ui, rect: egui::Rect, running: bool) {
         // still crosses it. It says "working" without claiming a position it
         // does not know.
         _ if running => {
-            paint_fill(painter, rect, (0.0, 1.0), &move |t, x| flow::wash(t, x, phase));
+            paint_fill(painter, rect, (0.0, 1.0), &move |t, x| {
+                flow::wash(t, x, phase)
+            });
         }
         _ => {}
     }
@@ -352,12 +354,14 @@ fn paint_fill(
         return;
     }
 
-    let colour_at = |x: f32| shade(((x - left) / (right - left)).clamp(0.0, 1.0), x - rect.left());
-    let strip = |from: f32, to: f32| {
-        egui::Rect::from_min_max(
-            egui::pos2(from, rect.top()),
-            egui::pos2(to, rect.bottom()),
+    let colour_at = |x: f32| {
+        shade(
+            ((x - left) / (right - left)).clamp(0.0, 1.0),
+            x - rect.left(),
         )
+    };
+    let strip = |from: f32, to: f32| {
+        egui::Rect::from_min_max(egui::pos2(from, rect.top()), egui::pos2(to, rect.bottom()))
     };
 
     // Too short to have two round ends and a middle: one stub, and there is no

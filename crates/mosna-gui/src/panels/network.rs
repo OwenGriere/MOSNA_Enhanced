@@ -1172,11 +1172,7 @@ fn paint(app: &MosnaApp, ui: &mut egui::Ui, rect: Rect, camera: Camera) {
     let ring = ring_offsets(radius);
     let mut mesh = Mesh::default();
     for (index, centre) in prepared.cells.iter().enumerate() {
-        let colour = prepared
-            .colours
-            .get(index)
-            .copied()
-            .unwrap_or(theme::STEEL);
+        let colour = prepared.colours.get(index).copied().unwrap_or(theme::STEEL);
         add_disc(&mut mesh, to_screen(*centre), &ring, colour);
     }
     painter.add(mesh);
@@ -1411,7 +1407,11 @@ mod tests {
         network.toggle_layer("phenotype");
 
         let layer = &network.layers[0];
-        match layer.attribute().expect("the column was read").legend(layer.palette) {
+        match layer
+            .attribute()
+            .expect("the column was read")
+            .legend(layer.palette)
+        {
             Legend::Categories(entries) => {
                 assert_eq!(entries.len(), 3, "cancer, immune, stroma");
             }
@@ -1518,7 +1518,10 @@ mod tests {
 
         network.prepared = Some(prepared());
         network.toggle_layer("phenotype");
-        assert!(network.prepared.is_none(), "adding a view kept the geometry");
+        assert!(
+            network.prepared.is_none(),
+            "adding a view kept the geometry"
+        );
     }
 
     /// And so must changing a palette: the colours are resolved into the

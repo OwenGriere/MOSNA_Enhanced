@@ -2,6 +2,8 @@
 
 use std::path::Path;
 
+use rayon::prelude::*;
+
 use mosna_io::read::get_opener::{read_table_columns, Extension};
 use mosna_io::SampleId;
 
@@ -30,17 +32,26 @@ pub fn find_all_phenotypes(
     phenotype_column: &str,
 ) -> Result<Vec<String>> {
     let net_dir = net_dir.as_ref();
+
+    // One file per worker. The result is a sorted set, so it does not depend on
+    // the order the files come back in — only on which values were seen.
+    let per_sample: Vec<Vec<String>> = data_index
+        .par_iter()
+        .map(|id| {
+            let path =
+                net_dir.join(id.nodes_file_name(patient_column, sample_column, extension.as_str()));
+            // Only the phenotype column is decoded; for parquet the projection
+            // is pushed into the reader, so the rest of the file is never
+            // touched.
+            let table = read_table_columns(&path, extension, &[phenotype_column])?;
+            Ok(table.dropna_string_column(phenotype_column)?)
+        })
+        .collect::<Result<Vec<_>>>()?;
+
     let mut phenotypes = std::collections::BTreeSet::new();
-
-    for id in data_index {
-        let path =
-            net_dir.join(id.nodes_file_name(patient_column, sample_column, extension.as_str()));
-        // Only the phenotype column is decoded; for parquet the projection is
-        // pushed into the reader, so the rest of the file is never touched.
-        let table = read_table_columns(&path, extension, &[phenotype_column])?;
-        phenotypes.extend(table.dropna_string_column(phenotype_column)?);
+    for sample in per_sample {
+        phenotypes.extend(sample);
     }
-
     Ok(phenotypes.into_iter().collect())
 }
 

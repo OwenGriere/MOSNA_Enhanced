@@ -81,10 +81,7 @@ pub fn folding_header(ui: &mut egui::Ui, text: &str, fold: Fold) -> bool {
 ///
 /// Returns `true` on the frame the user asked to unfold it.
 pub fn folded_spine(ui: &mut egui::Ui, text: &str) -> bool {
-    let (rect, response) = ui.allocate_exact_size(
-        ui.available_size(),
-        egui::Sense::click(),
-    );
+    let (rect, response) = ui.allocate_exact_size(ui.available_size(), egui::Sense::click());
     let response = response
         .on_hover_cursor(egui::CursorIcon::PointingHand)
         .on_hover_text(format!("Open {text}"));

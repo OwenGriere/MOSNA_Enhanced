@@ -366,7 +366,10 @@ fn changing_a_palette_redraws_without_disturbing_the_others() {
     app.network.toggle_layer("niches");
     draw(&mut app, &ctx, 2, Some(Pos2::new(600.0, 450.0)));
 
-    let others: Vec<Palette> = app.network.layers()[1..].iter().map(|l| l.palette).collect();
+    let others: Vec<Palette> = app.network.layers()[1..]
+        .iter()
+        .map(|l| l.palette)
+        .collect();
     app.network.set_palette(0, Palette::Purples);
     draw(&mut app, &ctx, 2, Some(Pos2::new(600.0, 450.0)));
 

@@ -1,5 +1,7 @@
 //! Stochastic gradient descent on the embedding coordinates.
 
+use crate::reduction::umap::Scalar;
+
 use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
@@ -9,7 +11,7 @@ use rand_chacha::ChaCha8Rng;
 /// Same value and same reason as umap-learn: two points that land almost on top
 /// of each other produce an enormous repulsive gradient, and without a clip a
 /// single such pair throws the whole layout apart.
-const GRADIENT_CLIP: f64 = 4.0;
+const GRADIENT_CLIP: Scalar = 4.0;
 
 /// Optimise the layout by attracting connected points and repelling sampled
 /// non-neighbours.
@@ -28,16 +30,16 @@ const GRADIENT_CLIP: f64 = 4.0;
 /// niche label derived from it — repeatable.
 #[allow(clippy::too_many_arguments)]
 pub fn optimize_layout(
-    embedding: &mut [f64],
+    embedding: &mut [Scalar],
     n_rows: usize,
     n_components: usize,
-    edges: &[(usize, usize, f64)],
+    edges: &[(usize, usize, Scalar)],
     n_epochs: usize,
-    a: f64,
-    b: f64,
-    learning_rate: f64,
+    a: Scalar,
+    b: Scalar,
+    learning_rate: Scalar,
     negative_sample_rate: usize,
-    repulsion_strength: f64,
+    repulsion_strength: Scalar,
     seed: u64,
 ) {
     if edges.is_empty() || n_rows < 2 || n_epochs == 0 {
@@ -46,20 +48,25 @@ pub fn optimize_layout(
 
     let epochs_per_sample = make_epochs_per_sample(edges, n_epochs);
     let mut next_sample = epochs_per_sample.clone();
+    let rate = negative_sample_rate.max(1) as Scalar;
+    // The negative-sampling period is one division away from the positive one,
+    // and division is deterministic — so it is recomputed where it is needed
+    // rather than kept in a fourth array as long as the edge list. On a cohort
+    // with a hundred and seventy million edges that array is 1.4 GB, and this
+    // routine already holds three of them.
     let mut next_negative = epochs_per_sample
         .iter()
-        .map(|e| e / negative_sample_rate.max(1) as f64)
-        .collect::<Vec<f64>>();
-    let epochs_per_negative: Vec<f64> = next_negative.clone();
+        .map(|e| e / rate)
+        .collect::<Vec<Scalar>>();
 
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
 
     for epoch in 0..n_epochs {
         // The step size anneals to zero, which is what lets the layout settle.
-        let alpha = learning_rate * (1.0 - epoch as f64 / n_epochs as f64);
+        let alpha = learning_rate * (1.0 - epoch as Scalar / n_epochs as Scalar);
 
         for (index, &(head, tail, _)) in edges.iter().enumerate() {
-            if next_sample[index] > epoch as f64 {
+            if next_sample[index] > epoch as Scalar {
                 continue;
             }
 
@@ -68,8 +75,9 @@ pub fn optimize_layout(
 
             // Repulsion against uniformly sampled points, as many as the
             // schedule has accumulated since the last visit.
+            let epochs_per_negative = epochs_per_sample[index] / rate;
             let n_negative =
-                ((epoch as f64 - next_negative[index]) / epochs_per_negative[index]) as usize;
+                ((epoch as Scalar - next_negative[index]) / epochs_per_negative) as usize;
 
             for _ in 0..n_negative {
                 let other = rng.gen_range(0..n_rows);
@@ -87,20 +95,20 @@ pub fn optimize_layout(
                     repulsion_strength,
                 );
             }
-            next_negative[index] += n_negative as f64 * epochs_per_negative[index];
+            next_negative[index] += n_negative as Scalar * epochs_per_negative;
         }
     }
 }
 
 /// Pull two connected points together.
 fn apply_attraction(
-    embedding: &mut [f64],
+    embedding: &mut [Scalar],
     n_components: usize,
     head: usize,
     tail: usize,
-    a: f64,
-    b: f64,
-    alpha: f64,
+    a: Scalar,
+    b: Scalar,
+    alpha: Scalar,
 ) {
     let distance = squared_distance(embedding, n_components, head, tail);
     let coefficient = if distance > 0.0 {
@@ -121,14 +129,14 @@ fn apply_attraction(
 /// Push a point away from a sampled non-neighbour.
 #[allow(clippy::too_many_arguments)]
 fn apply_repulsion(
-    embedding: &mut [f64],
+    embedding: &mut [Scalar],
     n_components: usize,
     head: usize,
     other: usize,
-    a: f64,
-    b: f64,
-    alpha: f64,
-    repulsion_strength: f64,
+    a: Scalar,
+    b: Scalar,
+    alpha: Scalar,
+    repulsion_strength: Scalar,
 ) {
     let distance = squared_distance(embedding, n_components, head, other);
     let coefficient = if distance > 0.0 {
@@ -156,28 +164,28 @@ fn apply_repulsion(
 /// The heaviest edge is visited every epoch; an edge of weight `w` is visited
 /// every `n_epochs / (n_epochs * w / w_max)` epochs. An edge too weak to be
 /// sampled even once gets a schedule beyond the run, so it is never visited.
-fn make_epochs_per_sample(edges: &[(usize, usize, f64)], n_epochs: usize) -> Vec<f64> {
+fn make_epochs_per_sample(edges: &[(usize, usize, Scalar)], n_epochs: usize) -> Vec<Scalar> {
     let max_weight = edges
         .iter()
         .map(|&(_, _, w)| w)
-        .fold(0.0f64, f64::max)
-        .max(f64::MIN_POSITIVE);
+        .fold(0.0, Scalar::max)
+        .max(Scalar::MIN_POSITIVE);
 
     edges
         .iter()
         .map(|&(_, _, w)| {
-            let visits = n_epochs as f64 * w / max_weight;
+            let visits = n_epochs as Scalar * w / max_weight;
             if visits > 0.0 {
-                n_epochs as f64 / visits
+                n_epochs as Scalar / visits
             } else {
-                f64::INFINITY
+                Scalar::INFINITY
             }
         })
         .collect()
 }
 
 #[inline]
-fn squared_distance(embedding: &[f64], n_components: usize, i: usize, j: usize) -> f64 {
+fn squared_distance(embedding: &[Scalar], n_components: usize, i: usize, j: usize) -> Scalar {
     (0..n_components)
         .map(|d| {
             let delta = embedding[i * n_components + d] - embedding[j * n_components + d];
@@ -187,7 +195,7 @@ fn squared_distance(embedding: &[f64], n_components: usize, i: usize, j: usize) 
 }
 
 #[inline]
-fn clip(value: f64) -> f64 {
+fn clip(value: Scalar) -> Scalar {
     value.clamp(-GRADIENT_CLIP, GRADIENT_CLIP)
 }
 
@@ -195,7 +203,7 @@ fn clip(value: f64) -> f64 {
 mod tests {
     use super::*;
 
-    fn distance(embedding: &[f64], n_components: usize, i: usize, j: usize) -> f64 {
+    fn distance(embedding: &[Scalar], n_components: usize, i: usize, j: usize) -> Scalar {
         squared_distance(embedding, n_components, i, j).sqrt()
     }
 
@@ -225,9 +233,10 @@ mod tests {
 
     #[test]
     fn the_layout_stays_finite() {
-        let mut embedding: Vec<f64> = (0..40).map(|i| (i as f64 * 0.7).sin() * 10.0).collect();
-        let edges: Vec<(usize, usize, f64)> = (0..19)
-            .map(|i| (i, i + 1, 0.5 + 0.5 / (i + 1) as f64))
+        let mut embedding: Vec<Scalar> =
+            (0..40).map(|i| (i as Scalar * 0.7).sin() * 10.0).collect();
+        let edges: Vec<(usize, usize, Scalar)> = (0..19)
+            .map(|i| (i, i + 1, 0.5 + 0.5 / (i + 1) as Scalar))
             .collect();
 
         optimize_layout(
@@ -249,14 +258,14 @@ mod tests {
     #[test]
     fn two_connected_groups_stay_apart() {
         // Two chains, no edge between them; repulsion must keep them separated.
-        let mut embedding: Vec<f64> = (0..20)
+        let mut embedding: Vec<Scalar> = (0..20)
             .flat_map(|i| {
                 let group = if i < 10 { 0.0 } else { 6.0 };
-                [group + (i % 10) as f64 * 0.1, (i % 3) as f64 * 0.1]
+                [group + (i % 10) as Scalar * 0.1, (i % 3) as Scalar * 0.1]
             })
             .collect();
 
-        let mut edges: Vec<(usize, usize, f64)> = (0..9).map(|i| (i, i + 1, 1.0)).collect();
+        let mut edges: Vec<(usize, usize, Scalar)> = (0..9).map(|i| (i, i + 1, 1.0)).collect();
         edges.extend((10..19).map(|i| (i, i + 1, 1.0)));
 
         optimize_layout(
@@ -283,8 +292,8 @@ mod tests {
 
     #[test]
     fn the_optimisation_is_reproducible() {
-        let start: Vec<f64> = (0..40).map(|i| (i as f64 * 0.3).cos() * 10.0).collect();
-        let edges: Vec<(usize, usize, f64)> = (0..19).map(|i| (i, i + 1, 1.0)).collect();
+        let start: Vec<Scalar> = (0..40).map(|i| (i as Scalar * 0.3).cos() * 10.0).collect();
+        let edges: Vec<(usize, usize, Scalar)> = (0..19).map(|i| (i, i + 1, 1.0)).collect();
 
         let mut first = start.clone();
         let mut second = start;

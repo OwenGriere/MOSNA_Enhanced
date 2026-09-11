@@ -1,9 +1,12 @@
 //! UMAP — Uniform Manifold Approximation and Projection.
 //!
 //! Replaces the `umap-learn` call in `mosna/clustering.py::get_reducer`. The
-//! method has four stages, one per module:
+//! method has four stages:
 //!
-//! 1. [`fn@knn_graph`] — the `k` nearest neighbours of every point.
+//! 1. [`fn@umap_neighbours`] — the `k` nearest neighbours of every point:
+//!    [`fn@knn_graph`] computes them exactly while the input is small, and
+//!    [`fn@nn_descent`] approximates them above the size at which umap-learn
+//!    stops computing every distance.
 //! 2. [`fn@smooth_knn_dist`] — a per-point bandwidth, so that neighbourhoods are
 //!    comparable across regions of different density.
 //! 3. [`fn@fuzzy_simplicial_set`] — a weighted, symmetrised graph.
@@ -23,6 +26,7 @@ pub mod fuzzy_simplicial_set;
 pub mod init_layout;
 pub mod knn_graph;
 pub mod metric;
+pub mod nn_descent;
 pub mod optimize_layout;
 pub mod smooth_knn_dist;
 
@@ -31,10 +35,40 @@ pub use fuzzy_simplicial_set::fuzzy_simplicial_set;
 pub use init_layout::init_layout;
 pub use knn_graph::{knn_graph, KnnGraph};
 pub use metric::Metric;
+pub use nn_descent::{cluster_neighbours, nn_descent, umap_neighbours};
 pub use optimize_layout::optimize_layout;
 pub use smooth_knn_dist::smooth_knn_dist;
 
 use crate::error::{CoreError, Result};
+
+/// The arithmetic the reduction runs in.
+///
+/// # Why single precision
+///
+/// umap-learn is `float32` from end to end, and this is the stage that mirrors
+/// it: `check_array(X, dtype=np.float32)` on the input matrix, `rho` and
+/// `sigma` as `np.zeros(..., dtype=np.float32)`, the fuzzy graph's weights as
+/// `vals = np.zeros(knn_indices.size, dtype=np.float32)`, `knn_dists` cast
+/// before use, and an embedding that stays `float32` throughout its gradient
+/// descent. Running the port in `f64` did not merely differ from the reference
+/// in its algorithms — it differed in its arithmetic, and it was the port that
+/// was out of step.
+///
+/// Nothing is lost. The matrix this reduces is the NAS feature table: means and
+/// standard deviations of one-hot indicators over a Delaunay neighbourhood of
+/// six or seven cells, so values in `[0, 1]` carrying three significant decimal
+/// digits. Single precision carries seven.
+///
+/// # What stays in double precision
+///
+/// The boundary is this module. The NAS features, the niche composition and
+/// everything written to disk as a result remain `f64`: they are the analysis'
+/// output, not coordinates on the way to a clustering. Two accumulators inside
+/// the stage stay wide as well, each for a stated reason — the cohort-wide mean
+/// in [`fn@smooth_knn_dist`] and the covariance in [`fn@init_layout`] — and
+/// [`fn@find_ab_params`] is fitted in `f64` the way `scipy.optimize.curve_fit`
+/// is.
+pub type Scalar = f32;
 
 /// Settings of a UMAP run.
 ///
@@ -100,12 +134,17 @@ impl UmapParams {
 ///
 /// `data` is row-major, `n_rows` by `n_features`. The result is row-major,
 /// `n_rows` by `n_components`.
+///
+/// Both are [`Scalar`]: this is where the caller's `f64` feature matrix is
+/// narrowed and where its coordinates come back. The settings stay `f64`
+/// because they come from the configuration file, and are narrowed at the one
+/// place each is used.
 pub fn umap(
-    data: &[f64],
+    data: &[Scalar],
     n_rows: usize,
     n_features: usize,
     params: &UmapParams,
-) -> Result<Vec<f64>> {
+) -> Result<Vec<Scalar>> {
     if data.len() != n_rows * n_features {
         return Err(CoreError::shape(format!(
             "data has {} values, expected {n_rows} x {n_features}",
@@ -131,10 +170,13 @@ pub fn umap(
     }
 
     let k = params.n_neighbors.max(2).min(n_rows - 1);
-    let graph = knn_graph(data, n_rows, n_features, k, params.metric);
-    let edges = fuzzy_simplicial_set(&graph, n_rows, params.local_connectivity);
+    let graph = umap_neighbours(data, n_rows, n_features, k, params.metric, params.seed);
+    let edges = fuzzy_simplicial_set(&graph, n_rows, params.local_connectivity as Scalar);
 
+    // Fitted in `f64`, as `scipy.optimize.curve_fit` is, and applied in single
+    // precision like the rest of the layout.
     let (a, b) = find_ab_params(params.spread, params.min_dist);
+    let (a, b) = (a as Scalar, b as Scalar);
 
     optimize_layout(
         &mut embedding,
@@ -144,9 +186,9 @@ pub fn umap(
         params.epochs(n_rows),
         a,
         b,
-        params.learning_rate,
+        params.learning_rate as Scalar,
         params.negative_sample_rate,
-        params.repulsion_strength,
+        params.repulsion_strength as Scalar,
         params.seed,
     );
 
@@ -165,7 +207,7 @@ mod tests {
 
     #[test]
     fn rejects_non_finite_input() {
-        let data = vec![1.0, f64::NAN, 3.0, 4.0];
+        let data = vec![1.0, Scalar::NAN, 3.0, 4.0];
         let err = umap(&data, 2, 2, &UmapParams::default()).unwrap_err();
         assert!(err.to_string().contains("non-finite"));
     }
@@ -195,7 +237,7 @@ mod tests {
     #[test]
     fn n_neighbors_is_clamped_to_the_dataset() {
         // Four points, fifteen neighbours requested: must not panic.
-        let data: Vec<f64> = (0..8).map(|i| i as f64).collect();
+        let data: Vec<Scalar> = (0..8).map(|i| i as Scalar).collect();
         let embedding = umap(&data, 4, 2, &UmapParams::default()).unwrap();
         assert_eq!(embedding.len(), 8);
         assert!(embedding.iter().all(|v| v.is_finite()));

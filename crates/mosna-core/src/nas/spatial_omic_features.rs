@@ -86,8 +86,13 @@ impl VarAggreg {
     /// Dropping them also removes a failure mode: an id that is not a number —
     /// `P01`, a barcode — used to arrive as `NaN` in this matrix and take the
     /// whole analysis down with it.
-    pub fn clustering_matrix(&self) -> (Vec<f64>, usize) {
-        (self.values.clone(), self.n_columns())
+    ///
+    /// Borrowed rather than cloned: on a twelve-million-cell cohort the feature
+    /// table is a gigabyte, and the reduction reads it without needing to own
+    /// it. A caller that does need an owned copy — the unreduced path, which
+    /// hands this matrix straight to the clusterer — takes one itself.
+    pub fn clustering_matrix(&self) -> (&[f64], usize) {
+        (&self.values, self.n_columns())
     }
 
     /// The `(patient, sample)` pair of each row, deduplicated in first-seen

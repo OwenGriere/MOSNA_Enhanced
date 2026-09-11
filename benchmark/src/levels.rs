@@ -284,9 +284,14 @@ fn neighbourhood_features(
 }
 
 /// The projection, with the settings the bench holds fixed everywhere.
+///
+/// The reduction runs in single precision; the bench keeps its own tables in
+/// `f64`, so the matrix is narrowed here and the coordinates widened back.
 fn embed(features: &[f64], n_rows: usize, n_features: usize) -> Vec<f64> {
+    let narrowed: Vec<mosna_core::reduction::umap::Scalar> =
+        features.iter().map(|&v| v as _).collect();
     umap(
-        features,
+        &narrowed,
         n_rows,
         n_features,
         &UmapParams {
@@ -296,6 +301,7 @@ fn embed(features: &[f64], n_rows: usize, n_features: usize) -> Vec<f64> {
             ..Default::default()
         },
     )
+    .map(|embedding| embedding.into_iter().map(|v| v as f64).collect())
     .expect("the cohort is large enough to embed")
 }
 

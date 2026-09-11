@@ -5,6 +5,7 @@ use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
 
 use crate::linalg::eigen::symmetric_eigen;
+use crate::reduction::umap::Scalar;
 
 /// Half-width of the initial layout.
 ///
@@ -12,7 +13,7 @@ use crate::linalg::eigen::symmetric_eigen;
 /// rescales a spectral one to a comparable extent. The learning rate and the
 /// gradient clipping are tuned for that scale, so the PCA initialisation is
 /// stretched to match rather than left at the data's own scale.
-const INIT_EXTENT: f64 = 10.0;
+const INIT_EXTENT: Scalar = 10.0;
 
 /// Initial embedding, from the leading principal components of the data.
 ///
@@ -31,13 +32,17 @@ const INIT_EXTENT: f64 = 10.0;
 ///
 /// Falls back to a seeded random layout when the data has no spread to project
 /// onto, which happens when every point coincides.
+/// The eigenproblem is solved in `f64` and the projection narrowed to
+/// [`Scalar`] on the way out — `pca.fit_transform(data).astype(np.float32)` in
+/// umap-learn. A covariance is a sum over every cell, so it is the one place in
+/// this stage where the wider accumulator earns its keep.
 pub fn init_layout(
-    data: &[f64],
+    data: &[Scalar],
     n_rows: usize,
     n_features: usize,
     n_components: usize,
     seed: u64,
-) -> Vec<f64> {
+) -> Vec<Scalar> {
     if n_rows == 0 || n_components == 0 {
         return Vec::new();
     }
@@ -58,11 +63,11 @@ pub fn init_layout(
 /// Project onto the leading principal components, or `None` when the data has
 /// no variance to speak of.
 fn pca_project(
-    data: &[f64],
+    data: &[Scalar],
     n_rows: usize,
     n_features: usize,
     n_components: usize,
-) -> Option<Vec<f64>> {
+) -> Option<Vec<Scalar>> {
     if n_features == 0 {
         return None;
     }
@@ -71,7 +76,7 @@ fn pca_project(
     let mut mean = vec![0.0f64; n_features];
     for row in 0..n_rows {
         for f in 0..n_features {
-            mean[f] += data[row * n_features + f];
+            mean[f] += data[row * n_features + f] as f64;
         }
     }
     mean.iter_mut().for_each(|m| *m /= n_rows as f64);
@@ -82,12 +87,12 @@ fn pca_project(
     for row in 0..n_rows {
         let offset = row * n_features;
         for i in 0..n_features {
-            let di = data[offset + i] - mean[i];
+            let di = data[offset + i] as f64 - mean[i];
             if di == 0.0 {
                 continue;
             }
             for j in i..n_features {
-                let dj = data[offset + j] - mean[j];
+                let dj = data[offset + j] as f64 - mean[j];
                 covariance[i * n_features + j] += di * dj;
             }
         }
@@ -112,26 +117,29 @@ fn pca_project(
         return None;
     }
 
-    let mut embedding = vec![0.0f64; n_rows * n_components];
+    let mut embedding = vec![0.0 as Scalar; n_rows * n_components];
     for row in 0..n_rows {
         for (c, &k) in leading.iter().enumerate() {
             // A component beyond the data's dimensionality contributes nothing.
             if eigen.values[k] <= 0.0 {
                 continue;
             }
-            let mut value = 0.0;
+            let mut value = 0.0f64;
             for f in 0..n_features {
-                value += (data[row * n_features + f] - mean[f]) * eigen.vectors[f * n_features + k];
+                value += (data[row * n_features + f] as f64 - mean[f])
+                    * eigen.vectors[f * n_features + k];
             }
-            embedding[row * n_components + c] = value;
+            embedding[row * n_components + c] = value as Scalar;
         }
     }
     Some(embedding)
 }
 
 /// Stretch the layout so its widest axis spans `[-INIT_EXTENT, INIT_EXTENT]`.
-fn rescale(embedding: &mut [f64], n_rows: usize, n_components: usize) {
-    let extent = embedding.iter().fold(0.0f64, |acc, v| acc.max(v.abs()));
+fn rescale(embedding: &mut [Scalar], n_rows: usize, n_components: usize) {
+    let extent = embedding
+        .iter()
+        .fold(0.0 as Scalar, |acc, v| acc.max(v.abs()));
     if extent > 1e-12 {
         let scale = INIT_EXTENT / extent;
         embedding.iter_mut().for_each(|v| *v *= scale);
@@ -142,7 +150,7 @@ fn rescale(embedding: &mut [f64], n_rows: usize, n_components: usize) {
 }
 
 /// A seeded uniform layout, matching umap-learn's `init='random'`.
-fn random_layout(n_rows: usize, n_components: usize, seed: u64) -> Vec<f64> {
+fn random_layout(n_rows: usize, n_components: usize, seed: u64) -> Vec<Scalar> {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     (0..n_rows * n_components)
         .map(|_| rng.gen_range(-INIT_EXTENT..INIT_EXTENT))
@@ -155,7 +163,7 @@ mod tests {
 
     #[test]
     fn produces_the_requested_shape() {
-        let data: Vec<f64> = (0..30).map(|i| i as f64).collect();
+        let data: Vec<Scalar> = (0..30).map(|i| i as Scalar).collect();
         for n_components in [1, 2, 3] {
             let layout = init_layout(&data, 10, 3, n_components, 0);
             assert_eq!(layout.len(), 10 * n_components);
@@ -171,13 +179,13 @@ mod tests {
         // Spread wide along x, narrow along y.
         let mut data = Vec::new();
         for i in 0..20 {
-            data.push(i as f64);
-            data.push((i % 2) as f64 * 0.01);
+            data.push(i as Scalar);
+            data.push((i % 2) as Scalar * 0.01);
         }
         let layout = init_layout(&data, 20, 2, 2, 0);
 
         // The first embedded coordinate must be monotone in the input index.
-        let first: Vec<f64> = (0..20).map(|i| layout[i * 2]).collect();
+        let first: Vec<Scalar> = (0..20).map(|i| layout[i * 2]).collect();
         let ascending = first.windows(2).all(|w| w[0] < w[1]);
         let descending = first.windows(2).all(|w| w[0] > w[1]);
         assert!(
@@ -188,9 +196,9 @@ mod tests {
 
     #[test]
     fn the_layout_is_scaled_to_the_expected_extent() {
-        let data: Vec<f64> = (0..40).map(|i| (i as f64 * 0.3).sin()).collect();
+        let data: Vec<Scalar> = (0..40).map(|i| (i as Scalar * 0.3).sin()).collect();
         let layout = init_layout(&data, 20, 2, 2, 0);
-        let extent = layout.iter().fold(0.0f64, |acc, v| acc.max(v.abs()));
+        let extent = layout.iter().fold(0.0 as Scalar, |acc, v| acc.max(v.abs()));
         assert!(
             (extent - INIT_EXTENT).abs() < 1e-9,
             "extent {extent} should be {INIT_EXTENT}"
@@ -204,7 +212,7 @@ mod tests {
         assert_eq!(layout.len(), 40);
         assert!(layout.iter().all(|v| v.is_finite()));
         // A random fallback must actually spread the points out.
-        let extent = layout.iter().fold(0.0f64, |acc, v| acc.max(v.abs()));
+        let extent = layout.iter().fold(0.0 as Scalar, |acc, v| acc.max(v.abs()));
         assert!(extent > 1.0, "the fallback collapsed to {extent}");
     }
 
@@ -219,7 +227,7 @@ mod tests {
 
     #[test]
     fn asking_for_more_components_than_features_still_works() {
-        let data: Vec<f64> = (0..10).map(|i| i as f64).collect();
+        let data: Vec<Scalar> = (0..10).map(|i| i as Scalar).collect();
         let layout = init_layout(&data, 10, 1, 3, 0);
         assert_eq!(layout.len(), 30);
         assert!(layout.iter().all(|v| v.is_finite()));

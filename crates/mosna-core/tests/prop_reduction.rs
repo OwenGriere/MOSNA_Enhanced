@@ -7,10 +7,19 @@
 //! preserve neighbourhood structure. That is what these assert.
 
 use mosna_core::reduction::umap::{
-    find_ab_params, fuzzy_simplicial_set, knn_graph, smooth_knn_dist, umap, Metric, UmapParams,
+    find_ab_params, fuzzy_simplicial_set, knn_graph, smooth_knn_dist, umap, Metric, Scalar,
+    UmapParams,
 };
 use mosna_testkit::fixtures::blobs;
 use proptest::prelude::*;
+
+/// The reduction runs in [`Scalar`]; the shared fixtures are `f64`.
+///
+/// `find_ab_params` is the exception below: it is fitted in double precision,
+/// as `scipy.optimize.curve_fit` is, so its tests are left alone.
+fn narrow(data: &[f64]) -> Vec<Scalar> {
+    data.iter().map(|&v| v as Scalar).collect()
+}
 
 // ---------------------------------------------------------------------------
 // find_ab_params — fitting the output kernel
@@ -95,7 +104,7 @@ fn ab_params_match_the_reference_implementation() {
 
 /// Brute-force nearest neighbours, used as the oracle.
 fn brute_force_knn(
-    data: &[f64],
+    data: &[Scalar],
     n_rows: usize,
     n_features: usize,
     k: usize,
@@ -115,7 +124,7 @@ fn brute_force_knn(
         .collect()
 }
 
-fn distance(data: &[f64], n_features: usize, i: usize, j: usize, metric: Metric) -> f64 {
+fn distance(data: &[Scalar], n_features: usize, i: usize, j: usize, metric: Metric) -> Scalar {
     let a = &data[i * n_features..(i + 1) * n_features];
     let b = &data[j * n_features..(j + 1) * n_features];
     match metric {
@@ -123,13 +132,13 @@ fn distance(data: &[f64], n_features: usize, i: usize, j: usize, metric: Metric)
             .iter()
             .zip(b)
             .map(|(x, y)| (x - y) * (x - y))
-            .sum::<f64>()
+            .sum::<Scalar>()
             .sqrt(),
         Metric::Manhattan => a.iter().zip(b).map(|(x, y)| (x - y).abs()).sum(),
         Metric::Cosine => {
-            let dot: f64 = a.iter().zip(b).map(|(x, y)| x * y).sum();
-            let na: f64 = a.iter().map(|x| x * x).sum::<f64>().sqrt();
-            let nb: f64 = b.iter().map(|x| x * x).sum::<f64>().sqrt();
+            let dot: Scalar = a.iter().zip(b).map(|(x, y)| x * y).sum();
+            let na: Scalar = a.iter().map(|x| x * x).sum::<Scalar>().sqrt();
+            let nb: Scalar = b.iter().map(|x| x * x).sum::<Scalar>().sqrt();
             if na == 0.0 || nb == 0.0 {
                 1.0
             } else {
@@ -144,6 +153,7 @@ fn distance(data: &[f64], n_features: usize, i: usize, j: usize, metric: Metric)
 #[test]
 fn knn_graph_agrees_with_brute_force() {
     let (data, _) = blobs(3, 12, 8.0);
+    let data = narrow(&data);
     let (n_rows, n_features) = (36, 2);
 
     for metric in [Metric::Euclidean, Metric::Manhattan, Metric::Cosine] {
@@ -181,6 +191,7 @@ fn knn_graph_agrees_with_brute_force() {
 #[test]
 fn knn_graph_clamps_k_to_the_dataset() {
     let (data, _) = blobs(1, 4, 1.0);
+    let data = narrow(&data);
     let graph = knn_graph(&data, 4, 2, 100, Metric::Euclidean);
     // Only three other points exist.
     assert!(graph.indices.iter().all(|n| n.len() == 3));
@@ -195,15 +206,16 @@ fn knn_graph_clamps_k_to_the_dataset() {
 #[test]
 fn smooth_knn_solves_its_defining_equation() {
     let (data, _) = blobs(3, 15, 6.0);
+    let data = narrow(&data);
     let (n_rows, n_features, k) = (45, 2, 8);
 
     let graph = knn_graph(&data, n_rows, n_features, k, Metric::Euclidean);
     let (rho, sigma) = smooth_knn_dist(&graph.distances, 1.0);
 
-    let target = (k as f64).log2();
+    let target = (k as Scalar).log2();
     for i in 0..n_rows {
         assert!(sigma[i] > 0.0, "sigma must be positive, got {}", sigma[i]);
-        let sum: f64 = graph.distances[i]
+        let sum: Scalar = graph.distances[i]
             .iter()
             .map(|d| (-(d - rho[i]).max(0.0) / sigma[i]).exp())
             .sum();
@@ -220,6 +232,7 @@ fn smooth_knn_solves_its_defining_equation() {
 #[test]
 fn rho_is_the_nearest_neighbour_distance() {
     let (data, _) = blobs(2, 10, 5.0);
+    let data = narrow(&data);
     let graph = knn_graph(&data, 20, 2, 6, Metric::Euclidean);
     let (rho, _) = smooth_knn_dist(&graph.distances, 1.0);
 
@@ -241,6 +254,7 @@ fn rho_is_the_nearest_neighbour_distance() {
 #[test]
 fn fuzzy_simplicial_set_is_a_valid_weighted_graph() {
     let (data, _) = blobs(3, 15, 6.0);
+    let data = narrow(&data);
     let (n_rows, k) = (45, 8);
 
     let graph = knn_graph(&data, n_rows, 2, k, Metric::Euclidean);
@@ -287,6 +301,7 @@ fn params(n_components: usize) -> UmapParams {
 #[test]
 fn umap_returns_the_requested_shape() {
     let (data, _) = blobs(3, 20, 10.0);
+    let data = narrow(&data);
     for n_components in [1, 2, 3] {
         let embedding = umap(&data, 60, 2, &params(n_components)).unwrap();
         assert_eq!(embedding.len(), 60 * n_components);
@@ -303,6 +318,7 @@ fn umap_returns_the_requested_shape() {
 #[test]
 fn umap_is_reproducible() {
     let (data, _) = blobs(3, 20, 10.0);
+    let data = narrow(&data);
     let first = umap(&data, 60, 2, &params(2)).unwrap();
     let second = umap(&data, 60, 2, &params(2)).unwrap();
     assert_eq!(first, second);
@@ -313,6 +329,7 @@ fn umap_is_reproducible() {
 #[test]
 fn umap_depends_on_the_seed() {
     let (data, _) = blobs(3, 20, 10.0);
+    let data = narrow(&data);
     let a = umap(&data, 60, 2, &params(2)).unwrap();
     let mut other = params(2);
     other.seed = 7;
@@ -326,6 +343,7 @@ fn umap_depends_on_the_seed() {
 #[test]
 fn umap_preserves_cluster_structure() {
     let (data, truth) = blobs(3, 30, 20.0);
+    let data = narrow(&data);
     let (n_rows, n_components) = (90, 2);
     let embedding = umap(&data, n_rows, 2, &params(n_components)).unwrap();
 
@@ -348,10 +366,44 @@ fn umap_preserves_cluster_structure() {
     );
 }
 
+/// The same, past the size at which umap-learn stops being exact.
+///
+/// Above four thousand rows the reduction takes the approximate neighbour
+/// search, as `UMAP.fit` does. That route is the one every real cohort runs on,
+/// and an approximation that loses the structure would be no use however
+/// faithful it is to the reference.
+#[test]
+fn umap_preserves_cluster_structure_on_the_approximate_route() {
+    use mosna_core::reduction::umap::nn_descent::EXACT_MAX_ROWS;
+
+    let (data, truth) = blobs(3, 1_400, 20.0);
+    let data = narrow(&data);
+    let (n_rows, n_components) = (4_200, 2);
+    assert!(n_rows > EXACT_MAX_ROWS, "the exact route would be taken");
+
+    let embedding = umap(&data, n_rows, 2, &params(n_components)).unwrap();
+    assert!(embedding.iter().all(|v| v.is_finite()));
+
+    let k = 5;
+    let neighbours = knn_graph(&embedding, n_rows, n_components, k, Metric::Euclidean);
+
+    let same: usize = (0..n_rows)
+        .flat_map(|i| neighbours.indices[i].iter().map(move |&j| (i, j)))
+        .filter(|&(i, j)| truth[i] == truth[j])
+        .count();
+    let purity = same as f64 / (n_rows * k) as f64;
+    assert!(
+        purity > 0.9,
+        "only {:.1}% of embedded neighbours share a blob",
+        purity * 100.0
+    );
+}
+
 /// Structure preservation must not depend on the metric.
 #[test]
 fn umap_preserves_structure_under_every_metric() {
     let (data, truth) = blobs(3, 25, 20.0);
+    let data = narrow(&data);
     let n_rows = 75;
 
     for metric in [Metric::Euclidean, Metric::Manhattan] {
@@ -395,7 +447,7 @@ proptest! {
     /// clustering and produces a silently empty niche.
     #[test]
     fn prop_umap_output_is_always_finite(
-        raw in proptest::collection::vec(-100.0f64..100.0, 20..=80),
+        raw in proptest::collection::vec(-100.0 as Scalar..100.0, 20..=80),
         n_neighbors in 2usize..12,
     ) {
         let n_features = 2;
@@ -417,7 +469,7 @@ proptest! {
     /// per point, none of them the point itself.
     #[test]
     fn prop_knn_graph_is_well_formed(
-        raw in proptest::collection::vec(-100.0f64..100.0, 12..=60),
+        raw in proptest::collection::vec(-100.0 as Scalar..100.0, 12..=60),
         k in 1usize..6,
     ) {
         let n_features = 3;
@@ -431,7 +483,7 @@ proptest! {
                 prop_assert_eq!(graph.indices[i].len(), k);
                 prop_assert_eq!(graph.distances[i].len(), k);
                 prop_assert!(!graph.indices[i].contains(&i));
-                prop_assert!(graph.distances[i].windows(2).all(|w| w[0] <= w[1] + 1e-12));
+                prop_assert!(graph.distances[i].windows(2).all(|w| w[0] <= w[1] + 1e-6));
                 prop_assert!(graph.distances[i].iter().all(|d| d.is_finite() && *d >= 0.0));
             }
         }
@@ -442,12 +494,12 @@ proptest! {
     #[test]
     fn prop_smooth_knn_always_converges(
         distances in proptest::collection::vec(
-            proptest::collection::vec(0.0f64..100.0, 4..=10),
+            proptest::collection::vec(0.0 as Scalar..100.0, 4..=10),
             3..=20,
         ),
     ) {
         // Each row must be sorted, as it comes out of the neighbour search.
-        let sorted: Vec<Vec<f64>> = distances
+        let sorted: Vec<Vec<Scalar>> = distances
             .into_iter()
             .map(|mut row| {
                 row.sort_by(|a, b| a.partial_cmp(b).unwrap());

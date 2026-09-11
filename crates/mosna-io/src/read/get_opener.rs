@@ -56,6 +56,20 @@ pub fn read_table(path: impl AsRef<Path>, extension: Extension) -> Result<Table>
     }
 }
 
+/// How many rows a table holds.
+///
+/// Parquet answers from its footer, without decoding a single value. The
+/// delimited formats have no such header, so they are read in full — the count
+/// is exact either way, only the cost differs.
+pub fn table_rows(path: impl AsRef<Path>, extension: Extension) -> Result<usize> {
+    match extension {
+        Extension::Parquet => read_parquet::read_parquet_rows(path),
+        Extension::Csv | Extension::Tsv => {
+            Ok(read_csv::read_delimited(path, extension.delimiter())?.n_rows())
+        }
+    }
+}
+
 /// Read only the named columns.
 ///
 /// For parquet this pushes the projection into the reader, so unrelated columns

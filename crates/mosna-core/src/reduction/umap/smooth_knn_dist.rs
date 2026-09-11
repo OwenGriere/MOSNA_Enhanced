@@ -1,11 +1,15 @@
 //! Per-point bandwidth of the fuzzy neighbourhood.
 
+use crate::reduction::umap::Scalar;
+
+use rayon::prelude::*;
+
 /// Ratio below which a bandwidth is considered collapsed and raised to a floor.
 ///
 /// `MIN_K_DIST_SCALE` in umap-learn, same value and same purpose: a `sigma` of
 /// zero would make every membership either 1 or 0, throwing away the graded
 /// structure the whole method rests on.
-const MIN_K_DIST_SCALE: f64 = 1e-3;
+const MIN_K_DIST_SCALE: Scalar = 1e-3;
 
 /// Solve for the local connectivity radius and bandwidth of every point.
 ///
@@ -27,75 +31,97 @@ const MIN_K_DIST_SCALE: f64 = 1e-3;
 /// configuration never changes it from 1, so the fractional interpolation
 /// umap-learn performs for non-integer values is not reproduced — the value is
 /// rounded down to a neighbour index instead.
-pub fn smooth_knn_dist(distances: &[Vec<f64>], local_connectivity: f64) -> (Vec<f64>, Vec<f64>) {
+pub fn smooth_knn_dist(
+    distances: &[Vec<Scalar>],
+    local_connectivity: Scalar,
+) -> (Vec<Scalar>, Vec<Scalar>) {
     let n_rows = distances.len();
-    let mut rho = vec![0.0f64; n_rows];
-    let mut sigma = vec![1.0f64; n_rows];
+    let mut rho = vec![0.0; n_rows];
+    let mut sigma = vec![1.0; n_rows];
 
     // The global mean distance backs the floor for points whose own
     // neighbourhood is entirely degenerate.
+    // Accumulated in `f64` even though everything around it is single
+    // precision: this is a sum over `n_rows * k` terms — a hundred and seventy
+    // million of them on a large cohort — and a running `f32` total stops
+    // absorbing a term once it has grown some ten million times larger than it,
+    // which here happens well before the end. umap-learn reaches the same
+    // number by another route: `np.mean` over a `float32` array sums pairwise,
+    // so its error grows with `log(n)` rather than with `n`. Widening the
+    // accumulator is the simpler way to the same place, and the result is
+    // narrowed again before it is used.
     let (total, count) = distances
         .iter()
         .flat_map(|row| row.iter())
-        .fold((0.0f64, 0usize), |(sum, n), &d| (sum + d, n + 1));
-    let mean_distance = if count > 0 { total / count as f64 } else { 0.0 };
+        .fold((0.0f64, 0usize), |(sum, n), &d| (sum + d as f64, n + 1));
+    let mean_distance = if count > 0 {
+        (total / count as f64) as Scalar
+    } else {
+        0.0
+    };
 
     let connectivity_index = (local_connectivity.max(1.0) as usize).saturating_sub(1);
 
-    for (i, row) in distances.iter().enumerate() {
-        if row.is_empty() {
-            continue;
-        }
-        let k = row.len();
-        let target = (k as f64).log2();
-
-        rho[i] = row[connectivity_index.min(k - 1)];
-
-        // Bisection on sigma. `hi` starts unbounded and is discovered by
-        // doubling, because a good upper bound depends on the local scale.
-        let mut lo = 0.0f64;
-        let mut hi = f64::INFINITY;
-        let mut mid = 1.0f64;
-
-        for _ in 0..64 {
-            let psum: f64 = row
-                .iter()
-                .map(|d| (-(d - rho[i]).max(0.0) / mid).exp())
-                .sum();
-
-            if (psum - target).abs() < 1e-5 {
-                break;
+    // Every row is solved from its own distances and the two scalars above, so
+    // the rows can be solved at once. The global mean stays sequential: it is a
+    // sum over the whole cohort, and reassociating it would move its last bits.
+    rho.par_iter_mut()
+        .zip(sigma.par_iter_mut())
+        .zip(distances.par_iter())
+        .for_each(|((rho_i, sigma_i), row)| {
+            if row.is_empty() {
+                return;
             }
-            if psum > target {
-                hi = mid;
-                mid = (lo + hi) / 2.0;
-            } else {
-                lo = mid;
-                if hi.is_infinite() {
-                    mid *= 2.0;
-                } else {
+            let k = row.len();
+            let target = (k as Scalar).log2();
+
+            *rho_i = row[connectivity_index.min(k - 1)];
+
+            // Bisection on sigma. `hi` starts unbounded and is discovered by
+            // doubling, because a good upper bound depends on the local scale.
+            let mut lo = 0.0;
+            let mut hi = Scalar::INFINITY;
+            let mut mid = 1.0;
+
+            for _ in 0..64 {
+                let psum: Scalar = row
+                    .iter()
+                    .map(|d| (-(d - *rho_i).max(0.0) / mid).exp())
+                    .sum();
+
+                if (psum - target).abs() < 1e-5 {
+                    break;
+                }
+                if psum > target {
+                    hi = mid;
                     mid = (lo + hi) / 2.0;
+                } else {
+                    lo = mid;
+                    if hi.is_infinite() {
+                        mid *= 2.0;
+                    } else {
+                        mid = (lo + hi) / 2.0;
+                    }
                 }
             }
-        }
-        sigma[i] = mid;
+            *sigma_i = mid;
 
-        // Floor the bandwidth against the local scale, then against the global
-        // one, so a point whose neighbours all coincide still gets a usable
-        // positive value.
-        let row_mean = row.iter().sum::<f64>() / k as f64;
-        if rho[i] > 0.0 {
-            sigma[i] = sigma[i].max(MIN_K_DIST_SCALE * row_mean);
-        } else {
-            sigma[i] = sigma[i].max(MIN_K_DIST_SCALE * mean_distance);
-        }
-        // `is_nan` is spelled out so a NaN bandwidth is caught too: every
-        // comparison against NaN is false, so `sigma <= 0.0` alone would let it
-        // through and poison every membership weight downstream.
-        if sigma[i].is_nan() || sigma[i] <= 0.0 || sigma[i].is_infinite() {
-            sigma[i] = 1.0;
-        }
-    }
+            // Floor the bandwidth against the local scale, then against the global
+            // one, so a point whose neighbours all coincide still gets a usable
+            // positive value.
+            let row_mean = row.iter().sum::<Scalar>() / k as Scalar;
+            if *rho_i > 0.0 {
+                *sigma_i = sigma_i.max(MIN_K_DIST_SCALE * row_mean);
+            } else {
+                *sigma_i = sigma_i.max(MIN_K_DIST_SCALE * mean_distance);
+            }
+            // `is_nan` is spelled out so a NaN bandwidth is caught too: every
+            // comparison against NaN is false, so `sigma <= 0.0` alone would let it
+            // through and poison every membership weight downstream.
+            if sigma_i.is_nan() || *sigma_i <= 0.0 || sigma_i.is_infinite() {
+                *sigma_i = 1.0;
+            }
+        });
 
     (rho, sigma)
 }
@@ -104,7 +130,7 @@ pub fn smooth_knn_dist(distances: &[Vec<f64>], local_connectivity: f64) -> (Vec<
 mod tests {
     use super::*;
 
-    fn membership_sum(row: &[f64], rho: f64, sigma: f64) -> f64 {
+    fn membership_sum(row: &[Scalar], rho: Scalar, sigma: Scalar) -> Scalar {
         row.iter()
             .map(|d| (-(d - rho).max(0.0) / sigma).exp())
             .sum()
@@ -115,7 +141,7 @@ mod tests {
         let distances = vec![vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]];
         let (rho, sigma) = smooth_knn_dist(&distances, 1.0);
 
-        let target = 8f64.log2();
+        let target = (8 as Scalar).log2();
         let sum = membership_sum(&distances[0], rho[0], sigma[0]);
         assert!((sum - target).abs() < 1e-4, "sum {sum} != {target}");
     }
@@ -162,7 +188,7 @@ mod tests {
     fn each_point_is_solved_independently() {
         let distances = vec![vec![1.0, 1.1, 1.2, 1.3], vec![10.0, 50.0, 90.0, 130.0]];
         let (rho, sigma) = smooth_knn_dist(&distances, 1.0);
-        let target = 4f64.log2();
+        let target = (4 as Scalar).log2();
         for i in 0..2 {
             let sum = membership_sum(&distances[i], rho[i], sigma[i]);
             assert!((sum - target).abs() < 1e-4, "row {i}: sum {sum}");

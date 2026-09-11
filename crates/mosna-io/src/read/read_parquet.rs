@@ -19,6 +19,17 @@ pub fn read_parquet(path: impl AsRef<Path>) -> Result<Table> {
     collect(builder, schema, path)
 }
 
+/// How many rows a parquet file holds, without decoding any of them.
+///
+/// The count is in the file footer, which the reader parses to find the row
+/// groups in the first place. Callers that only need to know how long a sample
+/// is — to size or to split a vector spanning the cohort — pay a seek and a
+/// footer parse instead of reading and decoding every column.
+pub fn read_parquet_rows(path: impl AsRef<Path>) -> Result<usize> {
+    let path = path.as_ref();
+    Ok(open(path)?.metadata().file_metadata().num_rows() as usize)
+}
+
 /// Read only `columns`, pushing the projection into the parquet reader.
 ///
 /// Missing columns are reported rather than silently skipped, so a typo in the

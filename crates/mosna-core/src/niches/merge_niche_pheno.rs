@@ -2,7 +2,9 @@
 
 use std::path::Path;
 
-use mosna_io::read::get_opener::{read_table, read_table_columns, Extension};
+use rayon::prelude::*;
+
+use mosna_io::read::get_opener::{read_table, read_table_columns, table_rows, Extension};
 use mosna_io::write::write_parquet::write_parquet;
 use mosna_io::{SampleId, Table};
 
@@ -28,17 +30,19 @@ pub fn merge_niche_pheno(
 ) -> Result<()> {
     let net_dir = net_dir.as_ref();
 
-    // First pass: how many cells each sample holds. Reading a single column
-    // keeps this cheap even though it touches every file.
-    let mut paths = Vec::with_capacity(data_index.len());
-    let mut lengths = Vec::with_capacity(data_index.len());
-    for id in data_index {
-        let path =
-            net_dir.join(id.nodes_file_name(patient_column, sample_column, extension.as_str()));
-        let table = read_table(&path, extension)?;
-        lengths.push(table.n_rows());
-        paths.push(path);
-    }
+    // First pass: how many cells each sample holds, from the file's own row
+    // count rather than from its contents. This used to decode every column of
+    // every file — the whole cohort read once, to learn only its shape.
+    let paths: Vec<_> = data_index
+        .iter()
+        .map(|id| {
+            net_dir.join(id.nodes_file_name(patient_column, sample_column, extension.as_str()))
+        })
+        .collect();
+    let lengths: Vec<usize> = paths
+        .par_iter()
+        .map(|path| Ok(table_rows(path, extension)?))
+        .collect::<Result<Vec<_>>>()?;
 
     let total: usize = lengths.iter().sum();
     if total != niches.len() {
@@ -49,19 +53,29 @@ pub fn merge_niche_pheno(
         )));
     }
 
-    // Second pass: write each sample's slice back.
-    let mut offset = 0usize;
-    for (path, length) in paths.iter().zip(&lengths) {
-        let mut table = read_table(path, extension)?;
-        let slice = &niches[offset..offset + length];
-        table.set_column("niches", Table::u32_array(slice.iter().copied()))?;
-        // Always parquet: the network directory the pipelines write to is
-        // parquet, and every later step reads it as such.
-        write_parquet(&table, path)?;
-        offset += length;
+    // Second pass: write each sample's slice back. The offsets are computed up
+    // front so a file does not have to wait for the ones before it — each
+    // sample owns a disjoint slice of the labels and a file of its own.
+    let mut offsets = Vec::with_capacity(lengths.len());
+    let mut running = 0usize;
+    for length in &lengths {
+        offsets.push(running);
+        running += length;
     }
 
-    Ok(())
+    paths
+        .par_iter()
+        .zip(&lengths)
+        .zip(&offsets)
+        .try_for_each(|((path, &length), &offset)| {
+            let mut table = read_table(path, extension)?;
+            let slice = &niches[offset..offset + length];
+            table.set_column("niches", Table::u32_array(slice.iter().copied()))?;
+            // Always parquet: the network directory the pipelines write to is
+            // parquet, and every later step reads it as such.
+            write_parquet(&table, path)?;
+            Ok(())
+        })
 }
 
 /// Number of cells in each sample, without decoding the whole file.

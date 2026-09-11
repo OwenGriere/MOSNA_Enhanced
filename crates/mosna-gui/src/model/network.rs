@@ -1084,14 +1084,25 @@ mod tests {
         .unwrap();
         let attribute = Attribute::read(&table, "phenotype").unwrap();
 
-        assert_eq!(attribute.colour(0, Palette::Reds), attribute.colour(3, Palette::Reds), "same label");
-        assert_ne!(attribute.colour(0, Palette::Reds), attribute.colour(1, Palette::Reds));
+        assert_eq!(
+            attribute.colour(0, Palette::Reds),
+            attribute.colour(3, Palette::Reds),
+            "same label"
+        );
+        assert_ne!(
+            attribute.colour(0, Palette::Reds),
+            attribute.colour(1, Palette::Reds)
+        );
 
         match attribute.legend(Palette::Reds) {
             Legend::Categories(entries) => {
                 assert_eq!(entries.len(), 3);
                 assert_eq!(entries[0].0, "a");
-                assert_eq!(entries[0].1, attribute.colour(0, Palette::Reds), "the legend must not lie");
+                assert_eq!(
+                    entries[0].1,
+                    attribute.colour(0, Palette::Reds),
+                    "the legend must not lie"
+                );
             }
             other => panic!("expected a list, got {other:?}"),
         }
@@ -1107,7 +1118,11 @@ mod tests {
             Legend::Colorbar { ramp, min, max } => {
                 assert_eq!((min, max), (0.5, 2.5));
                 assert_eq!(ramp.len(), RAMP_STEPS);
-                assert_eq!(ramp[0], attribute.colour(0, Palette::Reds), "the low end is the low value");
+                assert_eq!(
+                    ramp[0],
+                    attribute.colour(0, Palette::Reds),
+                    "the low end is the low value"
+                );
                 assert_eq!(*ramp.last().unwrap(), attribute.colour(2, Palette::Reds));
             }
             other => panic!("expected a colour bar, got {other:?}"),
@@ -1123,7 +1138,11 @@ mod tests {
         let attribute = Attribute::read(&table, "flat").unwrap();
 
         let colour = attribute.colour(0, Palette::Reds);
-        assert_eq!(colour, attribute.colour(1, Palette::Reds), "one value, one colour");
+        assert_eq!(
+            colour,
+            attribute.colour(1, Palette::Reds),
+            "one value, one colour"
+        );
         assert_ne!(
             colour,
             Gradient::BAD,
@@ -1143,7 +1162,10 @@ mod tests {
         let attribute = Attribute::read(&table, "CD8").unwrap();
 
         assert_eq!(attribute.colour(1, Palette::Reds), Gradient::BAD);
-        assert_ne!(attribute.colour(0, Palette::Reds), attribute.colour(1, Palette::Reds));
+        assert_ne!(
+            attribute.colour(0, Palette::Reds),
+            attribute.colour(1, Palette::Reds)
+        );
         assert_eq!(attribute.text(1), "—");
     }
 
@@ -1170,7 +1192,10 @@ mod tests {
         }
         assert_eq!(attribute.colour(1, Palette::Reds), Gradient::BAD);
         assert_eq!(attribute.text(1), "—");
-        assert_eq!(attribute.colour(0, Palette::Reds), attribute.colour(3, Palette::Reds));
+        assert_eq!(
+            attribute.colour(0, Palette::Reds),
+            attribute.colour(3, Palette::Reds)
+        );
 
         match attribute.legend(Palette::Reds) {
             Legend::Categories(entries) => assert_eq!(entries.len(), 2),
@@ -1594,7 +1619,10 @@ mod tests {
             assert!(!palette.label().is_empty());
             assert_eq!(palette.ramp().len(), RAMP_STEPS);
             assert_eq!(palette.ramp()[0], palette.gradient().sample(0.0));
-            assert_eq!(*palette.ramp().last().unwrap(), palette.gradient().sample(1.0));
+            assert_eq!(
+                *palette.ramp().last().unwrap(),
+                palette.gradient().sample(1.0)
+            );
         }
     }
 
@@ -1671,7 +1699,11 @@ mod tests {
         let blue = [0x20, 0x20, 0xC0];
         let blended = fuse(&[channel(red, 1.0), channel(blue, 0.02)]);
 
-        let distance = |a: Rgb, b: Rgb| (0..3).map(|c| (a[c] as i32 - b[c] as i32).abs()).sum::<i32>();
+        let distance = |a: Rgb, b: Rgb| {
+            (0..3)
+                .map(|c| (a[c] as i32 - b[c] as i32).abs())
+                .sum::<i32>()
+        };
         assert!(
             distance(blended, red) < distance(blended, blue) / 4,
             "{blended:?} is not close enough to the column that dominates it"

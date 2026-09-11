@@ -2,6 +2,8 @@
 
 use std::path::Path;
 
+use rayon::prelude::*;
+
 use mosna_io::read::get_opener::{read_table_columns, Extension};
 use mosna_io::SampleId;
 
@@ -42,16 +44,21 @@ pub fn aggregate_cell_types(
     phenotype_column: &str,
 ) -> Result<Vec<String>> {
     let net_dir = net_dir.as_ref();
-    let mut cell_types = Vec::new();
 
-    for id in data_index {
-        let path =
-            net_dir.join(id.nodes_file_name(patient_column, sample_column, extension.as_str()));
-        let table = read_table_columns(&path, extension, &[phenotype_column])?;
-        cell_types.extend(table.string_column(phenotype_column)?);
-    }
+    // Read in parallel, concatenate in `data_index` order: the alignment with
+    // the feature table is the whole point, so the order is restored by the
+    // collect rather than left to whichever file finished first.
+    let per_sample: Vec<Vec<String>> = data_index
+        .par_iter()
+        .map(|id| {
+            let path =
+                net_dir.join(id.nodes_file_name(patient_column, sample_column, extension.as_str()));
+            let table = read_table_columns(&path, extension, &[phenotype_column])?;
+            Ok(table.string_column(phenotype_column)?)
+        })
+        .collect::<Result<Vec<_>>>()?;
 
-    Ok(cell_types)
+    Ok(per_sample.concat())
 }
 
 #[cfg(test)]

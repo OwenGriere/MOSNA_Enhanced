@@ -1,6 +1,8 @@
 //! The weighted graph UMAP optimises the layout of.
 
-use std::collections::HashMap;
+use crate::reduction::umap::Scalar;
+
+use rayon::prelude::*;
 
 use crate::reduction::umap::knn_graph::KnnGraph;
 use crate::reduction::umap::smooth_knn_dist::smooth_knn_dist;
@@ -25,17 +27,36 @@ use crate::reduction::umap::smooth_knn_dist::smooth_knn_dist;
 /// leave points in dense regions weakly attached.
 ///
 /// Returned as a deduplicated edge list `(a, b, weight)` with `a < b`.
+///
+/// # Merging by sorting rather than by hashing
+///
+/// The two directions of a pair used to be brought together in a
+/// `HashMap<(usize, usize), (Scalar, Scalar)>`. That map holds one entry per edge —
+/// on a twelve-million-cell cohort with `k = 20`, upwards of a hundred and
+/// seventy million of them, six gigabytes of table before the edge list itself
+/// exists, and briefly twice that whenever it outgrows its capacity and
+/// rehashes. Every insertion is also a random probe into a structure far larger
+/// than any cache.
+///
+/// The directed memberships are collected into two flat vectors instead, sorted
+/// and walked in step. The peak is the vectors themselves, the access pattern is
+/// sequential, and the sort is the one this function already had to perform at
+/// the end to make its output independent of the map's iteration order.
 pub fn fuzzy_simplicial_set(
     graph: &KnnGraph,
     n_rows: usize,
-    local_connectivity: f64,
-) -> Vec<(usize, usize, f64)> {
+    local_connectivity: Scalar,
+) -> Vec<(usize, usize, Scalar)> {
     let (rho, sigma) = smooth_knn_dist(&graph.distances, local_connectivity);
 
-    // Directed memberships, keyed by the unordered pair.
-    let mut merged: HashMap<(usize, usize), (f64, f64)> = HashMap::new();
+    // A membership is `forward` when it was contributed by the lower-numbered
+    // endpoint of the pair. Split on that here so the merge below is a walk
+    // along two sorted runs rather than a lookup per entry.
+    let rows = n_rows.min(graph.indices.len());
+    let mut forward: Vec<(usize, usize, Scalar)> = Vec::new();
+    let mut backward: Vec<(usize, usize, Scalar)> = Vec::new();
 
-    for i in 0..n_rows.min(graph.indices.len()) {
+    for i in 0..rows {
         for (slot, &j) in graph.indices[i].iter().enumerate() {
             if i == j {
                 continue;
@@ -43,29 +64,57 @@ pub fn fuzzy_simplicial_set(
             let d = graph.distances[i][slot];
             let weight = (-(d - rho[i]).max(0.0) / sigma[i]).exp();
 
-            let (key, forward) = if i < j {
-                ((i, j), true)
+            if i < j {
+                forward.push((i, j, weight));
             } else {
-                ((j, i), false)
-            };
-            let entry = merged.entry(key).or_insert((0.0, 0.0));
-            if forward {
-                entry.0 = weight;
-            } else {
-                entry.1 = weight;
+                backward.push((j, i, weight));
             }
         }
     }
 
-    let mut edges: Vec<(usize, usize, f64)> = merged
-        .into_iter()
-        .map(|((a, b), (forward, backward))| (a, b, forward + backward - forward * backward))
-        .filter(|&(_, _, w)| w > 0.0)
-        .collect();
+    // A pair occurs at most once in each vector — a row lists a neighbour once —
+    // so the key is unique within each and an unstable sort is deterministic.
+    forward.par_sort_unstable_by_key(|&(a, b, _)| (a, b));
+    backward.par_sort_unstable_by_key(|&(a, b, _)| (a, b));
 
-    // Sorted so the edge list — and therefore the SGD's visit order — does not
-    // depend on the hash map's iteration order.
-    edges.sort_unstable_by(|a, b| a.0.cmp(&b.0).then(a.1.cmp(&b.1)));
+    let mut edges: Vec<(usize, usize, Scalar)> =
+        Vec::with_capacity(forward.len().max(backward.len()));
+    let (mut f, mut b) = (0usize, 0usize);
+    while f < forward.len() || b < backward.len() {
+        // Whichever pair comes first, taking both weights when they agree.
+        let (a, z, weight_forward, weight_backward) = match (forward.get(f), backward.get(b)) {
+            (Some(&(fa, fb, fw)), Some(&(ba, bb, bw))) => match (fa, fb).cmp(&(ba, bb)) {
+                std::cmp::Ordering::Less => {
+                    f += 1;
+                    (fa, fb, fw, 0.0)
+                }
+                std::cmp::Ordering::Greater => {
+                    b += 1;
+                    (ba, bb, 0.0, bw)
+                }
+                std::cmp::Ordering::Equal => {
+                    f += 1;
+                    b += 1;
+                    (fa, fb, fw, bw)
+                }
+            },
+            (Some(&(fa, fb, fw)), None) => {
+                f += 1;
+                (fa, fb, fw, 0.0)
+            }
+            (None, Some(&(ba, bb, bw))) => {
+                b += 1;
+                (ba, bb, 0.0, bw)
+            }
+            (None, None) => unreachable!("the loop condition holds one of them"),
+        };
+
+        let weight = weight_forward + weight_backward - weight_forward * weight_backward;
+        if weight > 0.0 {
+            edges.push((a, z, weight));
+        }
+    }
+
     edges
 }
 
@@ -76,7 +125,7 @@ mod tests {
     use crate::reduction::umap::metric::Metric;
 
     fn line_graph(n: usize, k: usize) -> (KnnGraph, usize) {
-        let data: Vec<f64> = (0..n).map(|i| i as f64).collect();
+        let data: Vec<Scalar> = (0..n).map(|i| i as Scalar).collect();
         (knn_graph(&data, n, 1, k, Metric::Euclidean), n)
     }
 

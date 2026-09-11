@@ -183,7 +183,11 @@ pub fn wash(t: f32, x: f32, phase: f32) -> Color32 {
 /// would drain it towards grey at one end and towards white at the other.
 pub fn lit(colour: Color32, factor: f32) -> Color32 {
     let channel = |value: u8| (f32::from(value) * factor).round().clamp(0.0, 255.0) as u8;
-    Color32::from_rgb(channel(colour.r()), channel(colour.g()), channel(colour.b()))
+    Color32::from_rgb(
+        channel(colour.r()),
+        channel(colour.g()),
+        channel(colour.b()),
+    )
 }
 
 /// Blend two colours, `amount` of the way from the first to the second.
@@ -425,7 +429,10 @@ mod tests {
             highest = highest.max(value);
         }
         assert!(highest - lowest > 0.01, "the grain is invisible");
-        assert!(highest - lowest < 0.05, "the grain is a texture, not a metal");
+        assert!(
+            highest - lowest < 0.05,
+            "the grain is a texture, not a metal"
+        );
         assert!((0.95..=1.05).contains(&lowest) && (0.95..=1.05).contains(&highest));
     }
 
@@ -448,7 +455,10 @@ mod tests {
         let mut previous = bevel(0.0);
         for step in 1..=100 {
             let next = bevel(step as f32 / 100.0);
-            assert!(next <= previous + 1e-6, "the bevel rises again at {step}/100");
+            assert!(
+                next <= previous + 1e-6,
+                "the bevel rises again at {step}/100"
+            );
             previous = next;
         }
     }
