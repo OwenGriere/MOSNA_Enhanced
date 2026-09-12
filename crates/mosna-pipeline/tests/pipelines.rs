@@ -424,8 +424,13 @@ fn niche_analysis_writes_results_and_labels_the_cells() {
     assert_eq!(nodes.len(), 3);
     for path in &nodes {
         let table = read_table(path, Extension::Parquet).unwrap();
-        assert!(table.has_column("niches"), "{path:?} has no niches column");
-        let niches = table.f64_column("niches").unwrap();
+        // The column is named after the run, so a later run adds a second one
+        // rather than replacing these labels.
+        assert!(
+            table.has_column("niches_1-1-1"),
+            "{path:?} has no niches_1-1-1 column"
+        );
+        let niches = table.f64_column("niches_1-1-1").unwrap();
         assert_eq!(niches.len(), 36);
         assert!(niches.iter().all(|v| v.is_finite() && *v >= 0.0));
     }
@@ -459,8 +464,11 @@ fn niche_analysis_runs_without_a_reduction() {
     let nodes = find_sample(workspace.net_dir(), "parquet", "patient", Some("sample")).unwrap();
     for path in &nodes {
         let table = read_table(path, Extension::Parquet).unwrap();
-        assert!(table.has_column("niches"), "{path:?} has no niches column");
-        let niches = table.f64_column("niches").unwrap();
+        assert!(
+            table.has_column("niches_1-0-1"),
+            "{path:?} has no niches_1-0-1 column"
+        );
+        let niches = table.f64_column("niches_1-0-1").unwrap();
         assert_eq!(niches.len(), 36);
         assert!(niches.iter().all(|v| v.is_finite() && *v >= 0.0));
     }
@@ -569,7 +577,7 @@ fn niche_analysis_caches_the_feature_table() {
 
     let cache = workspace
         .root()
-        .join("temp/var_aggreg/1/var_aggreg_1.parquet");
+        .join("temp/intermediate_files/var_aggreg-1/var_aggreg_1.parquet");
     assert!(
         cache.is_file(),
         "the feature table was not cached at {cache:?}"
@@ -607,7 +615,11 @@ fn niche_analysis_caches_the_projection_and_the_partition() {
     // The files nest the way the stages do: a partition beside its projection,
     // inside the aggregation that projection came from.
     assert_eq!(
-        names_in(&workspace.root().join("temp/var_aggreg/1/1")),
+        names_in(
+            &workspace
+                .root()
+                .join("temp/intermediate_files/var_aggreg-1/reduction-1")
+        ),
         vec!["clustering_1.parquet", "reduction_1.parquet"]
     );
 
@@ -616,14 +628,20 @@ fn niche_analysis_caches_the_projection_and_the_partition() {
 
     let features = &catalogue["1"];
     assert_eq!(features["mode"], "aggregated");
-    assert_eq!(features["path"], "temp/var_aggreg/1/var_aggreg_1.parquet");
+    assert_eq!(
+        features["path"],
+        "temp/intermediate_files/var_aggreg-1/var_aggreg_1.parquet"
+    );
     assert_eq!(features["parameters"]["order"], 1);
     assert_eq!(features["parameters"]["column_to_aggregate"][0], "Cluster");
     assert_eq!(features["sample"], "");
 
     let reduction = &features["reduction"]["1"];
     assert_eq!(reduction["id"], 1);
-    assert_eq!(reduction["path"], "temp/var_aggreg/1/1/reduction_1.parquet");
+    assert_eq!(
+        reduction["path"],
+        "temp/intermediate_files/var_aggreg-1/reduction-1/reduction_1.parquet"
+    );
     // The settings are spelled out, not encoded into the name.
     assert_eq!(reduction["parameters"]["reducer_type"], "umap");
     assert_eq!(reduction["parameters"]["dim_clust"], 2);
@@ -638,7 +656,7 @@ fn niche_analysis_caches_the_projection_and_the_partition() {
     assert!(clustering["parameters"]["resolution"].is_null());
     assert_eq!(
         clustering["path"],
-        "temp/var_aggreg/1/1/clustering_1.parquet"
+        "temp/intermediate_files/var_aggreg-1/reduction-1/clustering_1.parquet"
     );
 }
 
@@ -666,7 +684,7 @@ fn a_second_run_reads_the_cached_partition() {
 
     let partition = workspace
         .root()
-        .join("temp/var_aggreg/1/1/clustering_1.parquet");
+        .join("temp/intermediate_files/var_aggreg-1/reduction-1/clustering_1.parquet");
 
     // Every cell into niche 7 — an answer no clusterer would return here.
     // Written through the cache's own writer so it keeps the recorded source:
@@ -684,7 +702,7 @@ fn a_second_run_reads_the_cached_partition() {
     let nodes = find_sample(workspace.net_dir(), "parquet", "patient", Some("sample")).unwrap();
     for path in &nodes {
         let table = read_table(path, Extension::Parquet).unwrap();
-        let niches = table.f64_column("niches").unwrap();
+        let niches = table.f64_column("niches_1-1-1").unwrap();
         assert!(niches.iter().all(|v| *v == 7.0), "{path:?} was recomputed");
     }
 }
@@ -712,7 +730,7 @@ fn a_cache_of_the_wrong_height_is_not_trusted() {
 
     let partition = workspace
         .root()
-        .join("temp/var_aggreg/1/1/clustering_1.parquet");
+        .join("temp/intermediate_files/var_aggreg-1/reduction-1/clustering_1.parquet");
     plant(&partition, &[7u32; 3]);
 
     let spoken = Spoken::default();
@@ -722,7 +740,7 @@ fn a_cache_of_the_wrong_height_is_not_trusted() {
     let nodes = find_sample(workspace.net_dir(), "parquet", "patient", Some("sample")).unwrap();
     let table = read_table(&nodes[0], Extension::Parquet).unwrap();
     assert!(table
-        .f64_column("niches")
+        .f64_column("niches_1-1-1")
         .unwrap()
         .iter()
         .any(|v| *v != 7.0));
@@ -743,7 +761,7 @@ fn changing_the_features_invalidates_the_projection_and_the_partition() {
 
     assert!(workspace
         .root()
-        .join("temp/var_aggreg/1/1/reduction_1.parquet")
+        .join("temp/intermediate_files/var_aggreg-1/reduction-1/reduction_1.parquet")
         .is_file());
 
     // A different neighbourhood order: different features, same settings
@@ -771,11 +789,15 @@ fn changing_the_features_invalidates_the_projection_and_the_partition() {
     // The second aggregation gets a directory of its own, and its projection
     // starts again at one inside it — which is why nothing could collide.
     assert_eq!(
-        names_in(&workspace.root().join("temp/var_aggreg")),
-        vec!["1", "2"]
+        names_in(&workspace.root().join("temp/intermediate_files")),
+        vec!["var_aggreg-1", "var_aggreg-2"]
     );
     assert_eq!(
-        names_in(&workspace.root().join("temp/var_aggreg/2/1")),
+        names_in(
+            &workspace
+                .root()
+                .join("temp/intermediate_files/var_aggreg-2/reduction-1")
+        ),
         vec!["clustering_1.parquet", "reduction_1.parquet"]
     );
 }
@@ -811,7 +833,11 @@ fn a_parameter_the_stage_ignores_does_not_make_a_new_run() {
     assert!(spoken.said("Reusing the cached partition"));
     assert!(!workspace.root().join("Niche_Analysis/2-2-2").exists());
     assert_eq!(
-        names_in(&workspace.root().join("temp/var_aggreg/1/1")),
+        names_in(
+            &workspace
+                .root()
+                .join("temp/intermediate_files/var_aggreg-1/reduction-1")
+        ),
         vec!["clustering_1.parquet", "reduction_1.parquet"]
     );
 }
@@ -851,7 +877,7 @@ fn runs_are_numbered_and_registered() {
     assert_eq!(reductions["0"]["path"], "");
     assert_eq!(
         reductions["0"]["clustering"]["1"]["path"],
-        "temp/var_aggreg/1/0/clustering_1.parquet"
+        "temp/intermediate_files/var_aggreg-1/reduction-0/clustering_1.parquet"
     );
 }
 
@@ -922,7 +948,7 @@ fn niche_analysis_is_reproducible() {
             Extension::Parquet,
         )
         .unwrap();
-        runs.push(table.f64_column("niches").unwrap());
+        runs.push(table.f64_column("niches_1-1-1").unwrap());
     }
     assert_eq!(runs[0], runs[1]);
 }

@@ -17,19 +17,19 @@
 //! ├─ 1-1-1/                          the first of each
 //! ├─ 1-1-2/                          the same projection, clustered again
 //! └─ 2-1-1/                          a second aggregation
-//! temp/var_aggreg/
-//! ├─ 1/
+//! temp/intermediate_files/
+//! ├─ var_aggreg-1/
 //! │  ├─ var_aggreg_1.parquet
-//! │  └─ 1/
+//! │  └─ reduction-1/
 //! │     ├─ reduction_1.parquet
 //! │     ├─ clustering_1.parquet
 //! │     └─ clustering_2.parquet
-//! └─ 2/ …
+//! └─ var_aggreg-2/ …
 //! ```
 //!
 //! `1-1-2` is not a label to look up: it is the path. The partition is
-//! `temp/var_aggreg/1/1/clustering_2.parquet`, and what produced it is the
-//! projection and the aggregation it sits under.
+//! `temp/intermediate_files/var_aggreg-1/reduction-1/clustering_2.parquet`, and
+//! what produced it is the projection and the aggregation it sits under.
 //!
 //! # Why the numbers are local
 //!
@@ -299,12 +299,12 @@ impl Catalogue {
 pub mod paths {
     /// The directory of one aggregation.
     pub fn aggregation_dir(var_aggreg: u32) -> String {
-        format!("temp/var_aggreg/{var_aggreg}")
+        format!("temp/intermediate_files/var_aggreg-{var_aggreg}")
     }
 
     /// The directory of one projection, and of the partitions made from it.
     pub fn reduction_dir(var_aggreg: u32, reduction: u32) -> String {
-        format!("{}/{reduction}", aggregation_dir(var_aggreg))
+        format!("{}/reduction-{reduction}", aggregation_dir(var_aggreg))
     }
 
     pub fn features(var_aggreg: u32) -> String {
@@ -608,7 +608,7 @@ mod tests {
         assert_eq!(reduction.path, "");
         assert_eq!(
             reduction.clusterings[&1].path,
-            "temp/var_aggreg/1/0/clustering_1.parquet"
+            "temp/intermediate_files/var_aggreg-1/reduction-0/clustering_1.parquet"
         );
 
         // And a projection added later starts at one, not at zero plus one.
@@ -649,14 +649,17 @@ mod tests {
 
     #[test]
     fn the_paths_follow_the_numbers() {
-        assert_eq!(paths::features(3), "temp/var_aggreg/3/var_aggreg_3.parquet");
+        assert_eq!(
+            paths::features(3),
+            "temp/intermediate_files/var_aggreg-3/var_aggreg_3.parquet"
+        );
         assert_eq!(
             paths::reduction(3, 2),
-            "temp/var_aggreg/3/2/reduction_2.parquet"
+            "temp/intermediate_files/var_aggreg-3/reduction-2/reduction_2.parquet"
         );
         assert_eq!(
             paths::clustering(3, 2, 7),
-            "temp/var_aggreg/3/2/clustering_7.parquet"
+            "temp/intermediate_files/var_aggreg-3/reduction-2/clustering_7.parquet"
         );
     }
 
@@ -706,19 +709,22 @@ mod tests {
         assert_eq!(aggregation["id"], 1);
         assert_eq!(
             aggregation["path"],
-            "temp/var_aggreg/1/var_aggreg_1.parquet"
+            "temp/intermediate_files/var_aggreg-1/var_aggreg_1.parquet"
         );
         assert_eq!(aggregation["parameters"]["order"], 1);
         assert!(aggregation["updated"].is_string());
 
         let reduction = &aggregation["reduction"]["1"];
-        assert_eq!(reduction["path"], "temp/var_aggreg/1/1/reduction_1.parquet");
+        assert_eq!(
+            reduction["path"],
+            "temp/intermediate_files/var_aggreg-1/reduction-1/reduction_1.parquet"
+        );
         assert_eq!(reduction["parameters"]["dim_clust"], 2);
 
         let clustering = &reduction["clustering"]["1"];
         assert_eq!(
             clustering["path"],
-            "temp/var_aggreg/1/1/clustering_1.parquet"
+            "temp/intermediate_files/var_aggreg-1/reduction-1/clustering_1.parquet"
         );
         assert_eq!(clustering["parameters"]["resolution"], 0.05);
     }

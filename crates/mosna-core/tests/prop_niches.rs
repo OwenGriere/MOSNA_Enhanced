@@ -232,6 +232,7 @@ fn niche_labels_are_written_back_to_each_sample() {
         "patient",
         Some("sample"),
         Extension::Parquet,
+        "niches_1-1-1",
         &niches,
     )
     .unwrap();
@@ -242,8 +243,11 @@ fn niche_labels_are_written_back_to_each_sample() {
             .join(id.nodes_file_name("patient", Some("sample"), "parquet"));
         let table = read_table(&path, Extension::Parquet).unwrap();
 
-        assert!(table.has_column("niches"), "{path:?} has no niches column");
-        let written = table.f64_column("niches").unwrap();
+        assert!(
+            table.has_column("niches_1-1-1"),
+            "{path:?} has no niches_1-1-1 column"
+        );
+        let written = table.f64_column("niches_1-1-1").unwrap();
         assert_eq!(written.len(), 10);
         assert!(
             written.iter().all(|&v| v == position as f64),
@@ -268,6 +272,7 @@ fn merging_is_idempotent() {
             "patient",
             Some("sample"),
             Extension::Parquet,
+            "niches_1-1-1",
             &niches,
         )
         .unwrap();
@@ -282,7 +287,7 @@ fn merging_is_idempotent() {
         table
             .column_names()
             .iter()
-            .filter(|n| **n == "niches")
+            .filter(|n| **n == "niches_1-1-1")
             .count(),
         1
     );
@@ -301,6 +306,7 @@ fn merging_rejects_a_length_mismatch() {
         "patient",
         Some("sample"),
         Extension::Parquet,
+        "niches_1-1-1",
         &[0, 1, 2],
     )
     .unwrap_err();

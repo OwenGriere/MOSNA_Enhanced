@@ -196,8 +196,10 @@ pub fn niche_analysis(
 /// The three cache files a run resolves to, and the numbers that name them.
 ///
 /// The numbers *are* the paths: `1-2-3` is
-/// `temp/var_aggreg/1/2/clustering_3.parquet`, sitting beside the projection it
-/// came from, inside the aggregation that projection came from. Nothing about
+/// `temp/intermediate_files/var_aggreg-1/reduction-2/clustering_3.parquet`,
+/// sitting beside the projection it came from, inside the aggregation that
+/// projection came from. They also name the column its labels are written back
+/// into, `niches_1-2-3`. Nothing about
 /// the settings is in any of those names — they are in `runs.json`, which is
 /// the one place with room to spell them out.
 #[derive(Debug, Clone)]
@@ -267,6 +269,15 @@ impl Stems {
 /// A value as one line, for the parquet footers that record provenance.
 fn compact(value: &serde_json::Value) -> String {
     value.to_string()
+}
+
+/// The column a run's labels are written back into, named after the run.
+///
+/// `niches_1-0-2` rather than `niches`: the nodes files outlive any one run,
+/// and a fixed name would have each new set of settings replace the labels of
+/// the one before, leaving no way to compare two runs in the network view.
+fn niche_column(numbers: &RunNumbers) -> String {
+    format!("niches_{}", numbers.directory())
 }
 
 /// Where a run writes, saying so when it is about to overwrite an earlier one.
@@ -347,13 +358,15 @@ fn run_aggregated(
     // `generate_cmap(net_dir, 'niches', ...)` for the re-plot a few lines
     // later — which cannot work, because nothing ever creates that column. The
     // write is restored here; it is the only way the `Plot Network` option can
-    // function.
+    // function. The column carries the run's numbers, so a second run adds a
+    // layer beside the first instead of overwriting it.
     merge_niche_pheno(
         net_dir,
         data_index,
         &settings.patient_column,
         sample_column,
         extension,
+        &niche_column(&stems.numbers),
         &labels,
     )?;
 
@@ -439,6 +452,7 @@ fn run_per_sample(
             &settings.patient_column,
             sample_column,
             extension,
+            &niche_column(&sample_stems.numbers),
             &labels,
         )?;
 

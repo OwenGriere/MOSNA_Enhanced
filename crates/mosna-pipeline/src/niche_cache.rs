@@ -221,15 +221,17 @@ mod tests {
         let run = numbers(3, 2, 7);
         assert_eq!(
             caches.features_path(&run),
-            Path::new("/work/temp/var_aggreg/3/var_aggreg_3.parquet")
+            Path::new("/work/temp/intermediate_files/var_aggreg-3/var_aggreg_3.parquet")
         );
         assert_eq!(
             caches.reduction_path(&run),
-            Path::new("/work/temp/var_aggreg/3/2/reduction_2.parquet")
+            Path::new("/work/temp/intermediate_files/var_aggreg-3/reduction-2/reduction_2.parquet")
         );
         assert_eq!(
             caches.clustering_path(&run),
-            Path::new("/work/temp/var_aggreg/3/2/clustering_7.parquet")
+            Path::new(
+                "/work/temp/intermediate_files/var_aggreg-3/reduction-2/clustering_7.parquet"
+            )
         );
     }
 
@@ -238,7 +240,7 @@ mod tests {
         let caches = Caches::under(Path::new("/work"));
         assert_eq!(
             caches.relative(&caches.reduction_path(&numbers(3, 2, 7))),
-            "temp/var_aggreg/3/2/reduction_2.parquet"
+            "temp/intermediate_files/var_aggreg-3/reduction-2/reduction_2.parquet"
         );
     }
 

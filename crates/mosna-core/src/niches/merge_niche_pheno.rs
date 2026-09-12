@@ -14,8 +14,14 @@ use crate::error::{CoreError, Result};
 ///
 /// `niches` is one label per cell, in the order the NAS feature table used —
 /// the samples of `data_index` concatenated, each in file order. The vector is
-/// split back across the samples and written as a `niches` column, which is
-/// what lets the network re-plot colour each cell by its niche.
+/// split back across the samples and written as `column`, which is what lets
+/// the network re-plot colour each cell by its niche.
+///
+/// The column is named after the run it came from — `niches_1-0-2` — rather
+/// than `niches`, because a nodes file outlives the run that wrote into it: a
+/// single name would mean every new set of settings silently replaced the
+/// labels of the one before, and no two runs could be compared in the network
+/// view.
 ///
 /// The total length is checked against the cohort before anything is written:
 /// a mismatch means the labels would be attributed to the wrong cells, and
@@ -26,6 +32,7 @@ pub fn merge_niche_pheno(
     patient_column: &str,
     sample_column: Option<&str>,
     extension: Extension,
+    column: &str,
     niches: &[u32],
 ) -> Result<()> {
     let net_dir = net_dir.as_ref();
@@ -70,7 +77,7 @@ pub fn merge_niche_pheno(
         .try_for_each(|((path, &length), &offset)| {
             let mut table = read_table(path, extension)?;
             let slice = &niches[offset..offset + length];
-            table.set_column("niches", Table::u32_array(slice.iter().copied()))?;
+            table.set_column(column, Table::u32_array(slice.iter().copied()))?;
             // Always parquet: the network directory the pipelines write to is
             // parquet, and every later step reads it as such.
             write_parquet(&table, path)?;
@@ -120,6 +127,7 @@ mod tests {
             "patient",
             Some("sample"),
             Extension::Parquet,
+            "niches_1-1-1",
             &niches,
         )
         .unwrap();
@@ -129,7 +137,7 @@ mod tests {
                 .dir()
                 .join(id.nodes_file_name("patient", Some("sample"), "parquet"));
             let table = read_table(&path, Extension::Parquet).unwrap();
-            let written = table.f64_column("niches").unwrap();
+            let written = table.f64_column("niches_1-1-1").unwrap();
             assert!(written.iter().all(|&v| v == position as f64));
         }
     }
@@ -144,6 +152,7 @@ mod tests {
             "patient",
             Some("sample"),
             Extension::Parquet,
+            "niches_1-1-1",
             &[0, 1, 2, 3, 4],
         )
         .unwrap();
@@ -155,7 +164,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             table.column_names(),
-            vec!["X_position", "Y_position", "Cluster", "niches"]
+            vec!["X_position", "Y_position", "Cluster", "niches_1-1-1"]
         );
     }
 
@@ -170,6 +179,7 @@ mod tests {
             "patient",
             Some("sample"),
             Extension::Parquet,
+            "niches_1-1-1",
             &[0, 1],
         )
         .unwrap_err();
@@ -181,7 +191,7 @@ mod tests {
             Extension::Parquet,
         )
         .unwrap();
-        assert!(!table.has_column("niches"));
+        assert!(!table.has_column("niches_1-1-1"));
     }
 
     #[test]

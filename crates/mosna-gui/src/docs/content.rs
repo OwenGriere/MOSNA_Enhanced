@@ -487,13 +487,13 @@ fn workflow() -> Chapter {
                             "Ce qui atterrit dans le répertoire de travail",
                         ),
                         lines: vec![
-                            "temp/net_dir_mosna/   nodes_*.parquet, edges_*.parquet",
-                            "Tysserand_Network/    net_{patient}-{sample}.png and .html",
-                            "Assortativity/        net_stat.csv and its figures",
-                            "Niche_Analysis/       one folder per run, named 1-1-1, plus runs.json",
-                            "temp/var_aggreg/      the aggregated features, kept between runs",
-                            "                      with the projections and partitions inside",
-                            "report.html           every figure above, on one page",
+                            "temp/net_dir_mosna/      nodes_*.parquet, edges_*.parquet",
+                            "Tysserand_Network/       net_{patient}-{sample}.png and .html",
+                            "Assortativity/           net_stat.csv and its figures",
+                            "Niche_Analysis/          one folder per run, named 1-1-1, plus runs.json",
+                            "temp/intermediate_files/ the aggregated features, kept between runs",
+                            "                         with the projections and partitions inside",
+                            "report.html              every figure above, on one page",
                         ],
                     },
                     Block::Paragraph(T::new(
@@ -974,19 +974,22 @@ fn results() -> Chapter {
                         text: T::new(
                             "A run's folder is named after the three things it was computed \
                              from, and those three numbers are also where the files are: \
-                             1-2-3 was computed from temp/var_aggreg/1/2/clustering_3.parquet, \
+                             1-2-3 was computed from \
+                             temp/intermediate_files/var_aggreg-1/reduction-2/clustering_3.parquet, \
                              sitting beside the projection it came from, inside the \
-                             aggregation that projection came from. runs.json says what each \
-                             number was tried with. A zero in the middle means no reduction. \
+                             aggregation that projection came from. Its labels are written back \
+                             into the network files as a niches_1-2-3 column. runs.json says \
+                             what each number was tried with. A zero in the middle means no reduction. \
                              Changing one setting only renumbers the stages below it; the \
                              others are read back instead of being computed again.",
                             "Le dossier d'un calcul est nommé d'après les trois éléments dont \
                              il sort, et ces trois numéros sont aussi l'emplacement des \
                              fichiers : 1-2-3 vient de \
-                             temp/var_aggreg/1/2/clustering_3.parquet, posé à côté de la \
-                             projection dont il sort, dans l'agrégation dont cette projection \
-                             sort. runs.json dit avec quels réglages chaque numéro a été \
-                             essayé. Un zéro au milieu signifie aucune réduction. Changer un \
+                             temp/intermediate_files/var_aggreg-1/reduction-2/clustering_3.parquet, \
+                             posé à côté de la projection dont il sort, dans l'agrégation dont \
+                             cette projection sort. Ses étiquettes sont réécrites dans les \
+                             fichiers réseau sous la colonne niches_1-2-3. runs.json dit avec \
+                             quels réglages chaque numéro a été essayé. Un zéro au milieu signifie aucune réduction. Changer un \
                              réglage ne renumérote que les étages en dessous ; les autres sont \
                              relus au lieu d'être recalculés.",
                         ),
