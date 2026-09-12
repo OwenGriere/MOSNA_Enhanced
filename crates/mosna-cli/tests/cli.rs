@@ -88,7 +88,6 @@ Assortativity:
   Randomization diagnostic: false
 Niche Analysis:
   Network directory: Default
-  Saving directory: niche_cluster
   Extension: parquet
   Patient column name: patient
   Sample column name: sample
@@ -285,7 +284,7 @@ fn the_three_analyses_run_in_sequence() {
     .unwrap();
     assert!(fixture
         .working_dir()
-        .join("Niche_Analysis/Aggregation/niche_cluster/parameters.json")
+        .join("Niche_Analysis/1-1-1/parameters.json")
         .is_file());
 }
 

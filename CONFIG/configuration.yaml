@@ -20,7 +20,6 @@ Assortativity:
   Randomization diagnostic: false
 Niche Analysis:
   Network directory: Default
-  Saving directory: niche_cluster
   Extension: parquet
   Patient column name: patient
   Sample column name: sample

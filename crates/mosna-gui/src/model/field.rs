@@ -147,10 +147,6 @@ impl Field {
                 // `index` is the sentinel for "use the positional index".
                 custom: value.as_str().filter(|v| *v != "index").map(str::to_string),
             }
-        } else if key == "Saving directory" {
-            FieldKind::DirectoryPath {
-                path: value.as_str().unwrap_or_default().to_string(),
-            }
         } else {
             FieldKind::Text {
                 text: render(value),
@@ -423,7 +419,7 @@ mod tests {
 
     #[test]
     fn text_that_is_not_a_number_stays_text() {
-        let mut field = Field::for_key("Saving directory key", &Value::Null);
+        let mut field = Field::for_key("Some free-text key", &Value::Null);
         field.set_text("niche_cluster");
         assert_eq!(field.value(), Value::String("niche_cluster".into()));
     }

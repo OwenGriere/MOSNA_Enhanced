@@ -20,14 +20,21 @@ use mosna_core::niches::{
     Normalize,
 };
 use mosna_core::reduction::umap::{cluster_neighbours, umap, Metric, Scalar, UmapParams};
-use mosna_io::read::get_opener::{read_table, read_table_columns, Extension};
+use mosna_io::read::get_opener::{read_table, read_table_columns, table_rows, Extension};
 use mosna_io::write::write_parquet::write_parquet;
 use mosna_io::{SampleId, Table};
+use serde_json::json;
 
 use crate::assortativity::resolve_network_directory;
 use crate::error::{create_dir_all, PipelineError, Result};
 use crate::figures::FigureSink;
+use crate::niche_cache::{self, Caches};
+use crate::niche_runs::{Catalogue, RunNumbers};
 use crate::progress::Progress;
+
+/// How the two processing methods are spelled in the run register.
+const MODE_AGGREGATED: &str = "aggregated";
+const MODE_PER_SAMPLE: &str = "per_sample";
 
 /// Identify spatial niches.
 ///
@@ -112,10 +119,24 @@ pub fn niche_analysis(
     };
     progress.info("[INFO] Phenotypes for all sample found");
 
+    // The caches and the catalogue, both of which outlive this run: the first
+    // so the next one need not recompute what this one did, the second so a
+    // numbered directory can be read back into the settings behind it.
+    let caches = Caches::under(working_dir);
+    let niche_dir = working_dir.join("Niche_Analysis");
+    let mut catalogue = Catalogue::load(&niche_dir)?;
+
     if settings.processing_method.with_aggregation() {
-        let save_dir = working_dir
-            .join("Niche_Analysis/Aggregation")
-            .join(&settings.saving_directory);
+        let stems = Stems::of(
+            &settings.aggregated,
+            &aggregate_columns,
+            &use_attributes,
+            &mut catalogue,
+            MODE_AGGREGATED,
+            None,
+        );
+        let save_dir = announce(&niche_dir, &stems, progress);
+
         run_aggregated(
             &settings,
             config,
@@ -124,16 +145,34 @@ pub fn niche_analysis(
             &data_index,
             &use_attributes,
             &save_dir,
+            &caches,
+            &stems,
             progress,
             figures,
         )?;
+        catalogue.save()?;
         progress.info("[INFO] Niches found for aggregated nodes");
     }
 
     if settings.processing_method.per_sample() {
-        let save_root = working_dir
-            .join("Niche_Analysis/Per_sample")
-            .join(&settings.saving_directory);
+        // One set of caches per sample, resolved before anything runs: the
+        // numbers have to be handed out in one pass, or two samples would be
+        // given the same one and the second would overwrite the first.
+        let sample_column = settings.sample_column.as_deref();
+        let per_sample: Vec<Stems> = data_index
+            .iter()
+            .map(|id| {
+                Stems::of(
+                    &settings.per_sample,
+                    &aggregate_columns,
+                    &use_attributes,
+                    &mut catalogue,
+                    MODE_PER_SAMPLE,
+                    Some(&id.str_group(&settings.patient_column, sample_column)),
+                )
+            })
+            .collect();
+
         run_per_sample(
             &settings,
             config,
@@ -141,14 +180,111 @@ pub fn niche_analysis(
             extension,
             &data_index,
             &use_attributes,
-            &save_root,
+            &niche_dir,
+            &caches,
+            &per_sample,
             progress,
             figures,
         )?;
+        catalogue.save()?;
         progress.info("[INFO] Niches found for each samples");
     }
 
     Ok(())
+}
+
+/// The three cache files a run resolves to, and the numbers that name them.
+///
+/// The numbers *are* the paths: `1-2-3` is
+/// `temp/var_aggreg/1/2/clustering_3.parquet`, sitting beside the projection it
+/// came from, inside the aggregation that projection came from. Nothing about
+/// the settings is in any of those names — they are in `runs.json`, which is
+/// the one place with room to spell them out.
+#[derive(Debug, Clone)]
+struct Stems {
+    numbers: RunNumbers,
+    /// Whether a projection is computed at all; without one there is nothing to
+    /// cache between the features and the partition.
+    reduces: bool,
+    /// What each file must record about its own provenance, so that a stale one
+    /// left behind by a deleted catalogue is recomputed rather than read.
+    features_source: String,
+    reduction_source: String,
+    clustering_source: String,
+}
+
+impl Stems {
+    /// Resolve the numbers, allocating them against `catalogue` so that a run
+    /// already made keeps the files it already has.
+    fn of(
+        params: &NicheParams,
+        columns: &[String],
+        use_attributes: &[String],
+        catalogue: &mut Catalogue,
+        mode: &str,
+        sample: Option<&str>,
+    ) -> Self {
+        let features = params.features_parameters(columns, use_attributes.len());
+        let reduces = params.reducer_type != ReducerType::None;
+        let reduction = reduces.then(|| params.reduction_parameters());
+        let clustering = params.clustering_parameters();
+
+        let numbers = catalogue.resolve(
+            mode,
+            sample.unwrap_or_default(),
+            &features,
+            reduction.as_ref(),
+            &clustering,
+        );
+
+        // The provenance each file records is the chain of settings behind it,
+        // not its own alone. The directories already keep the stages apart; this
+        // is what catches a file whose directory was reused because `runs.json`
+        // had been deleted and the numbering started again.
+        let features_source = compact(&json!({ "sample": sample, "features": features }));
+        let reduction_source = compact(&json!({
+            "sample": sample,
+            "features": features,
+            "reduction": reduction,
+        }));
+        let clustering_source = compact(&json!({
+            "sample": sample,
+            "features": features,
+            "reduction": reduction,
+            "clustering": clustering,
+        }));
+
+        Self {
+            numbers,
+            reduces,
+            features_source,
+            reduction_source,
+            clustering_source,
+        }
+    }
+}
+
+/// A value as one line, for the parquet footers that record provenance.
+fn compact(value: &serde_json::Value) -> String {
+    value.to_string()
+}
+
+/// Where a run writes, saying so when it is about to overwrite an earlier one.
+///
+/// A run is identified by its three numbers, so settings that have been run
+/// before land on the directory they landed on before. The warning does not
+/// stop the run and does not ask anything: step 3 is driven by the interface,
+/// which reads this stream without being able to answer it, so a question here
+/// would hang rather than be answered.
+fn announce(niche_dir: &Path, stems: &Stems, progress: &dyn Progress) -> PathBuf {
+    let name = stems.numbers.directory();
+    let save_dir = niche_dir.join(&name);
+    if save_dir.is_dir() {
+        progress.info(&format!(
+            "[WARN] These settings were already run as Niche_Analysis/{name}; its results are being overwritten"
+        ));
+    }
+    save_dir
 }
 
 /// Niches called once over the pooled cohort.
@@ -161,16 +297,20 @@ fn run_aggregated(
     data_index: &[SampleId],
     use_attributes: &[String],
     save_dir: &Path,
+    caches: &Caches,
+    stems: &Stems,
     progress: &dyn Progress,
     figures: &dyn FigureSink,
 ) -> Result<()> {
     create_dir_all(save_dir)?;
+    caches.prepare(&stems.numbers)?;
     let params = &settings.aggregated;
     let sample_column = settings.sample_column.as_deref();
 
     progress.info("[PROCESS] Spatial Omic Features for all networks");
     progress.step(0, 3, "[PROCESS] Niches Analysis");
 
+    let expected_rows = cohort_rows(settings, net_dir, extension, data_index)?;
     let var_aggreg = load_or_compute_features(
         settings,
         net_dir,
@@ -178,12 +318,15 @@ fn run_aggregated(
         data_index,
         use_attributes,
         params,
+        caches,
+        stems,
+        expected_rows,
         progress,
     )?;
     progress.step(1, 3, "[PROCESS] Niches Analysis");
 
     progress.info("[PROCESS] Reduction and Clustering of Spatial Niches");
-    let (input, labels) = reduce_and_cluster(&var_aggreg, params)?;
+    let (input, labels) = cached_reduce_and_cluster(&var_aggreg, params, caches, stems, progress)?;
     progress.step(2, 3, "[PROCESS] Niches Analysis");
 
     draw_clusters(&input, &labels, save_dir, progress, figures)?;
@@ -246,6 +389,8 @@ fn run_per_sample(
     data_index: &[SampleId],
     use_attributes: &[String],
     save_root: &Path,
+    caches: &Caches,
+    per_sample: &[Stems],
     progress: &dyn Progress,
     figures: &dyn FigureSink,
 ) -> Result<()> {
@@ -255,14 +400,29 @@ fn run_per_sample(
     progress.step(0, total, "[PROCESS] Niches Analysis per sample");
 
     for (position, id) in data_index.iter().enumerate() {
-        let stem = id.str_group(&settings.patient_column, sample_column);
-        let save_dir = save_root.join(&stem);
+        let sample_stems = &per_sample[position];
+        // Each sample is its own attempt at every stage, so each has its own
+        // three numbers and its own directory beside the aggregated runs.
+        let save_dir = announce(save_root, sample_stems, progress);
         create_dir_all(&save_dir)?;
+        caches.prepare(&sample_stems.numbers)?;
 
         let single = std::slice::from_ref(id);
-        let var_aggreg =
-            compute_features(settings, net_dir, extension, single, use_attributes, params)?;
-        let (input, labels) = reduce_and_cluster(&var_aggreg, params)?;
+        let expected_rows = cohort_rows(settings, net_dir, extension, single)?;
+        let var_aggreg = load_or_compute_features(
+            settings,
+            net_dir,
+            extension,
+            single,
+            use_attributes,
+            params,
+            caches,
+            sample_stems,
+            expected_rows,
+            progress,
+        )?;
+        let (input, labels) =
+            cached_reduce_and_cluster(&var_aggreg, params, caches, sample_stems, progress)?;
 
         draw_clusters(&input, &labels, &save_dir, progress, figures)?;
         save_embedding(
@@ -314,7 +474,32 @@ fn run_per_sample(
     Ok(())
 }
 
+/// How many cells the cohort holds, from the files' own row counts.
+///
+/// Read from the parquet footers rather than by decoding the tables: this is
+/// asked before anything is computed, purely to know what height a cached
+/// result should have.
+fn cohort_rows(
+    settings: &NicheAnalysisConfig,
+    net_dir: &Path,
+    extension: Extension,
+    data_index: &[SampleId],
+) -> Result<usize> {
+    let sample_column = settings.sample_column.as_deref();
+    let mut total = 0;
+    for id in data_index {
+        let path = net_dir.join(id.nodes_file_name(
+            &settings.patient_column,
+            sample_column,
+            extension.as_str(),
+        ));
+        total += table_rows(&path, extension)?;
+    }
+    Ok(total)
+}
+
 /// The aggregated feature table, from cache when it is already on disk.
+#[allow(clippy::too_many_arguments)]
 fn load_or_compute_features(
     settings: &NicheAnalysisConfig,
     net_dir: &Path,
@@ -322,26 +507,32 @@ fn load_or_compute_features(
     data_index: &[SampleId],
     use_attributes: &[String],
     params: &NicheParams,
+    caches: &Caches,
+    stems: &Stems,
+    expected_rows: usize,
     progress: &dyn Progress,
 ) -> Result<VarAggreg> {
-    let cache: PathBuf = net_dir.join("var_aggreg.parquet");
+    let cache: PathBuf = caches.features_path(&stems.numbers);
     let sample_column = settings.sample_column.as_deref();
 
-    if cache.is_file() {
+    if cache.is_file() && niche_cache::came_from(&cache, &stems.features_source) {
         let table = read_table(&cache, Extension::Parquet)?;
         let cached = VarAggreg::from_table(&table, &settings.patient_column, sample_column)?;
-        // A cache from a different phenotype vocabulary or a different
-        // neighbourhood order would silently produce wrong niches, so it is
-        // only reused when its shape still matches the configuration.
+        // The name already carries the settings, so what is left to check is
+        // the cohort: a working directory whose networks changed has the same
+        // settings and a different answer. The width is checked too, because it
+        // costs nothing and a file of the right height and the wrong shape is
+        // the one mistake this would not otherwise catch.
+        //
         // One block of columns per statistic; the aggregation supports at most
         // the mean and the standard deviation.
         let n_statistics = params.stat_names.len().clamp(1, 2);
         let expected_columns = use_attributes.len() * n_statistics;
-        if cached.n_columns() == expected_columns {
+        if cached.n_columns() == expected_columns && cached.n_rows == expected_rows {
             progress.info("[INFO] Reusing the cached aggregated features");
             return Ok(cached);
         }
-        progress.info("[INFO] Cached features do not match the configuration, recomputing");
+        progress.info("[INFO] Cached features do not match the cohort, recomputing");
     }
 
     let var_aggreg = compute_features(
@@ -353,8 +544,69 @@ fn load_or_compute_features(
         params,
     )?;
     let table = var_aggreg.to_table(&settings.patient_column, sample_column)?;
-    write_parquet(&table, &cache)?;
+    niche_cache::write_table(&cache, &stems.features_source, &table)?;
     Ok(var_aggreg)
+}
+
+/// The projection and the partition, each read back when a run already made it.
+///
+/// The two stages are cached separately on purpose: moving `resolution` should
+/// cost the clustering and not the projection, which is the expensive one.
+fn cached_reduce_and_cluster(
+    var_aggreg: &VarAggreg,
+    params: &NicheParams,
+    caches: &Caches,
+    stems: &Stems,
+    progress: &dyn Progress,
+) -> Result<(ClusterInput, Vec<u32>)> {
+    let n_rows = var_aggreg.n_rows;
+    let reduction_path = caches.reduction_path(&stems.numbers);
+
+    // A projection belongs to the feature table it projected, and a partition
+    // to the matrix it partitioned. Neither name says so, so each file is asked
+    // what it came from before it is believed.
+    let input = match stems
+        .reduces
+        .then(|| niche_cache::read_matrix(&reduction_path, &stems.reduction_source, n_rows))
+        .flatten()
+    {
+        Some((values, width)) => {
+            progress.info("[INFO] Reusing the cached projection");
+            ClusterInput {
+                values,
+                width,
+                reduced: true,
+            }
+        }
+        None => {
+            let input = project(var_aggreg, params)?;
+            if stems.reduces {
+                niche_cache::write_matrix(
+                    &reduction_path,
+                    &stems.reduction_source,
+                    &input.values,
+                    input.width,
+                )?;
+            }
+            input
+        }
+    };
+
+    let clustering_path = caches.clustering_path(&stems.numbers);
+    let source = stems.clustering_source.as_str();
+    let labels = match niche_cache::read_labels(&clustering_path, source, n_rows) {
+        Some(labels) => {
+            progress.info("[INFO] Reusing the cached partition");
+            labels
+        }
+        None => {
+            let labels = cluster(&input, n_rows, params)?;
+            niche_cache::write_labels(&clustering_path, source, &labels)?;
+            labels
+        }
+    };
+
+    Ok((input, labels))
 }
 
 fn compute_features(
@@ -647,16 +899,6 @@ fn save_embedding(
     Ok(())
 }
 
-/// Reduce the features and partition them into niches.
-fn reduce_and_cluster(
-    var_aggreg: &VarAggreg,
-    params: &NicheParams,
-) -> Result<(ClusterInput, Vec<u32>)> {
-    let input = project(var_aggreg, params)?;
-    let labels = cluster(&input, var_aggreg.n_rows, params)?;
-    Ok((input, labels))
-}
-
 /// The normalisations to compute, expanding `all`.
 fn expand(normalize: mosna_config::model::niche_params::Normalize) -> Vec<Normalize> {
     normalize
@@ -804,11 +1046,9 @@ mod tests {
     #[test]
     fn without_a_reducer_every_cell_still_gets_a_niche() {
         let var_aggreg = features(&["1", "1", "2", "2"]);
-        let (_, labels) = reduce_and_cluster(
-            &var_aggreg,
-            &params("reducer_type: none\nclusterer_type: gmm\nn_clusters: 2\n"),
-        )
-        .unwrap();
+        let settings = params("reducer_type: none\nclusterer_type: gmm\nn_clusters: 2\n");
+        let input = project(&var_aggreg, &settings).unwrap();
+        let labels = cluster(&input, var_aggreg.n_rows, &settings).unwrap();
         assert_eq!(labels.len(), var_aggreg.n_rows);
     }
 

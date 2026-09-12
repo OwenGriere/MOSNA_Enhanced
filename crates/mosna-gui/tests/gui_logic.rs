@@ -41,7 +41,6 @@ Assortativity:
   Randomization diagnostic: false
 Niche Analysis:
   Network directory: Default
-  Saving directory: niche_cluster
   Extension: parquet
   Patient column name: patient
   Sample column name: sample
@@ -143,12 +142,6 @@ fn keys_with_fixed_options_become_a_choice() {
 fn the_index_key_gets_a_mode_and_a_column() {
     let field = Field::for_key("Index", &Value::String("index".into()));
     assert!(matches!(field.kind, FieldKind::IndexPicker { .. }));
-}
-
-#[test]
-fn the_saving_directory_gets_a_browse_button() {
-    let field = Field::for_key("Saving directory", &Value::String("niche_cluster".into()));
-    assert!(matches!(field.kind, FieldKind::DirectoryPath { .. }));
 }
 
 #[test]
@@ -414,8 +407,8 @@ fn the_form_writes_back_into_the_configuration() {
         Some(&Value::String("delaunay".into()))
     );
     assert_eq!(
-        updated.get("Niche Analysis", "Saving directory"),
-        Some(&Value::String("niche_cluster".into()))
+        updated.get("Niche Analysis", "Processing method"),
+        Some(&Value::String("Aggregated nodes".into()))
     );
 }
 
@@ -685,7 +678,7 @@ fn images_are_collected_and_grouped_by_patient() {
 fn niche_images_are_found_where_step_three_writes_them() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path();
-    let save_dir = root.join("Niche_Analysis/Aggregation/niche_cluster");
+    let save_dir = root.join("Niche_Analysis/1");
     std::fs::create_dir_all(&save_dir).unwrap();
     std::fs::write(save_dir.join("Niches_Histogram.png"), b"").unwrap();
 

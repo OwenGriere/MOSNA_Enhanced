@@ -30,6 +30,25 @@ pub fn read_parquet_rows(path: impl AsRef<Path>) -> Result<usize> {
     Ok(open(path)?.metadata().file_metadata().num_rows() as usize)
 }
 
+/// One key from a parquet file's footer, if it carries that key.
+///
+/// The companion of
+/// [`fn@crate::write::write_parquet::write_parquet_with_metadata`]. Like the
+/// row count, this is answered from the footer alone: no column is decoded, so
+/// a reader deciding whether a cached file is the one it wants pays a seek
+/// rather than a read.
+pub fn read_parquet_key(path: impl AsRef<Path>, key: &str) -> Result<Option<String>> {
+    let path = path.as_ref();
+    let reader = open(path)?;
+    let Some(pairs) = reader.metadata().file_metadata().key_value_metadata() else {
+        return Ok(None);
+    };
+    Ok(pairs
+        .iter()
+        .find(|pair| pair.key == key)
+        .and_then(|pair| pair.value.clone()))
+}
+
 /// Read only `columns`, pushing the projection into the parquet reader.
 ///
 /// Missing columns are reported rather than silently skipped, so a typo in the

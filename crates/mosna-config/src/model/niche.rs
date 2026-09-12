@@ -69,7 +69,6 @@ impl NichesMethod {
 #[derive(Debug, Clone)]
 pub struct NicheAnalysisConfig {
     pub network_directory: NetworkDirectory,
-    pub saving_directory: String,
     pub extension: String,
     pub patient_column: String,
     pub sample_column: Option<String>,
@@ -99,7 +98,6 @@ impl NicheAnalysisConfig {
 
         Ok(Self {
             network_directory: NetworkDirectory::parse(get_opt_str(s, "Network directory")),
-            saving_directory: get_str(s, name, "Saving directory")?,
             extension: get_str(s, name, "Extension")?,
             patient_column: get_str(s, name, "Patient column name")?,
             sample_column: get_opt_str(s, "Sample column name"),

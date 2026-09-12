@@ -31,6 +31,13 @@ pub enum PipelineError {
         source: std::io::Error,
     },
 
+    #[error("failed to read {path}: {source}")]
+    Read {
+        path: std::path::PathBuf,
+        #[source]
+        source: std::io::Error,
+    },
+
     #[error("failed to write {path}: {source}")]
     Write {
         path: std::path::PathBuf,

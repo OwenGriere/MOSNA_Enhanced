@@ -19,6 +19,8 @@ pub mod clear_temporary;
 pub mod error;
 pub mod figures;
 pub mod niche_analysis;
+pub mod niche_cache;
+pub mod niche_runs;
 pub mod progress;
 pub mod report;
 pub mod tysserand_network;

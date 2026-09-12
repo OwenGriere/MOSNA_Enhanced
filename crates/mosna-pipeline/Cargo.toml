@@ -12,6 +12,7 @@ anyhow.workspace = true
 thiserror.workspace = true
 rayon.workspace = true
 serde_yaml.workspace = true
+serde_json.workspace = true
 arrow-schema = "56"
 
 mosna-config.workspace = true
@@ -19,6 +20,5 @@ mosna-io.workspace = true
 mosna-core.workspace = true
 
 [dev-dependencies]
-serde_json.workspace = true
 tempfile = "3"
 mosna-testkit.workspace = true

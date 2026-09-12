@@ -110,16 +110,6 @@ fn assert_assortativity(c: &Value) -> Result<()> {
 }
 
 fn assert_niche_analysis(c: &Value) -> Result<()> {
-    let saving_directory = match c.get("Saving directory") {
-        Some(Value::String(s)) => s.clone(),
-        _ => return Err(ConfigError::assertion("Saving directory need to be a str")),
-    };
-    if !is_valid_folder_name(&saving_directory) {
-        return Err(ConfigError::assertion(
-            "The saving folder name is not valid",
-        ));
-    }
-
     match c.get("Column to aggregate") {
         Some(Value::String(_)) | Some(Value::Sequence(_)) => {}
         _ => {
@@ -191,14 +181,6 @@ fn assert_niche_subsection(c: &Value) -> Result<()> {
         &["total", "niche", "obs", "clr", "niche&obs", "all"],
     )?;
     Ok(())
-}
-
-/// Port of `re.fullmatch(r"^[A-Za-z0-9_\- ]+$", name)`.
-fn is_valid_folder_name(name: &str) -> bool {
-    !name.is_empty()
-        && name
-            .chars()
-            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-' || c == ' ')
 }
 
 fn require_str(c: &Value, key: &str, msg: &str) -> Result<()> {
@@ -310,14 +292,6 @@ Number of shuffle: 500
         let bad = yaml.replace("Number of shuffle: 500", "Number of shuffle: 5.5");
         let err = assert_params(Analysis::Assortativity, &value(&bad)).unwrap_err();
         assert_eq!(err.to_string(), "Number of shuffle must be an integer");
-    }
-
-    #[test]
-    fn folder_name_validation_matches_the_python_regex() {
-        assert!(is_valid_folder_name("niche_cluster"));
-        assert!(is_valid_folder_name("run 2 - final"));
-        assert!(!is_valid_folder_name("../escape"));
-        assert!(!is_valid_folder_name(""));
     }
 
     /// Reduction is optional. `none` is a real choice, not a typo: the

@@ -1,0 +1,123 @@
+name: Release
+
+# Builds the binaries so nobody else has to.
+#
+# Compiling MOSNA on Windows needs the Microsoft C++ build tools — several
+# gigabytes, for a linker and a C compiler — because the default Rust target
+# links with `link.exe` and one dependency (`zstd-sys`) is C. Asking a biologist
+# to install Visual Studio before they can look at their own data is the wrong
+# trade, so the compiling happens here, once, and the result is downloaded.
+#
+# Cut a release by pushing a tag:
+#
+#     git tag v0.1.0 && git push origin v0.1.0
+#
+# The `workflow_dispatch` entry builds the same artefacts without publishing
+# anything, which is how to check the packaging before tagging.
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: build (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            archive: mosna-windows-x86_64.zip
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            archive: mosna-linux-x86_64.tar.gz
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: release-${{ matrix.target }}
+
+      # The GUI needs the X11 and Wayland development headers to link on Linux.
+      # Windows needs nothing beyond what the runner image already carries.
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libxkbcommon-dev libwayland-dev libxcb1-dev \
+            libx11-dev libxrandr-dev libxi-dev libgl1-mesa-dev
+
+      - name: Build
+        run: >
+          cargo build --release --target ${{ matrix.target }}
+          --bin mosna --bin mosna-gui --bin mosna-install
+
+      # Everything the installer needs, and nothing else: the three binaries,
+      # the starting configuration, the icon, the figure renderer's sources, and
+      # the installer script itself, which recognises an unpacked package and
+      # skips the build it would do in a checkout.
+      - name: Assemble the package
+        shell: bash
+        run: |
+          set -euo pipefail
+          out=package/mosna
+          mkdir -p "$out"
+          if [ "${{ runner.os }}" = "Windows" ]; then suffix=.exe; else suffix=; fi
+          for binary in mosna mosna-gui mosna-install; do
+            cp "target/${{ matrix.target }}/release/$binary$suffix" "$out/"
+          done
+          cp -r CONFIG assets python "$out/"
+          cp install.ps1 install.sh "$out/"
+          cp README.md "$out/"
+          echo "${{ github.ref_name }}" > "$out/VERSION"
+
+      - name: Archive (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: Compress-Archive -Path package/mosna -DestinationPath ${{ matrix.archive }}
+
+      - name: Archive (Linux)
+        if: runner.os == 'Linux'
+        run: tar -czf ${{ matrix.archive }} -C package mosna
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.archive }}
+          path: ${{ matrix.archive }}
+
+  publish:
+    name: publish
+    needs: build
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      # `bootstrap.ps1` asks the API for the latest release and takes the asset
+      # whose name matches `mosna-windows-*.zip`, so the names above are part of
+      # the contract and not decoration.
+      - name: Publish the release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            mosna-windows-x86_64.zip
+            mosna-linux-x86_64.tar.gz
+          generate_release_notes: true

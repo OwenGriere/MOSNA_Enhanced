@@ -96,13 +96,13 @@ impl mosna_pipeline::FigureSink for CountingFigures {
 }
 
 /// A configuration covering all three analyses, pointing at `raw`.
-fn config(saving_directory: &str) -> RawConfig {
-    config_with_reducer(saving_directory, "umap")
+fn config() -> RawConfig {
+    config_with_reducer("umap")
 }
 
 /// The same, with the dimensionality reduction of both niche sub-sections set
 /// to `reducer` — `none` sends the features straight to the clusterer.
-fn config_with_reducer(saving_directory: &str, reducer: &str) -> RawConfig {
+fn config_with_reducer(reducer: &str) -> RawConfig {
     let yaml = format!(
         "\
 Tysserand:
@@ -127,7 +127,6 @@ Assortativity:
   Randomization diagnostic: false
 Niche Analysis:
   Network directory: Default
-  Saving directory: {saving_directory}
   Extension: parquet
   Patient column name: patient
   Sample column name: sample
@@ -183,13 +182,7 @@ Niche Analysis:
 #[test]
 fn tysserand_writes_a_network_per_sample() {
     let workspace = Workspace::new(3, 36, &["A", "B"]);
-    tysserand_network(
-        &config("niche_cluster"),
-        workspace.root(),
-        &SilentProgress,
-        &NoFigures,
-    )
-    .unwrap();
+    tysserand_network(&config(), workspace.root(), &SilentProgress, &NoFigures).unwrap();
 
     let nodes = find_sample(workspace.net_dir(), "parquet", "patient", Some("sample")).unwrap();
     assert_eq!(nodes.len(), 3, "one nodes file per sample");
@@ -222,13 +215,7 @@ fn tysserand_writes_a_network_per_sample() {
 #[test]
 fn tysserand_leaves_no_cell_isolated() {
     let workspace = Workspace::new(1, 36, &["A"]);
-    tysserand_network(
-        &config("niche_cluster"),
-        workspace.root(),
-        &SilentProgress,
-        &NoFigures,
-    )
-    .unwrap();
+    tysserand_network(&config(), workspace.root(), &SilentProgress, &NoFigures).unwrap();
 
     let edges = read_table(
         workspace.net_dir().join("edges_patient-1_sample-1.parquet"),
@@ -251,13 +238,7 @@ fn tysserand_is_reproducible() {
     let workspace = Workspace::new(1, 25, &["A", "B"]);
     let mut runs = Vec::new();
     for _ in 0..2 {
-        tysserand_network(
-            &config("niche_cluster"),
-            workspace.root(),
-            &SilentProgress,
-            &NoFigures,
-        )
-        .unwrap();
+        tysserand_network(&config(), workspace.root(), &SilentProgress, &NoFigures).unwrap();
         let edges = read_table(
             workspace.net_dir().join("edges_patient-1_sample-1.parquet"),
             Extension::Parquet,
@@ -271,7 +252,7 @@ fn tysserand_is_reproducible() {
 #[test]
 fn tysserand_reports_a_missing_column() {
     let workspace = Workspace::new(1, 16, &["A"]);
-    let mut broken = config("niche_cluster");
+    let mut broken = config();
     broken.set(
         "Tysserand",
         "Phenotype column",
@@ -292,7 +273,7 @@ fn tysserand_reports_a_missing_column() {
 #[test]
 fn assortativity_writes_the_statistics_table() {
     let workspace = Workspace::new(3, 36, &["A", "B"]);
-    let configuration = config("niche_cluster");
+    let configuration = config();
     tysserand_network(
         &configuration,
         workspace.root(),
@@ -341,7 +322,7 @@ fn assortativity_writes_the_statistics_table() {
 #[test]
 fn assortativity_is_reproducible() {
     let workspace = Workspace::new(2, 25, &["A", "B"]);
-    let configuration = config("niche_cluster");
+    let configuration = config();
     tysserand_network(
         &configuration,
         workspace.root(),
@@ -374,7 +355,7 @@ fn assortativity_is_reproducible() {
 #[test]
 fn the_randomization_diagnostic_writes_nothing() {
     let workspace = Workspace::new(2, 25, &["A", "B"]);
-    let mut configuration = config("niche_cluster");
+    let mut configuration = config();
     tysserand_network(
         &configuration,
         workspace.root(),
@@ -409,13 +390,13 @@ fn the_randomization_diagnostic_writes_nothing() {
 // Step 3 — Niche analysis
 // ---------------------------------------------------------------------------
 
-/// Step 3 writes its results under `Niche_Analysis/Aggregation/<saving dir>`,
-/// records the parameters it ran with, and writes the niche label of every cell
-/// back into the network files.
+/// Step 3 writes its results under `Niche_Analysis/<run number>`, records the
+/// parameters it ran with, and writes the niche label of every cell back into
+/// the network files.
 #[test]
 fn niche_analysis_writes_results_and_labels_the_cells() {
     let workspace = Workspace::new(3, 36, &["A", "B", "C"]);
-    let configuration = config("run one");
+    let configuration = config();
     tysserand_network(
         &configuration,
         workspace.root(),
@@ -431,7 +412,7 @@ fn niche_analysis_writes_results_and_labels_the_cells() {
     )
     .unwrap();
 
-    let save_dir = workspace.root().join("Niche_Analysis/Aggregation/run one");
+    let save_dir = workspace.root().join("Niche_Analysis/1-1-1");
     assert!(save_dir.is_dir(), "{save_dir:?} was not created");
     assert!(
         save_dir.join("parameters.json").is_file(),
@@ -455,7 +436,7 @@ fn niche_analysis_writes_results_and_labels_the_cells() {
 #[test]
 fn niche_analysis_runs_without_a_reduction() {
     let workspace = Workspace::new(3, 36, &["A", "B", "C"]);
-    let configuration = config_with_reducer("no reduction", "none");
+    let configuration = config_with_reducer("none");
     tysserand_network(
         &configuration,
         workspace.root(),
@@ -471,9 +452,7 @@ fn niche_analysis_runs_without_a_reduction() {
     )
     .unwrap();
 
-    let save_dir = workspace
-        .root()
-        .join("Niche_Analysis/Aggregation/no reduction");
+    let save_dir = workspace.root().join("Niche_Analysis/1-0-1");
     assert!(save_dir.is_dir(), "{save_dir:?} was not created");
     assert!(save_dir.join("parameters.json").is_file());
 
@@ -495,13 +474,13 @@ fn the_cluster_scatter_is_drawn_only_when_there_is_a_projection() {
     let workspace = Workspace::new(2, 25, &["A", "B"]);
 
     let reduced = CountingFigures::default();
-    let configuration = config_with_reducer("reduced", "umap");
+    let configuration = config_with_reducer("umap");
     tysserand_network(&configuration, workspace.root(), &SilentProgress, &reduced).unwrap();
     niche_analysis(&configuration, workspace.root(), &SilentProgress, &reduced).unwrap();
     assert_eq!(reduced.embeddings(), 1, "the projection was not drawn");
 
     let unreduced = CountingFigures::default();
-    let configuration = config_with_reducer("unreduced", "none");
+    let configuration = config_with_reducer("none");
     niche_analysis(
         &configuration,
         workspace.root(),
@@ -516,13 +495,63 @@ fn the_cluster_scatter_is_drawn_only_when_there_is_a_projection() {
     );
 }
 
-/// The aggregated features are cached so a re-run does not recompute them,
-/// which is what `if (temp_dir / 'var_aggreg.parquet').exists()` does in the
-/// Python.
+/// Overwrite a cached partition, keeping the source it records.
+///
+/// The cache refuses a file that does not say what it was computed from, so a
+/// test that plants an answer has to plant a well-formed one — otherwise it
+/// would be testing the provenance check instead of the reuse.
+fn plant(partition: &Path, labels: &[u32]) {
+    let source = mosna_io::read::read_parquet::read_parquet_key(partition, "mosna.source")
+        .unwrap()
+        .expect("the cached partition records no source");
+    mosna_pipeline::niche_cache::write_labels(partition, &source, labels).unwrap();
+}
+
+/// The files in a cache directory, sorted.
+fn names_in(directory: &Path) -> Vec<String> {
+    let mut names: Vec<String> = std::fs::read_dir(directory)
+        .unwrap_or_else(|e| panic!("{directory:?}: {e}"))
+        .map(|entry| entry.unwrap().file_name().to_string_lossy().to_string())
+        .collect();
+    names.sort();
+    names
+}
+
+/// The run register, parsed.
+fn register_of(root: &Path) -> serde_json::Value {
+    serde_json::from_str(&std::fs::read_to_string(root.join("Niche_Analysis/runs.json")).unwrap())
+        .unwrap()
+}
+
+/// Records what the pipeline says, so a test can assert on a warning.
+#[derive(Default)]
+struct Spoken(std::sync::Mutex<Vec<String>>);
+
+impl mosna_pipeline::progress::Progress for Spoken {
+    fn info(&self, message: &str) {
+        self.0.lock().unwrap().push(message.to_string());
+    }
+    fn step(&self, _current: usize, _total: usize, _description: &str) {}
+}
+
+impl Spoken {
+    fn said(&self, fragment: &str) -> bool {
+        self.0
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|line| line.contains(fragment))
+    }
+}
+
+/// The aggregated features are cached so a re-run does not recompute them.
+///
+/// The file is named after the settings that produced it, in a directory of its
+/// own, so two configurations can each keep theirs.
 #[test]
 fn niche_analysis_caches_the_feature_table() {
     let workspace = Workspace::new(2, 25, &["A", "B"]);
-    let configuration = config("cached");
+    let configuration = config();
     tysserand_network(
         &configuration,
         workspace.root(),
@@ -538,8 +567,13 @@ fn niche_analysis_caches_the_feature_table() {
     )
     .unwrap();
 
-    let cache = workspace.net_dir().join("var_aggreg.parquet");
-    assert!(cache.is_file(), "the feature table was not cached");
+    let cache = workspace
+        .root()
+        .join("temp/var_aggreg/1/var_aggreg_1.parquet");
+    assert!(
+        cache.is_file(),
+        "the feature table was not cached at {cache:?}"
+    );
 
     let table = read_table(&cache, Extension::Parquet).unwrap();
     assert_eq!(table.n_rows(), 50, "two samples of twenty-five cells");
@@ -549,10 +583,323 @@ fn niche_analysis_caches_the_feature_table() {
     assert!(table.has_column("patient"));
 }
 
+/// The projection and the partition are cached too, side by side, told apart by
+/// the prefix their names carry.
+#[test]
+fn niche_analysis_caches_the_projection_and_the_partition() {
+    let workspace = Workspace::new(2, 25, &["A", "B"]);
+    let configuration = config();
+    tysserand_network(
+        &configuration,
+        workspace.root(),
+        &SilentProgress,
+        &NoFigures,
+    )
+    .unwrap();
+    niche_analysis(
+        &configuration,
+        workspace.root(),
+        &SilentProgress,
+        &NoFigures,
+    )
+    .unwrap();
+
+    // The files nest the way the stages do: a partition beside its projection,
+    // inside the aggregation that projection came from.
+    assert_eq!(
+        names_in(&workspace.root().join("temp/var_aggreg/1/1")),
+        vec!["clustering_1.parquet", "reduction_1.parquet"]
+    );
+
+    // The catalogue is three dictionaries, one per stage, each numbered.
+    let catalogue = register_of(workspace.root());
+
+    let features = &catalogue["1"];
+    assert_eq!(features["mode"], "aggregated");
+    assert_eq!(features["path"], "temp/var_aggreg/1/var_aggreg_1.parquet");
+    assert_eq!(features["parameters"]["order"], 1);
+    assert_eq!(features["parameters"]["column_to_aggregate"][0], "Cluster");
+    assert_eq!(features["sample"], "");
+
+    let reduction = &features["reduction"]["1"];
+    assert_eq!(reduction["id"], 1);
+    assert_eq!(reduction["path"], "temp/var_aggreg/1/1/reduction_1.parquet");
+    // The settings are spelled out, not encoded into the name.
+    assert_eq!(reduction["parameters"]["reducer_type"], "umap");
+    assert_eq!(reduction["parameters"]["dim_clust"], 2);
+    assert_eq!(reduction["parameters"]["metric"], "euclidean");
+    assert!(reduction["updated"].is_string());
+
+    let clustering = &reduction["clustering"]["1"];
+    assert_eq!(clustering["parameters"]["clusterer_type"], "gmm");
+    assert_eq!(clustering["parameters"]["n_clusters"], 3);
+    // A clusterer that does not read `resolution` does not record it: two
+    // identical GMM runs must not look different because it moved.
+    assert!(clustering["parameters"]["resolution"].is_null());
+    assert_eq!(
+        clustering["path"],
+        "temp/var_aggreg/1/1/clustering_1.parquet"
+    );
+}
+
+/// The whole point of the caches: a second run reads them instead of computing
+/// again. Proved by making the cached partition say something the clusterer
+/// never would, and finding it in the cells afterwards.
+#[test]
+fn a_second_run_reads_the_cached_partition() {
+    let workspace = Workspace::new(2, 25, &["A", "B"]);
+    let configuration = config();
+    tysserand_network(
+        &configuration,
+        workspace.root(),
+        &SilentProgress,
+        &NoFigures,
+    )
+    .unwrap();
+    niche_analysis(
+        &configuration,
+        workspace.root(),
+        &SilentProgress,
+        &NoFigures,
+    )
+    .unwrap();
+
+    let partition = workspace
+        .root()
+        .join("temp/var_aggreg/1/1/clustering_1.parquet");
+
+    // Every cell into niche 7 — an answer no clusterer would return here.
+    // Written through the cache's own writer so it keeps the recorded source:
+    // a partition that does not say what it came from is rejected, which is
+    // the subject of its own test below.
+    plant(&partition, &[7u32; 50]);
+
+    let spoken = Spoken::default();
+    niche_analysis(&configuration, workspace.root(), &spoken, &NoFigures).unwrap();
+    assert!(
+        spoken.said("Reusing the cached partition"),
+        "the cache was not read"
+    );
+
+    let nodes = find_sample(workspace.net_dir(), "parquet", "patient", Some("sample")).unwrap();
+    for path in &nodes {
+        let table = read_table(path, Extension::Parquet).unwrap();
+        let niches = table.f64_column("niches").unwrap();
+        assert!(niches.iter().all(|v| *v == 7.0), "{path:?} was recomputed");
+    }
+}
+
+/// A cache belongs to the cohort it was computed on. One that has the right
+/// name and the wrong height is from another cohort, and must be recomputed.
+#[test]
+fn a_cache_of_the_wrong_height_is_not_trusted() {
+    let workspace = Workspace::new(2, 25, &["A", "B"]);
+    let configuration = config();
+    tysserand_network(
+        &configuration,
+        workspace.root(),
+        &SilentProgress,
+        &NoFigures,
+    )
+    .unwrap();
+    niche_analysis(
+        &configuration,
+        workspace.root(),
+        &SilentProgress,
+        &NoFigures,
+    )
+    .unwrap();
+
+    let partition = workspace
+        .root()
+        .join("temp/var_aggreg/1/1/clustering_1.parquet");
+    plant(&partition, &[7u32; 3]);
+
+    let spoken = Spoken::default();
+    niche_analysis(&configuration, workspace.root(), &spoken, &NoFigures).unwrap();
+    assert!(!spoken.said("Reusing the cached partition"));
+
+    let nodes = find_sample(workspace.net_dir(), "parquet", "patient", Some("sample")).unwrap();
+    let table = read_table(&nodes[0], Extension::Parquet).unwrap();
+    assert!(table
+        .f64_column("niches")
+        .unwrap()
+        .iter()
+        .any(|v| *v != 7.0));
+}
+
+/// Changing the aggregation alone must invalidate *both* downstream caches.
+///
+/// `order` does not appear in the projection's or the partition's file name —
+/// each carries only its own settings — so both names are unchanged while the
+/// matrices behind them are not. This is the case the recorded source exists
+/// for, and the one that reused a stale partition until it was measured.
+#[test]
+fn changing_the_features_invalidates_the_projection_and_the_partition() {
+    let workspace = Workspace::new(2, 25, &["A", "B"]);
+    let first = config();
+    tysserand_network(&first, workspace.root(), &SilentProgress, &NoFigures).unwrap();
+    niche_analysis(&first, workspace.root(), &SilentProgress, &NoFigures).unwrap();
+
+    assert!(workspace
+        .root()
+        .join("temp/var_aggreg/1/1/reduction_1.parquet")
+        .is_file());
+
+    // A different neighbourhood order: different features, same settings
+    // everywhere downstream, and therefore the same two file names.
+    let mut second = config();
+    let mut aggregated = second
+        .get("Niche Analysis", "Aggregated nodes")
+        .unwrap()
+        .clone();
+    aggregated["order"] = serde_yaml::Value::String("2".into());
+    second.set("Niche Analysis", "Aggregated nodes", aggregated);
+
+    let spoken = Spoken::default();
+    niche_analysis(&second, workspace.root(), &spoken, &NoFigures).unwrap();
+
+    assert!(
+        !spoken.said("Reusing the cached projection"),
+        "the projection of the previous features was reused"
+    );
+    assert!(
+        !spoken.said("Reusing the cached partition"),
+        "the partition of the previous projection was reused"
+    );
+
+    // The second aggregation gets a directory of its own, and its projection
+    // starts again at one inside it — which is why nothing could collide.
+    assert_eq!(
+        names_in(&workspace.root().join("temp/var_aggreg")),
+        vec!["1", "2"]
+    );
+    assert_eq!(
+        names_in(&workspace.root().join("temp/var_aggreg/2/1")),
+        vec!["clustering_1.parquet", "reduction_1.parquet"]
+    );
+}
+
+/// Only the settings a stage reads count as its settings.
+///
+/// The fixture clusters with GMM, which never looks at `resolution`. Moving it
+/// changes nothing about the result, so it must not open a second run or a
+/// second cache file — otherwise every stray edit to an unused parameter would
+/// throw the cache away.
+#[test]
+fn a_parameter_the_stage_ignores_does_not_make_a_new_run() {
+    let workspace = Workspace::new(2, 25, &["A", "B"]);
+    let first = config();
+    tysserand_network(&first, workspace.root(), &SilentProgress, &NoFigures).unwrap();
+    niche_analysis(&first, workspace.root(), &SilentProgress, &NoFigures).unwrap();
+
+    let mut second = config();
+    let mut aggregated = second
+        .get("Niche Analysis", "Aggregated nodes")
+        .unwrap()
+        .clone();
+    aggregated["resolution"] = serde_yaml::Value::Number(0.9.into());
+    second.set("Niche Analysis", "Aggregated nodes", aggregated);
+
+    let spoken = Spoken::default();
+    niche_analysis(&second, workspace.root(), &spoken, &NoFigures).unwrap();
+
+    assert!(
+        spoken.said("already run as Niche_Analysis/1-1-1"),
+        "GMM does not read resolution, so this is the same run"
+    );
+    assert!(spoken.said("Reusing the cached partition"));
+    assert!(!workspace.root().join("Niche_Analysis/2-2-2").exists());
+    assert_eq!(
+        names_in(&workspace.root().join("temp/var_aggreg/1/1")),
+        vec!["clustering_1.parquet", "reduction_1.parquet"]
+    );
+}
+
+/// Runs are numbered, and the register says what each number holds.
+#[test]
+fn runs_are_numbered_and_registered() {
+    let workspace = Workspace::new(2, 25, &["A", "B"]);
+    let first = config();
+    tysserand_network(&first, workspace.root(), &SilentProgress, &NoFigures).unwrap();
+    niche_analysis(&first, workspace.root(), &SilentProgress, &NoFigures).unwrap();
+
+    // A different reduction is a different pipeline, so a different run.
+    let second = config_with_reducer("none");
+    niche_analysis(&second, workspace.root(), &SilentProgress, &NoFigures).unwrap();
+
+    // The second run aggregates identically, so it keeps aggregation 1. It has
+    // no reduction — the one permitted zero — and its partition is numbered
+    // among that branch's own, which is empty, so it is number one as well.
+    assert!(workspace.root().join("Niche_Analysis/1-1-1").is_dir());
+    assert!(workspace.root().join("Niche_Analysis/1-0-1").is_dir());
+
+    // One aggregation shared by both runs; only what hangs under it differs.
+    let catalogue = register_of(workspace.root());
+    assert_eq!(catalogue.as_object().unwrap().len(), 1);
+    assert_eq!(catalogue["1"]["mode"], "aggregated");
+
+    let reductions = catalogue["1"]["reduction"].as_object().unwrap();
+    assert_eq!(
+        reductions.len(),
+        2,
+        "the reduced branch and the unreduced one"
+    );
+    assert_eq!(reductions["1"]["parameters"]["reducer_type"], "umap");
+    assert_eq!(reductions["0"]["parameters"]["reducer_type"], "none");
+    // Nothing to name when there is no projection.
+    assert_eq!(reductions["0"]["path"], "");
+    assert_eq!(
+        reductions["0"]["clustering"]["1"]["path"],
+        "temp/var_aggreg/1/0/clustering_1.parquet"
+    );
+}
+
+/// Re-running the same settings warns, names the directory it is about to
+/// overwrite, and does not open a third one.
+#[test]
+fn identical_settings_reuse_their_run_directory_with_a_warning() {
+    let workspace = Workspace::new(2, 25, &["A", "B"]);
+    let configuration = config();
+    tysserand_network(
+        &configuration,
+        workspace.root(),
+        &SilentProgress,
+        &NoFigures,
+    )
+    .unwrap();
+    niche_analysis(
+        &configuration,
+        workspace.root(),
+        &SilentProgress,
+        &NoFigures,
+    )
+    .unwrap();
+
+    let spoken = Spoken::default();
+    niche_analysis(&configuration, workspace.root(), &spoken, &NoFigures).unwrap();
+
+    assert!(
+        spoken.said("already run as Niche_Analysis/1-1-1"),
+        "no warning naming the directory"
+    );
+    assert!(!workspace.root().join("Niche_Analysis/2-2-2").exists());
+
+    let catalogue = register_of(workspace.root());
+    assert_eq!(catalogue.as_object().unwrap().len(), 1);
+    let reductions = catalogue["1"]["reduction"].as_object().unwrap();
+    assert_eq!(reductions.len(), 1, "a projection was added");
+    assert_eq!(
+        reductions["1"]["clustering"].as_object().unwrap().len(),
+        1,
+        "a partition was added"
+    );
+}
+
 #[test]
 fn niche_analysis_is_reproducible() {
     let workspace = Workspace::new(2, 25, &["A", "B"]);
-    let configuration = config("repeat");
+    let configuration = config();
     tysserand_network(
         &configuration,
         workspace.root(),
@@ -580,21 +927,6 @@ fn niche_analysis_is_reproducible() {
     assert_eq!(runs[0], runs[1]);
 }
 
-#[test]
-fn niche_analysis_rejects_an_invalid_saving_directory() {
-    let workspace = Workspace::new(1, 16, &["A"]);
-    let mut broken = config("../escape");
-    tysserand_network(&broken, workspace.root(), &SilentProgress, &NoFigures).unwrap();
-    broken.set(
-        "Niche Analysis",
-        "Saving directory",
-        serde_yaml::Value::String("../escape".into()),
-    );
-
-    let err = niche_analysis(&broken, workspace.root(), &SilentProgress, &NoFigures).unwrap_err();
-    assert!(err.to_string().contains("not valid"), "{err}");
-}
-
 // ---------------------------------------------------------------------------
 // Clear temporary files
 // ---------------------------------------------------------------------------
@@ -602,13 +934,7 @@ fn niche_analysis_rejects_an_invalid_saving_directory() {
 #[test]
 fn clearing_removes_the_temporary_directory() {
     let workspace = Workspace::new(1, 16, &["A"]);
-    tysserand_network(
-        &config("niche_cluster"),
-        workspace.root(),
-        &SilentProgress,
-        &NoFigures,
-    )
-    .unwrap();
+    tysserand_network(&config(), workspace.root(), &SilentProgress, &NoFigures).unwrap();
     assert!(workspace.net_dir().is_dir());
 
     clear_temporary(workspace.root(), &SilentProgress).unwrap();

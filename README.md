@@ -63,17 +63,11 @@ works in full.
 `MOSNA_PYTHON` overrides the interpreter, which is what to set when working
 from a checkout against an environment of your own.
 
-```bash
-# Linux / macOS
-./install.sh                     # into ~/.local, with a desktop launcher
-./install.sh --prefix /usr/local # for everyone
-./install.sh --dry-run           # show what would happen
-./install.sh --uninstall         # remove it again
-```
+Nothing needs to be compiled: each release carries binaries for Windows and
+Linux, so neither the Rust toolchain nor a C++ compiler has to be installed.
 
 ```powershell
-# Windows, in one command — installs Rust if the machine has none,
-# fetches the sources, builds and installs.
+# Windows, in one command — downloads the latest release and installs it.
 irm https://raw.githubusercontent.com/OwenGriere/MOSNA_Enhanced/main/bootstrap.ps1 | iex
 ```
 
@@ -86,10 +80,40 @@ notepad bootstrap.ps1
 .\bootstrap.ps1
 ```
 
-From a clone you already have, skip the bootstrap and install directly:
+```bash
+# Linux / macOS, from a downloaded release or a checkout
+./install.sh                     # into ~/.local, with a desktop launcher
+./install.sh --no-figures        # smallest install: no Python environment
+./install.sh --prefix /usr/local # for everyone
+./install.sh --dry-run           # show what would happen
+./install.sh --uninstall         # remove it again
+```
+
+### How much it weighs
+
+| | size | needed for |
+|---|---:|---|
+| `mosna` and `mosna-gui` | 38 MB | everything |
+| Python environment (`xy`, numpy) | ~85 MB | the figures only |
+
+`--no-figures` / `-NoFigures` skips the second row. The analyses then run
+exactly as before and write all of their tables; only the images are left
+undrawn, and each run says so instead of failing. Installing the renderer later
+draws the figures the next run produces.
+
+Building from source is still supported (`-FromSource`, or running
+`install.sh` in a checkout) but costs considerably more: on Windows it needs the
+Microsoft C++ build tools, several gigabytes, because Rust links with
+`link.exe` and one dependency is C. `install.ps1` checks for them and says so
+before starting a build rather than failing in the middle of one.
+
+From an unpacked release or a clone you already have, skip the bootstrap and
+install directly. The script recognises which it is in: beside pre-built
+binaries it compiles nothing.
 
 ```powershell
 .\install.ps1                    # into %LOCALAPPDATA%\Programs\MOSNA
+.\install.ps1 -NoFigures         # smallest install
 .\install.ps1 -DryRun
 .\install.ps1 -Uninstall
 ```

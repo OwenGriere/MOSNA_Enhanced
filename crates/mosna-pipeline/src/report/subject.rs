@@ -168,6 +168,10 @@ mod tests {
     #[test]
     fn the_structural_directories_are_not_samples() {
         for name in [
+            // Runs are numbered, and a run directory is not a sample.
+            "1",
+            "2",
+            "17",
             "Aggregation",
             "Per_sample",
             "niche_cluster",

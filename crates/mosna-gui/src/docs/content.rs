@@ -490,7 +490,9 @@ fn workflow() -> Chapter {
                             "temp/net_dir_mosna/   nodes_*.parquet, edges_*.parquet",
                             "Tysserand_Network/    net_{patient}-{sample}.png and .html",
                             "Assortativity/        net_stat.csv and its figures",
-                            "Niche_Analysis/       niches, their composition, the projection",
+                            "Niche_Analysis/       one folder per run, named 1-1-1, plus runs.json",
+                            "temp/var_aggreg/      the aggregated features, kept between runs",
+                            "                      with the projections and partitions inside",
                             "report.html           every figure above, on one page",
                         ],
                     },
@@ -748,11 +750,6 @@ fn parameters() -> Chapter {
                     Block::Table {
                         headers,
                         rows: vec![
-                            Row::new("Saving directory", "string", T::new(
-                                "Name of the sub-folder for this run, so several analyses can \
-                                 live side by side.",
-                                "Nom du sous-dossier de ce calcul, pour que plusieurs analyses \
-                                 coexistent.")),
                             Row::new("Phenotype column", "string", T::new(
                                 "Column giving the phenotype of each cell, used to describe \
                                  what each niche is made of.",
@@ -975,11 +972,23 @@ fn results() -> Chapter {
                     Block::Callout {
                         kind: CalloutKind::Tip,
                         text: T::new(
-                            "Use a different 'Saving directory' for each set of settings you \
-                             try. Runs then sit side by side instead of overwriting one \
-                             another.",
-                            "Utilisez un « Saving directory » différent pour chaque jeu de \
-                             réglages essayé. Les calculs coexistent alors au lieu de s'écraser.",
+                            "A run's folder is named after the three things it was computed \
+                             from, and those three numbers are also where the files are: \
+                             1-2-3 was computed from temp/var_aggreg/1/2/clustering_3.parquet, \
+                             sitting beside the projection it came from, inside the \
+                             aggregation that projection came from. runs.json says what each \
+                             number was tried with. A zero in the middle means no reduction. \
+                             Changing one setting only renumbers the stages below it; the \
+                             others are read back instead of being computed again.",
+                            "Le dossier d'un calcul est nommé d'après les trois éléments dont \
+                             il sort, et ces trois numéros sont aussi l'emplacement des \
+                             fichiers : 1-2-3 vient de \
+                             temp/var_aggreg/1/2/clustering_3.parquet, posé à côté de la \
+                             projection dont il sort, dans l'agrégation dont cette projection \
+                             sort. runs.json dit avec quels réglages chaque numéro a été \
+                             essayé. Un zéro au milieu signifie aucune réduction. Changer un \
+                             réglage ne renumérote que les étages en dessous ; les autres sont \
+                             relus au lieu d'être recalculés.",
                         ),
                     },
                 ],

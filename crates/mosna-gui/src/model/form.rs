@@ -9,7 +9,6 @@ use crate::model::field::{Field, BROWSER_KEYS};
 /// Keys of the niche General tab, split into the two boxes the Python builds.
 const NICHE_GENERAL_KEYS: &[&str] = &[
     "Network directory",
-    "Saving directory",
     "Extension",
     "Patient column name",
     "Sample column name",
@@ -393,7 +392,6 @@ Tysserand:
   Edges method: delaunay
   Min neighbors: 3
 Niche Analysis:
-  Saving directory: run
   Processing method: Aggregated nodes
   Plot Network: true
   CPU: 8
@@ -435,7 +433,7 @@ Niche Analysis:
     #[test]
     fn leftover_keys_land_under_other() {
         let config = RawConfig::from_yaml_str(
-            "Niche Analysis:\n  Saving directory: run\n  A Stray Key: 1\n",
+            "Niche Analysis:\n  Processing method: Aggregated nodes\n  A Stray Key: 1\n",
         )
         .unwrap();
         let form = Form::from_config(&config);

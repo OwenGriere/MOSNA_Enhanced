@@ -67,12 +67,40 @@ impl<R: Run> Figures<R> {
     ///
     /// An empty queue starts nothing: `clear-temporary`, and a run that found
     /// no samples, both end up here with nothing to say.
+    ///
+    /// # An install without a renderer is not a failed analysis
+    ///
+    /// MOSNA can be installed without the Python environment that draws the
+    /// figures — it is the largest part of the install, and an analysis that
+    /// writes its tables is worth having on a machine that cannot spare it. On
+    /// such a machine every run would otherwise end in an error, having done
+    /// all of its work and written all of its results.
+    ///
+    /// So a renderer that is not there is reported and stepped over, while a
+    /// renderer that *is* there and fails is still an error: the first is a
+    /// choice the user made at install time, the second is something broken.
+    /// [`Renderer::check`] is what tells them apart — and it is asked only
+    /// after a render has already failed, so an ordinary run still starts one
+    /// interpreter and not two.
     pub fn render(&self) -> anyhow::Result<()> {
         if self.queue.is_empty() {
             return Ok(());
         }
 
-        self.renderer.render(self.queue.directory())?;
+        if let Err(failure) = self.renderer.render(self.queue.directory()) {
+            if let Err(reason) = self.renderer.check() {
+                // The queue is kept, so installing the renderer later leaves
+                // the next run able to draw what this one could not.
+                eprintln!(
+                    "[QT_INFO] Figures not drawn: {reason}\n\
+                     The analysis is complete and its tables are written. To \
+                     draw the figures, install MOSNA's renderer with install.ps1 \
+                     or install.sh, without -NoFigures / --no-figures."
+                );
+                return Ok(());
+            }
+            return Err(failure);
+        }
 
         // Only once the figures exist. A failed render keeps its queue: that
         // is the exact input that produced the failure, and the alternative is
@@ -180,18 +208,20 @@ mod tests {
     use std::path::PathBuf;
     use std::sync::Mutex;
 
+    /// A renderer that answers `check` and `render` separately, because the two
+    /// now mean different things: whether the renderer is installed at all, and
+    /// whether it managed to draw.
     struct Recording {
-        outcome: Outcome,
+        installed: bool,
+        draws: bool,
         calls: Mutex<Vec<(PathBuf, Vec<String>)>>,
     }
 
     impl Recording {
-        fn new(success: bool) -> Self {
+        fn new(installed: bool, draws: bool) -> Self {
             Self {
-                outcome: Outcome {
-                    success,
-                    message: "cannot draw 00000-embedding: no such colour".to_string(),
-                },
+                installed,
+                draws,
                 calls: Mutex::new(Vec::new()),
             }
         }
@@ -203,14 +233,35 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push((program.to_path_buf(), arguments.to_vec()));
-            Ok(self.outcome.clone())
+
+            let checking = arguments.iter().any(|a| a == "check");
+            Ok(if checking {
+                Outcome {
+                    success: self.installed,
+                    message: "No module named mosna_xy".to_string(),
+                }
+            } else {
+                Outcome {
+                    success: self.draws,
+                    message: "cannot draw 00000-embedding: no such colour".to_string(),
+                }
+            })
         }
     }
 
+    /// An installed renderer that draws what it is given.
     fn figures(working_dir: &Path, success: bool) -> Figures<Recording> {
         Figures::with_renderer(
             working_dir,
-            Renderer::with("python3", Recording::new(success)),
+            Renderer::with("python3", Recording::new(true, success)),
+        )
+    }
+
+    /// No renderer on the machine at all — an install made without it.
+    fn figures_without_renderer(working_dir: &Path) -> Figures<Recording> {
+        Figures::with_renderer(
+            working_dir,
+            Renderer::with("python3", Recording::new(false, false)),
         )
     }
 
@@ -349,6 +400,36 @@ mod tests {
 
         assert!(error.contains("00000-embedding"), "{error}");
         assert!(dir.path().join(".mosna-figures").is_dir());
+    }
+
+    /// An install without the renderer is a supported, smaller install: the
+    /// analysis is finished and its tables are written, so it must not be
+    /// reported as a failure.
+    #[test]
+    fn an_absent_renderer_is_not_a_failed_analysis() {
+        let dir = tempfile::tempdir().unwrap();
+        let figures = figures_without_renderer(dir.path());
+        figures.embedding(&[1.0, 2.0], 2, &[0], dir.path()).unwrap();
+
+        figures
+            .render()
+            .expect("a missing renderer is not an error");
+
+        // The queue survives, so installing the renderer later lets the next
+        // run draw what this one could not.
+        assert!(dir.path().join(".mosna-figures").is_dir());
+    }
+
+    /// A renderer that is installed and fails is still an error: that is
+    /// something broken, not something the user chose not to install.
+    #[test]
+    fn an_installed_renderer_that_fails_is_still_an_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let figures = figures(dir.path(), false);
+        figures.embedding(&[1.0, 2.0], 2, &[0], dir.path()).unwrap();
+
+        let error = figures.render().unwrap_err().to_string();
+        assert!(error.contains("00000-embedding"), "{error}");
     }
 
     /// The trait is used as `&dyn FigureSink` by every pipeline, so it has to
