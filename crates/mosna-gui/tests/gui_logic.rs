@@ -119,11 +119,22 @@ fn keys_with_fixed_options_become_a_choice() {
     let field = Field::for_key("clusterer_type", &Value::String("gmm".into()));
     match &field.kind {
         FieldKind::Choice { options, selected } => {
+            // The drop-down offers what `mosna-config` says is implemented, and
+            // nothing else. It used to list `ecg` and `hdbscan` as well: the
+            // first passed validation and failed inside the pipeline after the
+            // aggregation and the reduction had run, the second was refused by
+            // the validation the moment the user pressed the button.
             assert_eq!(
-                options,
-                &["leiden", "ecg", "spectral", "gmm", "hdbscan"],
-                "the clusterer list must match the Python"
+                options.as_slice(),
+                mosna_config::model::niche_params::IMPLEMENTED_CLUSTERERS,
+                "the drop-down offers a clusterer nothing implements"
             );
+            for absent in ["ecg", "hdbscan"] {
+                assert!(
+                    !options.iter().any(|o| o == absent),
+                    "`{absent}` is still offered"
+                );
+            }
             assert_eq!(options[*selected], "gmm");
         }
         other => panic!("expected a choice, got {other:?}"),
@@ -371,9 +382,19 @@ fn clustering_parameters_follow_the_chosen_algorithm() {
     assert!(!form.is_enabled("Niche Analysis", "Aggregated nodes", "resolution"));
     assert!(form.is_enabled("Niche Analysis", "Aggregated nodes", "n_clusters"));
 
-    form.set_clusterer("Niche Analysis", "Aggregated nodes", "hdbscan");
-    assert!(form.is_enabled("Niche Analysis", "Aggregated nodes", "min_cluster_size"));
-    assert!(!form.is_enabled("Niche Analysis", "Aggregated nodes", "n_clusters"));
+    form.set_clusterer("Niche Analysis", "Aggregated nodes", "spectral");
+    assert!(!form.is_enabled("Niche Analysis", "Aggregated nodes", "resolution"));
+    assert!(form.is_enabled("Niche Analysis", "Aggregated nodes", "n_clusters"));
+
+    // `min_cluster_size` belongs to hdbscan, which has no implementation and is
+    // no longer offered — so no clusterer the user can pick makes it editable.
+    for clusterer in mosna_config::model::niche_params::IMPLEMENTED_CLUSTERERS {
+        form.set_clusterer("Niche Analysis", "Aggregated nodes", clusterer);
+        assert!(
+            !form.is_enabled("Niche Analysis", "Aggregated nodes", "min_cluster_size"),
+            "`{clusterer}` offers a parameter nothing reads"
+        );
+    }
 }
 
 #[test]

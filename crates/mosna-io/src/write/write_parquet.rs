@@ -19,6 +19,65 @@ pub fn write_parquet(table: &Table, path: impl AsRef<Path>) -> Result<()> {
     write_parquet_with_metadata(table, path, &[])
 }
 
+/// The same, but never leaving a half-written file where the old one was.
+///
+/// # Why this exists
+///
+/// A parquet file is written from front to back and is unreadable until its
+/// footer lands, so anything that reads it while it is being written gets
+/// `ParquetError("External: end of file")`. That is not hypothetical for the
+/// nodes files: step 3 writes its niche labels back into them, and a second
+/// analysis — or the interface's network view — may be reading the very same
+/// file at that moment.
+///
+/// Writing beside the target and renaming over it closes the window. `rename`
+/// is atomic within a filesystem, so a reader sees either the whole previous
+/// file or the whole new one, never the seam between them.
+///
+/// This does not make concurrent *writers* safe: two runs that both read a file
+/// and both rename their own version over it still lose one of the two changes.
+/// That is what the caller's lock is for.
+pub fn write_parquet_atomic(table: &Table, path: impl AsRef<Path>) -> Result<()> {
+    write_parquet_atomic_with_metadata(table, path, &[])
+}
+
+/// The same, with key/value pairs recorded in the file's footer.
+///
+/// This is how the niche caches are written. They are shared: every run that
+/// only re-clusters reads the aggregation and the projection of every other, so
+/// one run can be writing the file another is reading — and a parquet is
+/// unreadable until its footer lands.
+pub fn write_parquet_atomic_with_metadata(
+    table: &Table,
+    path: impl AsRef<Path>,
+    metadata: &[(String, String)],
+) -> Result<()> {
+    let path = path.as_ref();
+    // Beside the target, so the rename stays within one filesystem — a
+    // temporary directory elsewhere would turn it into a copy, which is not
+    // atomic. The process id keeps two writers from sharing a scratch file.
+    // The process id and a counter keep two writers — in one process or in
+    // several — from sharing a scratch file and truncating each other's.
+    static SCRATCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let ticket = SCRATCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let scratch = path.with_extension(format!(
+        "parquet.{}-{ticket}.tmp",
+        std::process::id()
+    ));
+
+    write_parquet_with_metadata(table, &scratch, metadata)?;
+    match std::fs::rename(&scratch, path) {
+        Ok(()) => Ok(()),
+        Err(source) => {
+            let _ = std::fs::remove_file(&scratch);
+            Err(IoError::Write {
+                path: path.to_path_buf(),
+                source,
+            })
+        }
+    }
+}
+
 /// The same, with key/value pairs recorded in the file's footer.
 ///
 /// # What this is for

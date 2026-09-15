@@ -38,7 +38,7 @@ use std::path::{Path, PathBuf};
 
 use mosna_io::read::get_opener::read_table;
 use mosna_io::read::read_parquet::read_parquet_key;
-use mosna_io::write::write_parquet::write_parquet_with_metadata;
+use mosna_io::write::write_parquet::write_parquet_atomic_with_metadata;
 use mosna_io::{Extension, Table};
 
 use crate::error::{create_dir_all, Result};
@@ -46,6 +46,15 @@ use crate::niche_runs::{paths, RunNumbers};
 
 /// The footer key naming the stage a cached file was computed from.
 pub const SOURCE_KEY: &str = "mosna.source";
+
+/// The footer key carrying what the partition's graph looked like.
+///
+/// Recorded beside the labels because it is a property of the answer, not of
+/// the run that asked for it: a second run reading this partition from the
+/// cache has to be able to report the same floor as the run that computed it,
+/// and rebuilding the neighbour graph to find out would cost more than the
+/// partition did.
+pub const COMPONENTS_KEY: &str = "mosna.graph_components";
 
 /// Where the caches live, under a working directory.
 ///
@@ -152,7 +161,7 @@ pub fn read_matrix(path: &Path, source: &str, expected_rows: usize) -> Option<(V
 /// directly: its file is now called `var_aggreg_1`, which says nothing about
 /// what it holds, so the footer has to.
 pub fn write_table(path: &Path, source: &str, table: &Table) -> Result<()> {
-    write_parquet_with_metadata(table, path, &[(SOURCE_KEY.to_string(), source.to_string())])?;
+    write_parquet_atomic_with_metadata(table, path, &[(SOURCE_KEY.to_string(), source.to_string())])?;
     Ok(())
 }
 
@@ -166,12 +175,20 @@ pub fn write_matrix(path: &Path, source: &str, values: &[f64], width: usize) -> 
         })
         .collect();
     let table = Table::from_f64_columns(pairs)?;
-    write_parquet_with_metadata(
+    write_parquet_atomic_with_metadata(
         &table,
         path,
         &[(SOURCE_KEY.to_string(), source.to_string())],
     )?;
     Ok(())
+}
+
+/// What a cached partition says about the graph it came from, if anything.
+pub fn recorded_components(path: &Path) -> Option<usize> {
+    read_parquet_key(path, COMPONENTS_KEY)
+        .ok()
+        .flatten()
+        .and_then(|text| text.parse().ok())
 }
 
 /// A cached partition, on the same terms as [`fn@read_matrix`].
@@ -189,15 +206,25 @@ pub fn read_labels(path: &Path, source: &str, expected_rows: usize) -> Option<Ve
 
 /// Write a partition for the next run, recording what it was computed from.
 pub fn write_labels(path: &Path, source: &str, labels: &[u32]) -> Result<()> {
+    write_labels_with_components(path, source, labels, None)
+}
+
+/// The same, noting how many connected components the graph had.
+pub fn write_labels_with_components(
+    path: &Path,
+    source: &str,
+    labels: &[u32],
+    components: Option<usize>,
+) -> Result<()> {
     let table = Table::from_columns(vec![(
         "niches".to_string(),
         Table::u32_array(labels.iter().copied()),
     )])?;
-    write_parquet_with_metadata(
-        &table,
-        path,
-        &[(SOURCE_KEY.to_string(), source.to_string())],
-    )?;
+    let mut metadata = vec![(SOURCE_KEY.to_string(), source.to_string())];
+    if let Some(components) = components {
+        metadata.push((COMPONENTS_KEY.to_string(), components.to_string()));
+    }
+    write_parquet_atomic_with_metadata(&table, path, &metadata)?;
     Ok(())
 }
 
@@ -345,5 +372,99 @@ mod tests {
         std::fs::write(&path, b"not parquet at all").unwrap();
         assert!(read_matrix(&path, "x", 3).is_none());
         assert!(read_labels(&path, "x", 3).is_none());
+    }
+
+    /// Two runs that share an aggregation write the same cache file, and a
+    /// third reads it while they do. A parquet is unreadable until its footer
+    /// lands, so a reader arriving mid-write got
+    /// `ParquetError("External: end of file")` — and `load_or_compute_features`
+    /// propagated it, ending an analysis that had done nothing wrong.
+    ///
+    /// Sweeping a grid of parameters is exactly the case that hits this: every
+    /// run that only re-clusters shares the aggregation and the projection of
+    /// every other.
+    #[test]
+    fn a_cache_written_while_it_is_read_is_never_torn() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = std::sync::Arc::new(dir.path().join("var_aggreg_1.parquet"));
+        let source = "features";
+
+        // Something readable to begin with, so a reader always has a version.
+        write_labels(&path, source, &[0, 1, 2, 3]).unwrap();
+
+        let torn = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
+
+        let writers: Vec<_> = (0..3)
+            .map(|_| {
+                let (path, stop) = (path.clone(), stop.clone());
+                std::thread::spawn(move || {
+                    while !stop.load(std::sync::atomic::Ordering::Relaxed) {
+                        write_labels(&path, "features", &[0, 1, 2, 3]).unwrap();
+                    }
+                })
+            })
+            .collect();
+
+        let readers: Vec<_> = (0..3)
+            .map(|_| {
+                let (path, torn) = (path.clone(), torn.clone());
+                std::thread::spawn(move || {
+                    for _ in 0..400 {
+                        // The footer check, then the read — the two calls
+                        // `load_or_compute_features` makes.
+                        if came_from(&path, "features")
+                            && read_table(&*path, Extension::Parquet).is_err()
+                        {
+                            torn.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+                })
+            })
+            .collect();
+
+        for reader in readers {
+            reader.join().unwrap();
+        }
+        stop.store(true, std::sync::atomic::Ordering::Relaxed);
+        for writer in writers {
+            writer.join().unwrap();
+        }
+
+        assert_eq!(
+            torn.load(std::sync::atomic::Ordering::Relaxed),
+            0,
+            "a cache was read while it was being written"
+        );
+        // And no scratch file is left lying about.
+        let leftovers: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|name| name.ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "scratch files left: {leftovers:?}");
+    }
+
+    /// The graph's shape travels with the partition, so a run that reads it
+    /// back from the cache reports the same floor as the run that computed it.
+    #[test]
+    fn a_partition_remembers_the_graph_it_came_from() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("clu.parquet");
+
+        write_labels_with_components(&path, "projection", &[0, 1, 1], Some(7)).unwrap();
+        assert_eq!(read_labels(&path, "projection", 3).unwrap(), vec![0, 1, 1]);
+        assert_eq!(recorded_components(&path), Some(7));
+    }
+
+    /// A clusterer that partitions a matrix rather than a graph records none,
+    /// and a reader is told nothing rather than told zero.
+    #[test]
+    fn a_partition_without_a_graph_records_no_component_count() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("clu.parquet");
+        write_labels(&path, "projection", &[0, 1]).unwrap();
+        assert_eq!(recorded_components(&path), None);
     }
 }

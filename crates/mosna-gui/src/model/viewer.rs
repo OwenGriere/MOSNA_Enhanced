@@ -27,6 +27,93 @@ pub struct AnalysisImageSet {
 /// Image extensions the viewer displays.
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg"];
 
+/// How a figure is named in the gallery's tab strip.
+///
+/// # Why the file name is not enough
+///
+/// Every niche run writes the same three figures — `cluster_labels`,
+/// `Niches_Histogram`, `Niches_Aggregated_Composition_total` — into a directory
+/// named after the run. The gallery labelled each tab with the file stem alone,
+/// so a working directory holding a dozen runs offered a dozen identical tabs
+/// and no way to tell which run any of them belonged to. Comparing runs is the
+/// reason the numbering exists, and the gallery was the one place it did not
+/// appear.
+///
+/// The label is the path from the analysis directory down to the file, with the
+/// extension dropped: `1-1-3 · cluster_labels`, and for a per-sample run
+/// `2-1-1 · patient-1_chunk-8 · Niches_Histogram`.
+pub fn figure_label(analysis_dir: &Path, figure: &Path) -> String {
+    let stem = figure
+        .file_stem()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_default();
+
+    let Ok(relative) = figure.strip_prefix(analysis_dir) else {
+        return stem;
+    };
+    let mut parts: Vec<String> = relative
+        .parent()
+        .into_iter()
+        .flat_map(|parent| parent.components())
+        .map(|c| c.as_os_str().to_string_lossy().into_owned())
+        .collect();
+    parts.push(stem);
+    parts.join(" · ")
+}
+
+/// Order figures the way a reader counts, not the way a byte comparison does.
+///
+/// `1-1-10` sorts before `1-1-2` as text, so a gallery of a dozen runs came out
+/// in an order that looks like a mistake — and so did the report, and the file
+/// manager. Zero-padding the numbers would fix the sort and break every
+/// `niches_1-1-2` column already written into a cohort, so the ordering is
+/// fixed where it belongs: at the comparison.
+pub fn sort_figures(figures: &mut [PathBuf]) {
+    figures.sort_by_cached_key(|path| sort_key(path));
+}
+
+/// A path as a sequence of components, each split into its runs of digits and
+/// non-digits so that `10` compares as ten rather than as `"10"`.
+fn sort_key(path: &Path) -> Vec<Vec<Chunk>> {
+    path.components()
+        .map(|component| chunks(&component.as_os_str().to_string_lossy()))
+        .collect()
+}
+
+/// One stretch of a name: a number, or the text between numbers.
+///
+/// Numbers sort before text at the same position, which only matters for names
+/// that mix the two in different ways and never arises here.
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+enum Chunk {
+    Number(u64),
+    Text(String),
+}
+
+fn chunks(name: &str) -> Vec<Chunk> {
+    let mut chunks = Vec::new();
+    let mut rest = name;
+    while !rest.is_empty() {
+        let digits = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+        if digits > 0 {
+            // A number too long to hold is text: it is not a run number, and
+            // saturating would make two different names compare equal.
+            match rest[..digits].parse::<u64>() {
+                Ok(value) => chunks.push(Chunk::Number(value)),
+                Err(_) => chunks.push(Chunk::Text(rest[..digits].to_string())),
+            }
+            rest = &rest[digits..];
+            continue;
+        }
+        let text = rest
+            .find(|c: char| c.is_ascii_digit())
+            .unwrap_or(rest.len());
+        chunks.push(Chunk::Text(rest[..text].to_string()));
+        rest = &rest[text..];
+    }
+    chunks
+}
+
 /// Gather every figure under a working directory.
 ///
 /// # One corrected path
@@ -85,7 +172,7 @@ fn list_images(folder: &Path) -> Vec<PathBuf> {
         .map(|entry| entry.path())
         .filter(|path| path.is_file() && is_image(path))
         .collect();
-    images.sort();
+    sort_figures(&mut images);
     images
 }
 
@@ -104,7 +191,8 @@ fn walk_images(folder: &Path, depth: usize) -> Vec<PathBuf> {
         .map(|entry| entry.path())
         .filter(|path| path.is_dir())
         .collect();
-    directories.sort();
+    // By number, so `1-1-10` follows `1-1-2` rather than preceding it.
+    sort_figures(&mut directories);
 
     for directory in directories {
         images.extend(walk_images(&directory, depth - 1));
@@ -289,5 +377,86 @@ mod tests {
         let images = collect_analysis_images(dir.path());
         let patients: Vec<&String> = images.assortativity.patients.keys().collect();
         assert_eq!(patients, vec!["1", "3"]);
+    }
+
+    // -----------------------------------------------------------------------
+    // Telling one run's figures from another's
+    // -----------------------------------------------------------------------
+
+    /// Every run writes the same three file names into a directory of its own.
+    /// The gallery labelled each tab with the file stem alone, so a working
+    /// directory holding a dozen runs gave a dozen tabs called
+    /// `cluster_labels` — and nothing said which run any of them came from.
+    #[test]
+    fn a_figure_is_labelled_by_the_run_it_came_from() {
+        let root = Path::new("/w/Niche_Analysis");
+        assert_eq!(
+            figure_label(root, &root.join("1-1-3/cluster_labels.png")),
+            "1-1-3 · cluster_labels"
+        );
+        assert_eq!(
+            figure_label(
+                root,
+                &root.join("2-1-1/patient-1_chunk-8/Niches_Histogram.png")
+            ),
+            "2-1-1 · patient-1_chunk-8 · Niches_Histogram"
+        );
+    }
+
+    /// A figure sitting directly in the analysis directory has no run to name,
+    /// and keeps the plain stem it always had.
+    #[test]
+    fn a_figure_outside_any_run_keeps_its_own_name() {
+        let root = Path::new("/w/Assortativity");
+        assert_eq!(figure_label(root, &root.join("abundance.png")), "abundance");
+    }
+
+    /// A path from somewhere else entirely still yields something to click on
+    /// rather than an empty tab.
+    #[test]
+    fn a_figure_from_elsewhere_still_has_a_label() {
+        assert_eq!(
+            figure_label(Path::new("/w/Niche_Analysis"), Path::new("/other/x.png")),
+            "x"
+        );
+    }
+
+    // -----------------------------------------------------------------------
+    // Ordering
+    // -----------------------------------------------------------------------
+
+    /// `1-1-10` sorts before `1-1-2` as text, so a gallery of a dozen runs came
+    /// out in an order that looks like a mistake. The numbers are read as
+    /// numbers.
+    #[test]
+    fn runs_are_ordered_by_number_and_not_by_spelling() {
+        let mut paths: Vec<PathBuf> = ["1-1-2", "1-1-10", "1-1-1", "2-1-1", "1-2-1"]
+            .iter()
+            .map(|run| PathBuf::from(format!("/w/Niche_Analysis/{run}/cluster_labels.png")))
+            .collect();
+        sort_figures(&mut paths);
+
+        let order: Vec<String> = paths
+            .iter()
+            .map(|p| p.parent().unwrap().file_name().unwrap().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(order, vec!["1-1-1", "1-1-2", "1-1-10", "1-2-1", "2-1-1"]);
+    }
+
+    /// Ordinary names are still ordered the way they always were.
+    #[test]
+    fn names_that_are_not_runs_keep_their_usual_order() {
+        let mut paths: Vec<PathBuf> = ["b.png", "a.png", "c.png"]
+            .iter()
+            .map(|n| PathBuf::from(format!("/w/x/{n}")))
+            .collect();
+        sort_figures(&mut paths);
+        assert_eq!(
+            paths
+                .iter()
+                .map(|p| p.file_name().unwrap().to_string_lossy().into_owned())
+                .collect::<Vec<_>>(),
+            vec!["a.png", "b.png", "c.png"]
+        );
     }
 }

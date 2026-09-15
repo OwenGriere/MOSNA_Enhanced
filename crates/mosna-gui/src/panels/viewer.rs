@@ -84,6 +84,16 @@ fn images(app: &mut MosnaApp, ui: &mut egui::Ui) {
         AnalysisTab::Niches => &app.images.niches,
     };
 
+    // The directory the labels are relative to, so each tab names its run.
+    let analysis_dir = app
+        .working_dir()
+        .map(|dir| {
+            dir.join(match app.analysis_tab {
+                AnalysisTab::Assortativity => "Assortativity",
+                AnalysisTab::Niches => "Niche_Analysis",
+            })
+        })
+        .unwrap_or_default();
     let gallery = gallery_for(set, &mut app.selected_patient, ui);
 
     if gallery.is_empty() {
@@ -103,10 +113,10 @@ fn images(app: &mut MosnaApp, ui: &mut egui::Ui) {
         .show(ui, |ui| {
             ui.horizontal(|ui| {
                 for (index, path) in gallery.iter().enumerate() {
-                    let name = path
-                        .file_stem()
-                        .map(|s| s.to_string_lossy().into_owned())
-                        .unwrap_or_default();
+                    // Named by the run it came from, not by the file alone:
+                    // every niche run writes the same three file names, so a
+                    // dozen runs gave a dozen tabs called `cluster_labels`.
+                    let name = crate::model::viewer::figure_label(&analysis_dir, path);
                     let selected = index == app.selected_image;
                     if ui
                         .selectable_label(selected, label(&name, selected))

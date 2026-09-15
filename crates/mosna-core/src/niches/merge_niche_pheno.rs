@@ -5,7 +5,7 @@ use std::path::Path;
 use rayon::prelude::*;
 
 use mosna_io::read::get_opener::{read_table, read_table_columns, table_rows, Extension};
-use mosna_io::write::write_parquet::write_parquet;
+use mosna_io::write::write_parquet::write_parquet_atomic;
 use mosna_io::{SampleId, Table};
 
 use crate::error::{CoreError, Result};
@@ -79,8 +79,15 @@ pub fn merge_niche_pheno(
             let slice = &niches[offset..offset + length];
             table.set_column(column, Table::u32_array(slice.iter().copied()))?;
             // Always parquet: the network directory the pipelines write to is
-            // parquet, and every later step reads it as such.
-            write_parquet(&table, path)?;
+            // parquet, and every later step reads it as such — which
+            // `niche_cohort::require_writable_network` checks before any of
+            // this runs, so a CSV directory is refused rather than overwritten
+            // with parquet bytes under a `.csv` name.
+            //
+            // Atomically, because these files are shared: another analysis, or
+            // the interface's network view, may be reading this one right now,
+            // and a parquet file is unreadable until its footer lands.
+            write_parquet_atomic(&table, path)?;
             Ok(())
         })
 }

@@ -72,6 +72,16 @@ pub enum Command {
         /// Working directory, as chosen in the interface.
         #[arg(long = "working_dir")]
         working_dir: PathBuf,
+        /// Formats each figure is written in, comma-separated.
+        ///
+        /// Every figure is written as a PNG and as an interactive HTML, which
+        /// is about 5 MB per niche run. Sweeping a grid of parameters turns
+        /// that into gigabytes, and the HTML — a third of it — is for
+        /// inspecting one run rather than for comparing many. `--figure-formats
+        /// png` halves the output; the HTML can be redrawn later from the
+        /// embedding and the cached partition.
+        #[arg(long = "figure-formats", default_value = "png,html")]
+        figure_formats: String,
     },
 
     /// Step 2 — z-scored assortativity and mixing matrices.
@@ -81,6 +91,16 @@ pub enum Command {
         file: PathBuf,
         #[arg(long = "working_dir")]
         working_dir: PathBuf,
+        /// Formats each figure is written in, comma-separated.
+        ///
+        /// Every figure is written as a PNG and as an interactive HTML, which
+        /// is about 5 MB per niche run. Sweeping a grid of parameters turns
+        /// that into gigabytes, and the HTML — a third of it — is for
+        /// inspecting one run rather than for comparing many. `--figure-formats
+        /// png` halves the output; the HTML can be redrawn later from the
+        /// embedding and the cached partition.
+        #[arg(long = "figure-formats", default_value = "png,html")]
+        figure_formats: String,
     },
 
     /// Step 3 — identify spatial niches.
@@ -90,6 +110,16 @@ pub enum Command {
         file: PathBuf,
         #[arg(long = "working_dir")]
         working_dir: PathBuf,
+        /// Formats each figure is written in, comma-separated.
+        ///
+        /// Every figure is written as a PNG and as an interactive HTML, which
+        /// is about 5 MB per niche run. Sweeping a grid of parameters turns
+        /// that into gigabytes, and the HTML — a third of it — is for
+        /// inspecting one run rather than for comparing many. `--figure-formats
+        /// png` halves the output; the HTML can be redrawn later from the
+        /// embedding and the cached partition.
+        #[arg(long = "figure-formats", default_value = "png,html")]
+        figure_formats: String,
     },
 
     /// Remove the intermediate network files.
@@ -121,6 +151,24 @@ impl Command {
             Command::GenerateReport { .. } => "generate-report",
         }
     }
+
+    /// The figure formats this command was asked for.
+    ///
+    /// The two that draw nothing have none, and are never asked.
+    pub fn figure_formats(&self) -> Vec<String> {
+        let spelled = match self {
+            Command::TysserandNetwork { figure_formats, .. }
+            | Command::Assortativity { figure_formats, .. }
+            | Command::NicheAnalysis { figure_formats, .. } => figure_formats.as_str(),
+            Command::ClearTemporary { .. } | Command::GenerateReport { .. } => "",
+        };
+        spelled
+            .split(',')
+            .map(str::trim)
+            .filter(|format| !format.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
 }
 
 /// Execute a parsed command.
@@ -137,31 +185,51 @@ impl Command {
 /// through the same protocol, so the interface's bar keeps moving.
 pub fn run(cli: Cli) -> anyhow::Result<()> {
     let progress = StdoutProgress;
+    let formats = cli.command.figure_formats();
+    let sink = |working_dir: &std::path::Path| {
+        let borrowed: Vec<&str> = formats.iter().map(String::as_str).collect();
+        Figures::with_renderer(
+            working_dir,
+            mosna_xy::renderer::Renderer::detect().formats(&borrowed),
+        )
+    };
 
     match cli.command {
-        Command::TysserandNetwork { file, working_dir } => {
-            let config = mosna_config::get_config(&file)?;
-            let figures = Figures::new(&working_dir);
-            tysserand_network(&config, &working_dir, &progress, &figures)?;
+        Command::TysserandNetwork {
+            ref file,
+            ref working_dir,
+            ..
+        } => {
+            let config = mosna_config::get_config(file)?;
+            let figures = sink(working_dir);
+            tysserand_network(&config, working_dir, &progress, &figures)?;
             figures.render()?;
         }
-        Command::Assortativity { file, working_dir } => {
-            let config = mosna_config::get_config(&file)?;
-            let figures = Figures::new(&working_dir);
-            assortativity(&config, &working_dir, &progress, &figures)?;
+        Command::Assortativity {
+            ref file,
+            ref working_dir,
+            ..
+        } => {
+            let config = mosna_config::get_config(file)?;
+            let figures = sink(working_dir);
+            assortativity(&config, working_dir, &progress, &figures)?;
             figures.render()?;
         }
-        Command::NicheAnalysis { file, working_dir } => {
-            let config = mosna_config::get_config(&file)?;
-            let figures = Figures::new(&working_dir);
-            niche_analysis(&config, &working_dir, &progress, &figures)?;
+        Command::NicheAnalysis {
+            ref file,
+            ref working_dir,
+            ..
+        } => {
+            let config = mosna_config::get_config(file)?;
+            let figures = sink(working_dir);
+            niche_analysis(&config, working_dir, &progress, &figures)?;
             figures.render()?;
         }
-        Command::ClearTemporary { working_dir } => {
-            clear_temporary(&working_dir, &progress)?;
+        Command::ClearTemporary { ref working_dir } => {
+            clear_temporary(working_dir, &progress)?;
         }
-        Command::GenerateReport { working_dir } => {
-            generate_report(&working_dir, &progress)?;
+        Command::GenerateReport { ref working_dir } => {
+            generate_report(working_dir, &progress)?;
         }
     }
 
@@ -227,5 +295,83 @@ mod tests {
     fn the_command_line_definition_is_internally_consistent() {
         use clap::CommandFactory;
         Cli::command().debug_assert();
+    }
+
+    // -----------------------------------------------------------------------
+    // Choosing what the figures are written as
+    // -----------------------------------------------------------------------
+
+    /// Every figure is written twice, as a PNG and as an interactive HTML. One
+    /// niche run is about 5 MB of them, so a sweep of two hundred runs is a
+    /// gigabyte — and the HTML, which is a third of it, is for inspecting one
+    /// run rather than for comparing many.
+    ///
+    /// The renderer has always been able to write one format; nothing could ask
+    /// it to.
+    #[test]
+    fn an_analysis_can_be_asked_for_one_figure_format() {
+        let cli = Cli::parse_from([
+            "mosna",
+            "niche-analysis",
+            "--file",
+            "c.yaml",
+            "--working_dir",
+            "/w",
+            "--figure-formats",
+            "png",
+        ])
+        .unwrap();
+        assert_eq!(cli.command.figure_formats(), vec!["png"]);
+    }
+
+    /// Both, by default — which is what every run has always produced.
+    #[test]
+    fn both_formats_are_written_unless_told_otherwise() {
+        let cli = Cli::parse_from([
+            "mosna",
+            "niche-analysis",
+            "--file",
+            "c.yaml",
+            "--working_dir",
+            "/w",
+        ])
+        .unwrap();
+        assert_eq!(cli.command.figure_formats(), vec!["png", "html"]);
+    }
+
+    /// Several, comma-separated, the way the renderer already spells them.
+    #[test]
+    fn several_formats_are_comma_separated() {
+        let cli = Cli::parse_from([
+            "mosna",
+            "tysserand-network",
+            "--file",
+            "c.yaml",
+            "--working_dir",
+            "/w",
+            "--figure-formats",
+            "png,svg",
+        ])
+        .unwrap();
+        assert_eq!(cli.command.figure_formats(), vec!["png", "svg"]);
+    }
+
+    /// The commands that draw nothing do not take it.
+    #[test]
+    fn the_commands_that_draw_nothing_do_not_offer_the_flag() {
+        for name in WITHOUT_CONFIG {
+            assert!(
+                Cli::parse_from([
+                    "mosna",
+                    name,
+                    "--working_dir",
+                    "/w",
+                    "--figure-formats",
+                    "png"
+                ])
+                .is_err(),
+                "`{name}` accepted --figure-formats"
+            );
+        }
     }
 }

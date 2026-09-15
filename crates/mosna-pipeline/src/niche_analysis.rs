@@ -2,8 +2,6 @@
 
 use std::path::{Path, PathBuf};
 
-use rayon::prelude::*;
-
 use mosna_config::model::niche_params::{
     ClustererType, Metric as ConfigMetric, NicheParams, ReducerType,
 };
@@ -20,7 +18,7 @@ use mosna_core::niches::{
     Normalize,
 };
 use mosna_core::reduction::umap::{cluster_neighbours, umap, Metric, Scalar, UmapParams};
-use mosna_io::read::get_opener::{read_table, read_table_columns, table_rows, Extension};
+use mosna_io::read::get_opener::{read_table, Extension};
 use mosna_io::write::write_parquet::write_parquet;
 use mosna_io::{SampleId, Table};
 use serde_json::json;
@@ -29,7 +27,10 @@ use crate::assortativity::resolve_network_directory;
 use crate::error::{create_dir_all, PipelineError, Result};
 use crate::figures::FigureSink;
 use crate::niche_cache::{self, Caches};
-use crate::niche_runs::{Catalogue, RunNumbers};
+use crate::niche_cohort;
+use crate::niche_lock::RegisterLock;
+use crate::niche_record::{self, Outcome, PerSampleRecord, Record, Rendering};
+use crate::niche_runs::{Catalogue, PerSampleRun, RunNumbers, Status};
 use crate::progress::Progress;
 
 /// How the two processing methods are spelled in the run register.
@@ -58,6 +59,10 @@ pub fn niche_analysis(
         &settings.extension,
         working_dir,
     )?;
+    // Before anything is read, let alone written: this step writes the niche
+    // labels back into the nodes files and can only write parquet.
+    niche_cohort::require_writable_network(extension, &net_dir)?;
+    require_network(&settings.network_directory, &net_dir)?;
 
     let sample_column = settings.sample_column.as_deref();
     let data_index = mosna_io::make_data_index(
@@ -73,30 +78,23 @@ pub fn niche_analysis(
         });
     }
 
-    // Every file must carry the columns to aggregate before anything runs.
+    // Every file must carry the columns to aggregate before anything runs, and
+    // the same pass says what the cohort holds — see [`crate::niche_cohort`].
     //
     // Only those columns are read. This used to decode every column of every
     // nodes file in the cohort — gigabytes, to answer a question the parquet
     // footer already holds — and did it one file at a time. `read_table_columns`
     // raises the same `MissingColumn` naming the same file, so a configuration
-    // that names a column nothing has fails exactly as it did; the delimited
-    // formats still have to be parsed in full, which is why the check below is
-    // kept rather than left to the reader.
+    // that names a column nothing has fails exactly as it did.
     let aggregate_columns = settings.column_to_aggregate.to_vec();
-    let names: Vec<&str> = aggregate_columns.iter().map(String::as_str).collect();
-    data_index
-        .par_iter()
-        .map(|id| {
-            let path = net_dir.join(id.nodes_file_name(
-                &settings.patient_column,
-                sample_column,
-                extension.as_str(),
-            ));
-            let table = read_table_columns(&path, extension, &names)?;
-            table.require_columns(&names)?;
-            Ok(())
-        })
-        .collect::<Result<Vec<()>>>()?;
+    let digest = niche_cohort::verify_and_digest(
+        &net_dir,
+        extension,
+        &data_index,
+        &settings.patient_column,
+        sample_column,
+        &aggregate_columns,
+    )?;
     progress.info("[INFO] Verification and Convertion of the files");
 
     // When a single categorical column is aggregated, the feature vocabulary is
@@ -124,69 +122,75 @@ pub fn niche_analysis(
     // numbered directory can be read back into the settings behind it.
     let caches = Caches::under(working_dir);
     let niche_dir = working_dir.join("Niche_Analysis");
-    let mut catalogue = Catalogue::load(&niche_dir)?;
+
+    let cohort = Cohort {
+        fingerprint: digest.fingerprint.clone(),
+        network_directory: match &settings.network_directory {
+            mosna_config::model::assortativity::NetworkDirectory::Default => "Default".to_string(),
+            mosna_config::model::assortativity::NetworkDirectory::Custom(path) => path.clone(),
+        },
+        patient_column: settings.patient_column.clone(),
+        sample_column: settings.sample_column.clone(),
+    };
 
     if settings.processing_method.with_aggregation() {
-        let stems = Stems::of(
+        let stems = Stems::claim(
             &settings.aggregated,
             &aggregate_columns,
             &use_attributes,
-            &mut catalogue,
+            &cohort,
+            Some(digest.total_rows()),
+            &niche_dir,
             MODE_AGGREGATED,
             None,
-        );
+        )?;
         let save_dir = announce(&niche_dir, &stems, progress);
 
-        run_aggregated(
+        // The outcome is recorded either way: a run that dies half-way is
+        // marked failed rather than left claiming to be running, and the
+        // directory it created is taken back down.
+        let outcome = run_aggregated(
             &settings,
             config,
             &net_dir,
             extension,
             &data_index,
             &use_attributes,
+            digest.total_rows(),
             &save_dir,
             &caches,
             &stems,
+            &cohort,
+            MODE_AGGREGATED,
+            None,
             progress,
             figures,
-        )?;
-        catalogue.save()?;
+        );
+        finish(&niche_dir, &save_dir, &stems, outcome)?;
         progress.info("[INFO] Niches found for aggregated nodes");
     }
 
     if settings.processing_method.per_sample() {
-        // One set of caches per sample, resolved before anything runs: the
-        // numbers have to be handed out in one pass, or two samples would be
-        // given the same one and the second would overwrite the first.
-        let sample_column = settings.sample_column.as_deref();
-        let per_sample: Vec<Stems> = data_index
-            .iter()
-            .map(|id| {
-                Stems::of(
-                    &settings.per_sample,
-                    &aggregate_columns,
-                    &use_attributes,
-                    &mut catalogue,
-                    MODE_PER_SAMPLE,
-                    Some(&id.str_group(&settings.patient_column, sample_column)),
-                )
-            })
-            .collect();
-
+        // Each sample claims its own numbers when its turn comes, and is
+        // recorded as it finishes. They used to be handed out in one pass
+        // because the register was not written until the whole loop ended — so
+        // a failure on the third sample lost the record of the first two, along
+        // with the numbers naming their caches.
         run_per_sample(
             &settings,
             config,
             &net_dir,
             extension,
             &data_index,
+            &aggregate_columns,
             &use_attributes,
+            &digest,
             &niche_dir,
             &caches,
-            &per_sample,
+            &cohort,
             progress,
             figures,
         )?;
-        catalogue.save()?;
         progress.info("[INFO] Niches found for each samples");
     }
 
@@ -208,6 +212,12 @@ struct Stems {
     /// Whether a projection is computed at all; without one there is nothing to
     /// cache between the features and the partition.
     reduces: bool,
+    /// Whether the run's directory already existed when it was claimed.
+    repeat: bool,
+    /// The identity of the run — see [`crate::niche_record`].
+    fingerprint: String,
+    /// The settings it actually used, for `run.json`.
+    parameters: serde_json::Value,
     /// What each file must record about its own provenance, so that a stale one
     /// left behind by a deleted catalogue is recomputed rather than read.
     features_source: String,
@@ -215,29 +225,171 @@ struct Stems {
     clustering_source: String,
 }
 
+/// Refuse a network directory that is not there, saying which mistake it is.
+///
+/// # Why the two cases are told apart
+///
+/// `Network directory: Default` is `temp/net_dir_mosna`, which step 1 creates
+/// and `clear-temporary` removes — so a user who has just cleared the temporary
+/// data, or who has not run step 1 at all, arrives here. The failure used to be
+/// `failed to read .../temp/net_dir_mosna: No such file or directory (os error
+/// 2)`: a path they never chose, and no hint that the answer is to press the
+/// first button.
+///
+/// A custom directory that is absent is the opposite mistake — a path they
+/// typed — and telling them to run step 1 would send them the wrong way.
+fn require_network(
+    configured: &mosna_config::model::assortativity::NetworkDirectory,
+    net_dir: &Path,
+) -> Result<()> {
+    use mosna_config::model::assortativity::NetworkDirectory;
+
+    if net_dir.is_dir() {
+        return Ok(());
+    }
+    Err(PipelineError::invalid(match configured {
+        NetworkDirectory::Default => format!(
+            "there is no network to analyse at {}: run Step 1 (Tysserand) first, \
+             or point `Network directory` at a directory that already holds one",
+            net_dir.display()
+        ),
+        NetworkDirectory::Custom(_) => format!(
+            "the configured `Network directory` does not exist: {}",
+            net_dir.display()
+        ),
+    }))
+}
+
+/// What an aggregation is *of*, beside the settings that shape it.
+///
+/// # Why the cohort is part of a run's identity
+///
+/// `NicheParams::features_parameters` describes how the neighbourhoods are
+/// summarised — the statistics, the columns, the order. It cannot describe what
+/// they are summarised from: the network, and the way the cohort is split into
+/// samples. Two runs agreeing on every setting and disagreeing on either of
+/// those produce different features, and used to be given the same number, the
+/// same cache file and the same directory.
+///
+/// Recording them makes such a run a *new* aggregation rather than a
+/// re-execution of the old one. It is given its own number, so the results
+/// computed from the previous cohort keep theirs instead of being overwritten
+/// by results not comparable to them.
+#[derive(Debug, Clone)]
+pub struct Cohort {
+    /// The digest of [`crate::niche_cohort::verify_and_digest`].
+    pub fingerprint: String,
+    /// The network directory, as configured — `Default`, or the custom path.
+    pub network_directory: String,
+    pub patient_column: String,
+    pub sample_column: Option<String>,
+}
+
+impl Cohort {
+    /// The aggregation's full identity: its settings, and what it aggregated.
+    fn features_identity(
+        &self,
+        params: &NicheParams,
+        columns: &[String],
+        n_phenotypes: usize,
+    ) -> serde_json::Value {
+        let mut identity = params.features_parameters(columns, n_phenotypes);
+        let map = identity
+            .as_object_mut()
+            .expect("features_parameters builds an object");
+        map.insert("network_directory".into(), json!(self.network_directory));
+        map.insert("patient_column".into(), json!(self.patient_column));
+        map.insert("sample_column".into(), json!(self.sample_column));
+        map.insert("cohort".into(), json!(self.fingerprint));
+        identity
+    }
+}
+
+/// The identity of a set of niche settings, before any numbers are attached.
+///
+/// A per-sample run needs this on its own: it has to know which run it is
+/// before it starts claiming numbers for each of its samples, and those numbers
+/// differ from sample to sample while the run does not.
+#[derive(Debug, Clone)]
+struct Identity {
+    fingerprint: String,
+    /// The settings, flattened, for the register to display.
+    parameters: serde_json::Value,
+}
+
 impl Stems {
-    /// Resolve the numbers, allocating them against `catalogue` so that a run
-    /// already made keeps the files it already has.
-    fn of(
+    /// What these settings are, independently of which sample they are applied
+    /// to and of the numbers they will be given.
+    fn identity(
         params: &NicheParams,
         columns: &[String],
         use_attributes: &[String],
-        catalogue: &mut Catalogue,
+        cohort: &Cohort,
+        observations: Option<usize>,
+    ) -> Identity {
+        let features = cohort.features_identity(params, columns, use_attributes.len());
+        let reduction = (params.reducer_type != ReducerType::None)
+            .then(|| params.reduction_parameters(observations));
+        let clustering = params.clustering_parameters(observations);
+        Identity {
+            fingerprint: niche_record::fingerprint(&features, reduction.as_ref(), &clustering),
+            parameters: clustering_identity(params, &features, reduction.as_ref(), &clustering),
+        }
+    }
+
+    /// Claim the numbers for this run, publishing the claim before any work
+    /// starts.
+    ///
+    /// # Why the claim is published immediately
+    ///
+    /// The register used to be written only once a run had finished. Two runs
+    /// started together therefore both read an empty register, both were handed
+    /// `1-1-1`, and both wrote to that directory, that cache file and that
+    /// label column: one of the two was lost, without a word. Claiming under
+    /// [`RegisterLock`] and writing the register straight away is what makes a
+    /// working directory safe to share — which a sweep over a grid of
+    /// parameters needs before anything else.
+    ///
+    /// The lock is held for the claim alone, never for the computation, so runs
+    /// still overlap; what they cannot do is choose the same numbers.
+    #[allow(clippy::too_many_arguments)]
+    fn claim(
+        params: &NicheParams,
+        columns: &[String],
+        use_attributes: &[String],
+        cohort: &Cohort,
+        observations: Option<usize>,
+        niche_dir: &Path,
         mode: &str,
         sample: Option<&str>,
-    ) -> Self {
-        let features = params.features_parameters(columns, use_attributes.len());
+    ) -> Result<Self> {
+        let features = cohort.features_identity(params, columns, use_attributes.len());
         let reduces = params.reducer_type != ReducerType::None;
-        let reduction = reduces.then(|| params.reduction_parameters());
-        let clustering = params.clustering_parameters();
+        let reduction = reduces.then(|| params.reduction_parameters(observations));
+        let clustering = params.clustering_parameters(observations);
+        let fingerprint = niche_record::fingerprint(&features, reduction.as_ref(), &clustering);
 
-        let numbers = catalogue.resolve(
-            mode,
-            sample.unwrap_or_default(),
-            &features,
-            reduction.as_ref(),
-            &clustering,
-        );
+        let (numbers, repeat) = {
+            let _guard = RegisterLock::acquire(niche_dir)?;
+            let mut catalogue = Catalogue::load(niche_dir)?;
+            let numbers = catalogue.resolve_avoiding(
+                mode,
+                sample.unwrap_or_default(),
+                &features,
+                reduction.as_ref(),
+                &clustering,
+                // A directory that already holds a *different* run keeps it.
+                &|candidate: RunNumbers| {
+                    !niche_record::belongs_to_another(
+                        &niche_dir.join(candidate.directory()),
+                        &fingerprint,
+                    )
+                },
+            );
+            catalogue.save()?;
+            let repeat = niche_dir.join(numbers.directory()).is_dir();
+            (numbers, repeat)
+        };
 
         // The provenance each file records is the chain of settings behind it,
         // not its own alone. The directories already keep the stages apart; this
@@ -256,14 +408,53 @@ impl Stems {
             "clustering": clustering,
         }));
 
-        Self {
+        Ok(Self {
             numbers,
             reduces,
+            repeat,
+            fingerprint,
+            parameters: clustering_identity(params, &features, reduction.as_ref(), &clustering),
             features_source,
             reduction_source,
             clustering_source,
+        })
+    }
+
+    /// Record how this run ended, under the lock that guards the register.
+    fn complete(&self, niche_dir: &Path, status: Status) -> Result<()> {
+        let _guard = RegisterLock::acquire(niche_dir)?;
+        let mut catalogue = Catalogue::load(niche_dir)?;
+        catalogue.mark(self.numbers, status);
+        catalogue.save()
+    }
+}
+
+/// The settings a run actually used, flattened into one object.
+///
+/// What `run.json` records, and what the interface reads to compare two runs:
+/// the aggregation, the projection and the partition as they were resolved —
+/// `k_cluster` already capped by `n_neighbors`, the phenotype count filled in —
+/// rather than the configuration's two sub-sections, only one of which ran.
+fn clustering_identity(
+    params: &NicheParams,
+    features: &serde_json::Value,
+    reduction: Option<&serde_json::Value>,
+    clustering: &serde_json::Value,
+) -> serde_json::Value {
+    let mut flat = serde_json::Map::new();
+    for source in [Some(features), reduction, Some(clustering)].into_iter().flatten() {
+        if let Some(object) = source.as_object() {
+            for (key, value) in object {
+                flat.insert(key.clone(), value.clone());
+            }
         }
     }
+    if reduction.is_none() {
+        flat.insert("reducer_type".into(), json!("none"));
+    }
+    // Not part of any stage's identity, but part of what was asked for.
+    flat.insert("metric".into(), json!(params.metric.as_str()));
+    serde_json::Value::Object(flat)
 }
 
 /// A value as one line, for the parquet footers that record provenance.
@@ -276,26 +467,73 @@ fn compact(value: &serde_json::Value) -> String {
 /// `niches_1-0-2` rather than `niches`: the nodes files outlive any one run,
 /// and a fixed name would have each new set of settings replace the labels of
 /// the one before, leaving no way to compare two runs in the network view.
-fn niche_column(numbers: &RunNumbers) -> String {
-    format!("niches_{}", numbers.directory())
+///
+/// A per-sample run is named `ps-1`, not by the three numbers of one of its
+/// samples: every sample of such a run is aggregated separately and so carries
+/// different numbers, and naming the column after them left the run with no
+/// column its samples shared — nothing the network view could be asked to
+/// colour by.
+fn niche_column(run: &str) -> String {
+    format!("niches_{run}")
 }
 
-/// Where a run writes, saying so when it is about to overwrite an earlier one.
+/// Where a run writes, and what that means for what is already there.
 ///
-/// A run is identified by its three numbers, so settings that have been run
-/// before land on the directory they landed on before. The warning does not
-/// stop the run and does not ask anything: step 3 is driven by the interface,
-/// which reads this stream without being able to answer it, so a question here
-/// would hang rather than be answered.
+/// # Why the old warning was misleading
+///
+/// It said "these settings were already run; its results are being
+/// overwritten" whenever the directory existed — which was true of three quite
+/// different situations, and wrong about two of them. It fired for a run that
+/// only changed `normalize`, where nothing is overwritten and a figure is
+/// added; it fired for an empty directory left behind by a run that had failed,
+/// which held no results at all; and it fired when a recycled number had landed
+/// on somebody else's results, where "these settings" was simply false.
+///
+/// The first two no longer happen — a failed run takes its directory down, and
+/// a claim never lands on another run's results — so what is left is the one
+/// case the message was always meant for, and it now says which it is.
 fn announce(niche_dir: &Path, stems: &Stems, progress: &dyn Progress) -> PathBuf {
     let name = stems.numbers.directory();
     let save_dir = niche_dir.join(&name);
-    if save_dir.is_dir() {
+    if stems.repeat {
         progress.info(&format!(
-            "[WARN] These settings were already run as Niche_Analysis/{name}; its results are being overwritten"
+            "[INFO] The same settings were run before as Niche_Analysis/{name}; \
+             its results are being written again"
         ));
     }
     save_dir
+}
+
+/// Record how a run ended, and leave nothing behind if it failed.
+///
+/// A run creates its directory before it computes anything. One that died
+/// half-way used to leave that directory empty and unrecorded, so the next run
+/// handed the same number was told its settings had already been run — a
+/// warning about results that did not exist.
+fn finish(
+    niche_dir: &Path,
+    save_dir: &Path,
+    stems: &Stems,
+    outcome: Result<()>,
+) -> Result<()> {
+    match outcome {
+        Ok(()) => {
+            stems.complete(niche_dir, Status::Done)?;
+            Ok(())
+        }
+        Err(error) => {
+            stems.complete(niche_dir, Status::Failed)?;
+            // Only if it is empty: a run that failed after writing some of its
+            // figures leaves them, because deleting a user's results to tidy up
+            // after ourselves is the worse mistake.
+            if save_dir.is_dir()
+                && std::fs::read_dir(save_dir).is_ok_and(|mut entries| entries.next().is_none())
+            {
+                let _ = std::fs::remove_dir(save_dir);
+            }
+            Err(error)
+        }
+    }
 }
 
 /// Niches called once over the pooled cohort.
@@ -307,9 +545,13 @@ fn run_aggregated(
     extension: Extension,
     data_index: &[SampleId],
     use_attributes: &[String],
+    expected_rows: usize,
     save_dir: &Path,
     caches: &Caches,
     stems: &Stems,
+    cohort: &Cohort,
+    mode: &str,
+    sample: Option<&str>,
     progress: &dyn Progress,
     figures: &dyn FigureSink,
 ) -> Result<()> {
@@ -321,7 +563,6 @@ fn run_aggregated(
     progress.info("[PROCESS] Spatial Omic Features for all networks");
     progress.step(0, 3, "[PROCESS] Niches Analysis");
 
-    let expected_rows = cohort_rows(settings, net_dir, extension, data_index)?;
     let var_aggreg = load_or_compute_features(
         settings,
         net_dir,
@@ -337,7 +578,8 @@ fn run_aggregated(
     progress.step(1, 3, "[PROCESS] Niches Analysis");
 
     progress.info("[PROCESS] Reduction and Clustering of Spatial Niches");
-    let (input, labels) = cached_reduce_and_cluster(&var_aggreg, params, caches, stems, progress)?;
+    let (input, labels, components) =
+        cached_reduce_and_cluster(&var_aggreg, params, caches, stems, progress)?;
     progress.step(2, 3, "[PROCESS] Niches Analysis");
 
     draw_clusters(&input, &labels, save_dir, progress, figures)?;
@@ -360,14 +602,31 @@ fn run_aggregated(
     // write is restored here; it is the only way the `Plot Network` option can
     // function. The column carries the run's numbers, so a second run adds a
     // layer beside the first instead of overwriting it.
-    merge_niche_pheno(
+    {
+        // Held for the whole rewrite: every nodes file is read, given this
+        // run's column, and written back, and a second run doing the same at
+        // the same moment would lose one of the two columns.
+        let _nodes = RegisterLock::nodes(net_dir)?;
+        merge_niche_pheno(
+            net_dir,
+            data_index,
+            &settings.patient_column,
+            sample_column,
+            extension,
+            &niche_column(&stems.numbers.directory()),
+            &labels,
+        )?;
+    }
+
+    plot_networks(
+        settings,
         net_dir,
-        data_index,
-        &settings.patient_column,
-        sample_column,
         extension,
-        &niche_column(&stems.numbers),
+        data_index,
         &labels,
+        save_dir,
+        progress,
+        figures,
     )?;
 
     progress.info("[PROCESS] Generate Niches Composition");
@@ -387,9 +646,52 @@ fn run_aggregated(
         }
     }
 
+    // `parameters.json` is the configuration one would feed back to `mosna` to
+    // run this again; `run.json` is what this run actually was.
     save_config(save_dir, config.section(section::NICHE_ANALYSIS)?)?;
+    record_of(
+        stems,
+        cohort,
+        settings,
+        params,
+        mode,
+        sample,
+        Outcome::of(&labels, components),
+    )
+    .write(save_dir)?;
     progress.step(3, 3, "[PROCESS] Niches Analysis");
     Ok(())
+}
+
+/// What a run directory records about itself — see [`crate::niche_record`].
+#[allow(clippy::too_many_arguments)]
+fn record_of(
+    stems: &Stems,
+    cohort: &Cohort,
+    settings: &NicheAnalysisConfig,
+    params: &NicheParams,
+    mode: &str,
+    sample: Option<&str>,
+    result: Outcome,
+) -> Record {
+    Record {
+        numbers: stems.numbers,
+        run: stems.numbers.directory(),
+        fingerprint: stems.fingerprint.clone(),
+        mode: mode.to_string(),
+        sample: sample.map(str::to_string),
+        cohort: cohort.fingerprint.clone(),
+        network_directory: cohort.network_directory.clone(),
+        patient_column: cohort.patient_column.clone(),
+        sample_column: cohort.sample_column.clone(),
+        parameters: stems.parameters.clone(),
+        render: Rendering {
+            normalize: params.normalize.as_str().to_string(),
+            phenotype_column: settings.phenotype_column.clone(),
+        },
+        result,
+        status: Status::Done,
+    }
 }
 
 /// Niches called independently for each sample.
@@ -400,28 +702,250 @@ fn run_per_sample(
     net_dir: &Path,
     extension: Extension,
     data_index: &[SampleId],
+    aggregate_columns: &[String],
     use_attributes: &[String],
+    digest: &niche_cohort::CohortDigest,
     save_root: &Path,
     caches: &Caches,
-    per_sample: &[Stems],
+    cohort: &Cohort,
+    progress: &dyn Progress,
+    figures: &dyn FigureSink,
+) -> Result<()> {
+    let params = &settings.per_sample;
+    let total = data_index.len();
+    progress.step(0, total, "[PROCESS] Niches Analysis per sample");
+
+    // The run these samples belong to, claimed once. Its identity is the
+    // settings and the cohort — which every sample shares — so re-running the
+    // same per-sample settings lands on the same run, one directory and one
+    // label column, rather than on as many runs as there are samples.
+    // No single cohort height: the samples differ, and each clamps its own
+    // cluster count. The per-sample caches carry the exact identity.
+    let identity = Stems::identity(params, aggregate_columns, use_attributes, cohort, None);
+    let run = {
+        let _guard = RegisterLock::acquire(save_root)?;
+        let mut catalogue = Catalogue::load(save_root)?;
+        let id = catalogue.per_sample_run_avoiding(
+            &identity.fingerprint,
+            &identity.parameters,
+            &cohort.fingerprint,
+            // A `ps-` directory holding another run's results keeps them.
+            &|candidate: u32| {
+                !niche_record::belongs_to_another(
+                    &save_root.join(PerSampleRun::directory(candidate)),
+                    &identity.fingerprint,
+                )
+            },
+        );
+        catalogue.save()?;
+        id
+    };
+    let run_name = PerSampleRun::directory(run);
+    let run_dir = save_root.join(&run_name);
+    let repeat = run_dir.is_dir();
+
+    // Written before the first sample starts, so the directory is spoken for
+    // from the moment it is claimed rather than once something has finished in
+    // it — which is what a concurrent claim compares against.
+    let mut record = per_sample_record(
+        &run_name,
+        &identity,
+        cohort,
+        settings,
+        params,
+        Vec::new(),
+        Status::Running,
+    );
+    record.write(&run_dir)?;
+
+    if repeat {
+        progress.info(&format!(
+            "[INFO] The same settings were run before as Niche_Analysis/{run_name}; \
+             its results are being written again"
+        ));
+    }
+
+    // The loop is run as one fallible expression so that however it ends — a
+    // sample failing, the cohort finishing — the run's own status is recorded
+    // before the error is propagated. Returning straight out of the loop left a
+    // failed run saying `running` for ever, which a batch resuming from the
+    // register would read as work still in progress.
+    let mut done: Vec<String> = Vec::new();
+    let outcome = run_every_sample(
+        settings,
+        config,
+        net_dir,
+        extension,
+        data_index,
+        aggregate_columns,
+        use_attributes,
+        digest,
+        save_root,
+        &run_dir,
+        &run_name,
+        run,
+        caches,
+        cohort,
+        &mut done,
+        progress,
+        figures,
+    );
+
+    let status = if outcome.is_ok() {
+        Status::Done
+    } else {
+        Status::Failed
+    };
+    {
+        let _guard = RegisterLock::acquire(save_root)?;
+        let mut catalogue = Catalogue::load(save_root)?;
+        catalogue.mark_per_sample(run, status);
+        catalogue.save()?;
+    }
+    record.samples = done;
+    record.status = status;
+    record.write(&run_dir)?;
+
+    outcome
+}
+
+/// Every sample of a per-sample run, in turn.
+///
+/// Split out so that its caller has one fallible expression to record the
+/// outcome of; `done` collects the samples that finished, so a run that failed
+/// part-way still says which ones it covered.
+#[allow(clippy::too_many_arguments)]
+fn run_every_sample(
+    settings: &NicheAnalysisConfig,
+    config: &RawConfig,
+    net_dir: &Path,
+    extension: Extension,
+    data_index: &[SampleId],
+    aggregate_columns: &[String],
+    use_attributes: &[String],
+    digest: &niche_cohort::CohortDigest,
+    save_root: &Path,
+    run_dir: &Path,
+    run_name: &str,
+    run: u32,
+    caches: &Caches,
+    cohort: &Cohort,
+    done: &mut Vec<String>,
     progress: &dyn Progress,
     figures: &dyn FigureSink,
 ) -> Result<()> {
     let params = &settings.per_sample;
     let sample_column = settings.sample_column.as_deref();
     let total = data_index.len();
-    progress.step(0, total, "[PROCESS] Niches Analysis per sample");
 
     for (position, id) in data_index.iter().enumerate() {
-        let sample_stems = &per_sample[position];
-        // Each sample is its own attempt at every stage, so each has its own
-        // three numbers and its own directory beside the aggregated runs.
-        let save_dir = announce(save_root, sample_stems, progress);
-        create_dir_all(&save_dir)?;
+        // Each sample is still its own attempt at every stage, so each has its
+        // own three numbers and its own cache files — and claims them when its
+        // turn comes, so a failure part-way through the cohort does not lose the
+        // record of the samples already done. What they now share is the run
+        // they belong to.
+        let sample = id.str_group(&settings.patient_column, sample_column);
+        let rows = digest.rows[position];
+        let sample_stems = &Stems::claim(
+            params,
+            aggregate_columns,
+            use_attributes,
+            cohort,
+            Some(rows),
+            save_root,
+            MODE_PER_SAMPLE,
+            Some(&sample),
+        )?;
+        let save_dir = run_dir.join(&sample);
+        let outcome = run_one_sample(
+            settings,
+            config,
+            net_dir,
+            extension,
+            id,
+            use_attributes,
+            rows,
+            &save_dir,
+            caches,
+            sample_stems,
+            cohort,
+            &sample,
+            run_name,
+            progress,
+            figures,
+        );
+        // `finish` records the sample's own outcome and propagates a failure,
+        // so anything past this point is a sample that completed.
+        finish(save_root, &save_dir, sample_stems, outcome)?;
+        done.push(sample.clone());
+        {
+            let _guard = RegisterLock::acquire(save_root)?;
+            let mut catalogue = Catalogue::load(save_root)?;
+            catalogue.record_sample(run, &sample, sample_stems.numbers);
+            catalogue.save()?;
+        }
+        progress.step(position + 1, total, "[PROCESS] Niches Analysis per sample");
+    }
+
+    Ok(())
+}
+
+/// What a per-sample run's own directory records — see [`crate::niche_record`].
+fn per_sample_record(
+    run_name: &str,
+    identity: &Identity,
+    cohort: &Cohort,
+    settings: &NicheAnalysisConfig,
+    params: &NicheParams,
+    samples: Vec<String>,
+    status: Status,
+) -> PerSampleRecord {
+    PerSampleRecord {
+        run: run_name.to_string(),
+        fingerprint: identity.fingerprint.clone(),
+        cohort: cohort.fingerprint.clone(),
+        network_directory: cohort.network_directory.clone(),
+        patient_column: cohort.patient_column.clone(),
+        sample_column: cohort.sample_column.clone(),
+        parameters: identity.parameters.clone(),
+        render: Rendering {
+            normalize: params.normalize.as_str().to_string(),
+            phenotype_column: settings.phenotype_column.clone(),
+        },
+        samples,
+        status,
+    }
+}
+
+/// One sample of a per-sample run, from its features to its figures.
+///
+/// Split out so that [`fn@finish`] has a single fallible expression to wrap:
+/// the sample's outcome has to be recorded whether it succeeded or not.
+#[allow(clippy::too_many_arguments)]
+fn run_one_sample(
+    settings: &NicheAnalysisConfig,
+    config: &RawConfig,
+    net_dir: &Path,
+    extension: Extension,
+    id: &SampleId,
+    use_attributes: &[String],
+    expected_rows: usize,
+    save_dir: &Path,
+    caches: &Caches,
+    sample_stems: &Stems,
+    cohort: &Cohort,
+    sample: &str,
+    run_name: &str,
+    progress: &dyn Progress,
+    figures: &dyn FigureSink,
+) -> Result<()> {
+    let params = &settings.per_sample;
+    let sample_column = settings.sample_column.as_deref();
+    {
+        create_dir_all(save_dir)?;
         caches.prepare(&sample_stems.numbers)?;
 
         let single = std::slice::from_ref(id);
-        let expected_rows = cohort_rows(settings, net_dir, extension, single)?;
         let var_aggreg = load_or_compute_features(
             settings,
             net_dir,
@@ -434,26 +958,40 @@ fn run_per_sample(
             expected_rows,
             progress,
         )?;
-        let (input, labels) =
+        let (input, labels, components) =
             cached_reduce_and_cluster(&var_aggreg, params, caches, sample_stems, progress)?;
 
-        draw_clusters(&input, &labels, &save_dir, progress, figures)?;
+        draw_clusters(&input, &labels, save_dir, progress, figures)?;
         save_embedding(
             &input,
             &var_aggreg,
-            &save_dir,
+            save_dir,
             &settings.patient_column,
             sample_column,
             progress,
         )?;
-        merge_niche_pheno(
+        {
+            let _nodes = RegisterLock::nodes(net_dir)?;
+            merge_niche_pheno(
+                net_dir,
+                single,
+                &settings.patient_column,
+                sample_column,
+                extension,
+                &niche_column(run_name),
+                &labels,
+            )?;
+        }
+
+        plot_networks(
+            settings,
             net_dir,
-            single,
-            &settings.patient_column,
-            sample_column,
             extension,
-            &niche_column(&sample_stems.numbers),
+            single,
             &labels,
+            save_dir,
+            progress,
+            figures,
         )?;
 
         if let Some(phenotype_column) = settings.phenotype_column.as_deref() {
@@ -475,41 +1013,30 @@ fn run_per_sample(
                         create_dir_all(&nested)?;
                         nested
                     } else {
-                        save_dir.clone()
+                        save_dir.to_path_buf()
                     };
                 figures.niche_composition(&composition, &labels, normalize, &target)?;
             }
         }
 
-        save_config(&save_dir, config.section(section::NICHE_ANALYSIS)?)?;
-        progress.step(position + 1, total, "[PROCESS] Niches Analysis per sample");
+        save_config(save_dir, config.section(section::NICHE_ANALYSIS)?)?;
+        let mut record = record_of(
+            sample_stems,
+            cohort,
+            settings,
+            params,
+            MODE_PER_SAMPLE,
+            Some(sample),
+            Outcome::of(&labels, components),
+        );
+        // Named by the run it belongs to, not by the numbers of its own caches:
+        // those differ from sample to sample, and what a reader wants to know
+        // is which run this directory is part of.
+        record.run = run_name.to_string();
+        record.write(save_dir)?;
     }
 
     Ok(())
-}
-
-/// How many cells the cohort holds, from the files' own row counts.
-///
-/// Read from the parquet footers rather than by decoding the tables: this is
-/// asked before anything is computed, purely to know what height a cached
-/// result should have.
-fn cohort_rows(
-    settings: &NicheAnalysisConfig,
-    net_dir: &Path,
-    extension: Extension,
-    data_index: &[SampleId],
-) -> Result<usize> {
-    let sample_column = settings.sample_column.as_deref();
-    let mut total = 0;
-    for id in data_index {
-        let path = net_dir.join(id.nodes_file_name(
-            &settings.patient_column,
-            sample_column,
-            extension.as_str(),
-        ));
-        total += table_rows(&path, extension)?;
-    }
-    Ok(total)
 }
 
 /// The aggregated feature table, from cache when it is already on disk.
@@ -529,19 +1056,30 @@ fn load_or_compute_features(
     let cache: PathBuf = caches.features_path(&stems.numbers);
     let sample_column = settings.sample_column.as_deref();
 
-    if cache.is_file() && niche_cache::came_from(&cache, &stems.features_source) {
-        let table = read_table(&cache, Extension::Parquet)?;
-        let cached = VarAggreg::from_table(&table, &settings.patient_column, sample_column)?;
+    // A cache that cannot be read is a miss, not a failure — the same terms
+    // `niche_cache::read_matrix` and `read_labels` are on. Propagating the error
+    // ended an analysis that had done nothing wrong: the file could be mid-write
+    // by another run sharing this aggregation, or left over from a version that
+    // wrote something else. Either way the answer is to compute it again.
+    let cached = (cache.is_file() && niche_cache::came_from(&cache, &stems.features_source))
+        .then(|| read_table(&cache, Extension::Parquet).ok())
+        .flatten()
+        .and_then(|table| {
+            VarAggreg::from_table(&table, &settings.patient_column, sample_column).ok()
+        });
+
+    if let Some(cached) = cached {
         // The name already carries the settings, so what is left to check is
         // the cohort: a working directory whose networks changed has the same
         // settings and a different answer. The width is checked too, because it
         // costs nothing and a file of the right height and the wrong shape is
         // the one mistake this would not otherwise catch.
         //
-        // One block of columns per statistic; the aggregation supports at most
-        // the mean and the standard deviation.
-        let n_statistics = params.stat_names.len().clamp(1, 2);
-        let expected_columns = use_attributes.len() * n_statistics;
+        // One block of columns per statistic. Which statistics are taken is
+        // settled by `NicheParams`, which reconciles `stat_funcs` with
+        // `stat_names`; counting `stat_names` here would expect a two-block
+        // table from a configuration that asked for one.
+        let expected_columns = use_attributes.len() * params.n_statistics();
         if cached.n_columns() == expected_columns && cached.n_rows == expected_rows {
             progress.info("[INFO] Reusing the cached aggregated features");
             return Ok(cached);
@@ -572,7 +1110,7 @@ fn cached_reduce_and_cluster(
     caches: &Caches,
     stems: &Stems,
     progress: &dyn Progress,
-) -> Result<(ClusterInput, Vec<u32>)> {
+) -> Result<(ClusterInput, Vec<u32>, Option<usize>)> {
     let n_rows = var_aggreg.n_rows;
     let reduction_path = caches.reduction_path(&stems.numbers);
 
@@ -608,19 +1146,27 @@ fn cached_reduce_and_cluster(
 
     let clustering_path = caches.clustering_path(&stems.numbers);
     let source = stems.clustering_source.as_str();
-    let labels = match niche_cache::read_labels(&clustering_path, source, n_rows) {
+    let (labels, components) = match niche_cache::read_labels(&clustering_path, source, n_rows) {
         Some(labels) => {
             progress.info("[INFO] Reusing the cached partition");
-            labels
+            // The graph's shape travels with the partition, so a run reading it
+            // back reports the same floor as the run that computed it.
+            let components = niche_cache::recorded_components(&clustering_path);
+            (labels, components)
         }
         None => {
-            let labels = cluster(&input, n_rows, params)?;
-            niche_cache::write_labels(&clustering_path, source, &labels)?;
-            labels
+            let (labels, components) = cluster(&input, n_rows, params, progress)?;
+            niche_cache::write_labels_with_components(
+                &clustering_path,
+                source,
+                &labels,
+                components,
+            )?;
+            (labels, components)
         }
     };
 
-    Ok((input, labels))
+    Ok((input, labels, components))
 }
 
 fn compute_features(
@@ -640,7 +1186,7 @@ fn compute_features(
         use_attributes: use_attributes.to_vec(),
         make_onehot: settings.make_onehot(),
         order: params.order,
-        stat_names: params.stat_names.clone(),
+        stat_names: params.effective_stat_names(),
         var_sep: " ".to_string(),
         add_sample_info: true,
     };
@@ -770,8 +1316,15 @@ fn undirected_knn_edges(indices: &[Vec<usize>]) -> Vec<(usize, usize, f64)> {
 const CLUSTER_SEED: u64 = 0;
 
 /// Partition the rows into niches.
-fn cluster(input: &ClusterInput, n_rows: usize, params: &NicheParams) -> Result<Vec<u32>> {
+fn cluster(
+    input: &ClusterInput,
+    n_rows: usize,
+    params: &NicheParams,
+    progress: &dyn Progress,
+) -> Result<(Vec<u32>, Option<usize>)> {
     let (values, width) = (input.values.as_slice(), input.width);
+    // Only a clusterer that partitions a graph has components to report.
+    let mut components: Option<usize> = None;
 
     let labels = match params.clusterer_type {
         ClustererType::Gmm => {
@@ -805,6 +1358,24 @@ fn cluster(input: &ClusterInput, n_rows: usize, params: &NicheParams) -> Result<
             let graph =
                 cluster_neighbours(&narrowed, n_rows, width, k, Metric::Euclidean, CLUSTER_SEED);
             let edges = undirected_knn_edges(&graph.indices);
+
+            // What the graph is made of, before it is partitioned.
+            //
+            // Leiden cannot merge two cells that no path connects, so the
+            // number of connected components is a floor on the niche count
+            // that no `resolution` can go below. On a cohort of 39 290 cells
+            // that floor was 418: sweeping `resolution` over five orders of
+            // magnitude moved the answer from 418 to 609 and never said why it
+            // would not go lower. The number is cheap — one pass over edges
+            // that have just been built — and it is the difference between a
+            // sweep that looks broken and one that can be read.
+            components = Some(connected_components(n_rows, &edges));
+            if let Some(count) = components {
+                progress.info(&format!(
+                    "[INFO] The clustering graph has {count} connected component(s): \
+                     no resolution can find fewer niches than that"
+                ));
+            }
             leiden(n_rows, &edges, params.resolution, CLUSTER_SEED)
         }
         ClustererType::Spectral => spectral_clustering(
@@ -827,7 +1398,127 @@ fn cluster(input: &ClusterInput, n_rows: usize, params: &NicheParams) -> Result<
         }
     };
 
-    Ok(labels)
+    Ok((labels, components))
+}
+
+/// How many connected components `edges` leaves `n_rows` nodes in.
+///
+/// Union-find with path halving: the edges are already in memory and this is
+/// one pass over them, which is nothing next to the partition that follows.
+fn connected_components(n_rows: usize, edges: &[(usize, usize, f64)]) -> usize {
+    let mut parent: Vec<usize> = (0..n_rows).collect();
+
+    fn find(parent: &mut [usize], mut node: usize) -> usize {
+        while parent[node] != node {
+            parent[node] = parent[parent[node]];
+            node = parent[node];
+        }
+        node
+    }
+
+    for &(a, b, _) in edges {
+        let (ra, rb) = (find(&mut parent, a), find(&mut parent, b));
+        if ra != rb {
+            parent[ra] = rb;
+        }
+    }
+    (0..n_rows).filter(|&node| find(&mut parent, node) == node).count()
+}
+
+/// Draw each sample's network with its cells coloured by niche.
+///
+/// # Why this was missing
+///
+/// `Plot Network`, `X coordinates column for niches` and `Y coordinates column
+/// for niches` are three settings the interface offers, the configuration
+/// carries, and nothing read: `NicheAnalysisConfig::should_plot_network` was
+/// called from nowhere in the repository. Turning the option on produced no
+/// figure and no message.
+///
+/// The Python could not have drawn it either — it asked `generate_cmap(net_dir,
+/// 'niches', …)` for a column its aggregated path never wrote. That column is
+/// written here, so the figure this option promises can finally be drawn from
+/// it.
+///
+/// The labels go in as text because that is what the figure treats as a
+/// vocabulary: a niche is a category, and numbering them does not make the
+/// distance between niche 1 and niche 7 mean anything.
+#[allow(clippy::too_many_arguments)]
+fn plot_networks(
+    settings: &NicheAnalysisConfig,
+    net_dir: &Path,
+    extension: Extension,
+    data_index: &[SampleId],
+    labels: &[u32],
+    save_dir: &Path,
+    progress: &dyn Progress,
+    figures: &dyn FigureSink,
+) -> Result<()> {
+    if !settings.plot_network {
+        return Ok(());
+    }
+    let (Some(x_column), Some(y_column)) =
+        (settings.x_column.as_deref(), settings.y_column.as_deref())
+    else {
+        // Said rather than skipped in silence: the option is on, so the user is
+        // expecting a figure, and the reason they are not getting one is a
+        // setting two lines below the one they turned on.
+        progress.info(
+            "[INFO] Plot Network is on but the niche coordinates columns are not set; \
+             no network is drawn",
+        );
+        return Ok(());
+    };
+
+    let sample_column = settings.sample_column.as_deref();
+    let mut offset = 0usize;
+    for id in data_index {
+        let nodes = read_table(
+            net_dir.join(id.nodes_file_name(
+                &settings.patient_column,
+                sample_column,
+                extension.as_str(),
+            )),
+            extension,
+        )?;
+        let coords = nodes.coords(x_column, y_column)?;
+        let edges = read_table(
+            net_dir.join(id.edges_file_name(
+                &settings.patient_column,
+                sample_column,
+                extension.as_str(),
+            )),
+            extension,
+        )?;
+        let pairs = edges.edges()?;
+
+        // This sample's slice of the cohort's labels, in the order the features
+        // were stacked — the same split `merge_niche_pheno` makes.
+        let end = offset + nodes.n_rows();
+        let niches: Vec<String> = labels
+            .get(offset..end)
+            .ok_or_else(|| {
+                PipelineError::invalid(format!(
+                    "{} niche labels for a cohort of at least {end} cells",
+                    labels.len()
+                ))
+            })?
+            .iter()
+            .map(|niche| niche.to_string())
+            .collect();
+        offset = end;
+
+        figures.network(
+            id,
+            &settings.patient_column,
+            sample_column,
+            &coords,
+            &pairs,
+            &niches,
+            save_dir,
+        )?;
+    }
+    Ok(())
 }
 
 /// Scatter the clusters in the projection, when there is one.
@@ -1062,7 +1753,8 @@ mod tests {
         let var_aggreg = features(&["1", "1", "2", "2"]);
         let settings = params("reducer_type: none\nclusterer_type: gmm\nn_clusters: 2\n");
         let input = project(&var_aggreg, &settings).unwrap();
-        let labels = cluster(&input, var_aggreg.n_rows, &settings).unwrap();
+        let (labels, _) =
+            cluster(&input, var_aggreg.n_rows, &settings, &crate::SilentProgress).unwrap();
         assert_eq!(labels.len(), var_aggreg.n_rows);
     }
 

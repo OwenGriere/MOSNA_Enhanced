@@ -1203,6 +1203,15 @@ fn credits() -> Chapter {
                              permutations du modèle nul d'assortativité. Son vol de travail \
                              explique qu'un calcul occupe tous les coeurs sans que les pipelines \
                              sachent combien il y en a.")),
+                        C::new("fs2", T::new(
+                            "The file lock two niche analyses take before touching the run \
+                             register or writing their labels back. It is what lets a working \
+                             directory be swept over without one run silently overwriting \
+                             another.",
+                            "Le verrou de fichier que prennent deux analyses de niche avant de \
+                             toucher au registre des essais ou d'écrire leurs étiquettes. C'est \
+                             ce qui permet de balayer un répertoire de travail sans qu'un essai \
+                             en écrase un autre en silence.")),
                         C::new("rand", T::new(
                             "The random number interface every stochastic step draws through.",
                             "L'interface de génération aléatoire par laquelle passe chaque étape \

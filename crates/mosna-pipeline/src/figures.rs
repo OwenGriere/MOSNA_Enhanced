@@ -14,6 +14,15 @@ use std::path::Path;
 use mosna_core::niches::{NicheComposition, Normalize};
 use mosna_io::SampleId;
 
+/// Where a figure sink may queue work under a working directory.
+///
+/// Declared here, on the seam, rather than inside the plotting crate: the
+/// analyses do not queue figures themselves, but `clear-temporary` has to know
+/// the one directory a queue can be left in — a run that is killed before its
+/// figures are drawn leaves one behind, and nothing else ever removes it.
+/// `mosna-xy` reads this rather than spelling it again.
+pub const FIGURE_QUEUE_DIRECTORY: &str = ".mosna-figures";
+
 /// Receives everything the analyses would plot.
 pub trait FigureSink: Sync {
     /// The spatial network of one sample, coloured by phenotype.

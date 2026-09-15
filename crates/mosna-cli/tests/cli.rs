@@ -198,7 +198,7 @@ fn the_flags_match_the_python_argument_parser() {
     .unwrap();
 
     match cli.command {
-        Command::TysserandNetwork { file, working_dir } => {
+        Command::TysserandNetwork { file, working_dir, .. } => {
             assert_eq!(file, Path::new("/etc/mosna/configuration.yaml"));
             assert_eq!(working_dir, Path::new("/data/run"));
         }

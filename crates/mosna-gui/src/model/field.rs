@@ -34,8 +34,14 @@ pub fn fixed_options(key: &str) -> Option<&'static [&'static str]> {
         "Processing method" => &["Aggregated nodes", "Per sample"],
         // `none` clusters the aggregated features directly. It is second so
         // that a sub-section without the key still defaults to umap.
-        "reducer_type" => &["umap", "none"],
-        "clusterer_type" => &["leiden", "ecg", "spectral", "gmm", "hdbscan"],
+        //
+        // Both lists come from `mosna-config` rather than being written out
+        // again here: the drop-down used to offer `hdbscan`, which the
+        // validation refuses, and `ecg`, which the validation accepted and the
+        // pipeline then rejected after the aggregation and the reduction had
+        // already run.
+        "reducer_type" => mosna_config::model::niche_params::IMPLEMENTED_REDUCERS,
+        "clusterer_type" => mosna_config::model::niche_params::IMPLEMENTED_CLUSTERERS,
         "order" => &["1", "2"],
         "metric" => &["manhattan", "euclidean", "cosine"],
         "Edges method" => &["delaunay", "knn"],
@@ -50,9 +56,9 @@ pub fn fixed_options(key: &str) -> Option<&'static [&'static str]> {
 pub fn tooltip(key: &str) -> Option<&'static str> {
     Some(match key {
         "order" => "Neighborhood order for NAS aggregation.\n1 = direct neighbors only, 2 = includes 2nd-degree neighbors.",
-        "stat_funcs" => "Statistical functions applied to neighbor features (e.g. np.mean, np.std).",
-        "stat_names" => "Names associated with stat_funcs, used to label output columns.",
-        "clusterer_type" => "Clustering algorithm used to define niches: gmm, leiden, hdbscan, spectral, ecg.",
+        "stat_funcs" => "Statistics taken over each neighbourhood.\nnp.mean alone, or np.mean,np.std — this is what decides how many are computed.",
+        "stat_names" => "Column suffixes for the statistics chosen in stat_funcs.\nRenaming them changes the column names, not what is computed.",
+        "clusterer_type" => "Clustering algorithm used to define niches: leiden, gmm or spectral.",
         "metric" => "Distance metric the reducer compares observations with: euclidean, manhattan or cosine.\nUnused when reducer_type is none.",
         "normalize" => "Normalization applied to niche features before the model:\ntotal, niche, obs, clr, niche&obs, all.",
         "reducer_type" => "Dimensionality reduction applied before clustering.\numap: project the features first. none: cluster the aggregated features directly, which greys out the settings below.",
@@ -62,7 +68,7 @@ pub fn tooltip(key: &str) -> Option<&'static str> {
         "k_cluster" => "Neighbors used during the clustering graph construction step.",
         "n_clusters" => "Number of clusters to produce (gmm, spectral).",
         "resolution" => "Leiden granularity. Lower → fewer clusters, higher → more clusters.",
-        "min_cluster_size" => "HDBSCAN minimum cluster size. Smaller allows rarer clusters.",
+        "min_cluster_size" => "HDBSCAN minimum cluster size. Below 1.0 it is a fraction of the cohort.\nUnused: HDBSCAN has no CPU implementation.",
         "Number of shuffle" => "Number of randomizations to build the null distribution for assortativity.",
         "Edges method" => "Delaunay: triangulation-based. KNN: k nearest neighbours.",
         "Min neighbors" => "Minimum number of neighbors for KNN edge generation.",

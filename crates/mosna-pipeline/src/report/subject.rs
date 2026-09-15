@@ -64,6 +64,9 @@ pub fn from_stem(stem: &str) -> Option<Subject> {
 /// with, so what is read is the shape — `label-value`, then optionally another
 /// — and not the labels themselves.
 pub fn from_directory(name: &str) -> Option<Subject> {
+    if is_run_directory(name) {
+        return None;
+    }
     let mut parts = name.split('_');
     let patient = value_of(parts.next()?)?;
     let sample = match parts.next() {
@@ -77,6 +80,42 @@ pub fn from_directory(name: &str) -> Option<Subject> {
     }
     Some(Subject { patient, sample })
 }
+
+/// Whether `name` is one of step 3's run directories — `1-1-1`, `2-0-3`.
+///
+/// # Why this has to be asked first
+///
+/// `from_directory` reads `label-value`, which is the shape of
+/// `patient-1_chunk-8`. `1-1-10` has that shape too, if one is not looking:
+/// the label is `1` and the value is `1-10`. So every run directory was read as
+/// a patient, and a working directory holding a dozen runs — which is the whole
+/// point of the numbering — gave the report a dozen headings for patients that
+/// do not exist.
+///
+/// A patient identifier could be a bare number, so the shape alone cannot
+/// settle it; what separates them is that a run is *three* numbers joined by
+/// hyphens, and a label is never a number.
+///
+/// A per-sample run is `ps-1`, which has the shape of a label and a value and
+/// would otherwise be read as the patient `1`. Its own sub-directories are the
+/// samples, and those are the subjects — `ps-1/patient-2_sample-1/…` files
+/// correctly, because the report reads the directory a figure sits in.
+fn is_run_directory(name: &str) -> bool {
+    if let Some(id) = name.strip_prefix(PER_SAMPLE_PREFIX) {
+        return !id.is_empty() && id.bytes().all(|b| b.is_ascii_digit());
+    }
+    let mut parts = name.split('-');
+    let three_numbers = (0..3).all(|_| {
+        parts
+            .next()
+            .is_some_and(|part| !part.is_empty() && part.bytes().all(|b| b.is_ascii_digit()))
+    });
+    three_numbers && parts.next().is_none()
+}
+
+/// How a per-sample run's directory is named — see
+/// [`crate::niche_runs::PerSampleRun::directory`].
+const PER_SAMPLE_PREFIX: &str = "ps-";
 
 /// The value of a `label-value` pair, when there is one on each side.
 fn value_of(part: &str) -> Option<String> {
@@ -220,5 +259,49 @@ mod tests {
         assert!(key.contains('1'));
         assert!(key.contains('8'));
         assert!(key.contains("1-8"), "the pair as written in the file name");
+    }
+
+    // -----------------------------------------------------------------------
+    // A run directory is not a patient
+    // -----------------------------------------------------------------------
+
+    /// Step 3 names its directories after the three numbers of the run —
+    /// `1-1-10` — or, for a per-sample run, `ps-1`. Read as a `label-value`
+    /// pair, `1-1-10` yields the "patient" `1-10` and `ps-1` yields the
+    /// "patient" `1`; a working directory with twelve runs in it produced
+    /// twelve headings for patients that do not exist.
+    #[test]
+    fn a_run_directory_is_not_a_subject() {
+        for run in ["1-1-1", "1-1-10", "2-0-3", "10-2-7", "ps-1", "ps-12"] {
+            assert_eq!(
+                from_directory(run),
+                None,
+                "`{run}` was taken for a patient"
+            );
+        }
+    }
+
+    /// And a directory that really does name a sample still does.
+    #[test]
+    fn a_sample_directory_is_still_a_subject() {
+        assert_eq!(
+            from_directory("patient-1_chunk-8"),
+            Some(subject("1", Some("8")))
+        );
+        assert_eq!(from_directory("patient-3"), Some(subject("3", None)));
+    }
+
+    /// What separates the two is that a run is *three* numbers and a subject
+    /// directory is a label and a value — and a label is never a number. Two
+    /// numbers stay ambiguous, and nothing writes such a directory, so the
+    /// `label-value` reading keeps them.
+    #[test]
+    fn the_rule_is_three_numbers_and_not_merely_hyphens() {
+        assert!(from_directory("patient-1").is_some());
+        assert_eq!(from_directory("1-1-1"), None);
+        assert!(
+            from_directory("patient-1_chunk-8").is_some(),
+            "a real sample directory still reads"
+        );
     }
 }

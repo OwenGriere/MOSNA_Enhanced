@@ -18,6 +18,7 @@ arrow-schema = "56"
 mosna-config.workspace = true
 mosna-io.workspace = true
 mosna-core.workspace = true
+fs2 = "0.4"
 
 [dev-dependencies]
 tempfile = "3"

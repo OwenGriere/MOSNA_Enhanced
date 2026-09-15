@@ -138,7 +138,10 @@ impl Spec {
 /// A dot-prefixed name, and one the interface's image scan never descends
 /// into: a queue that showed up in the gallery as a folder of nothing would be
 /// a bug report.
-pub const QUEUE_DIRECTORY: &str = ".mosna-figures";
+/// Taken from `mosna-pipeline` rather than spelled again: `clear-temporary`
+/// removes whatever a killed run left here, and the two must agree on where
+/// "here" is.
+pub const QUEUE_DIRECTORY: &str = mosna_pipeline::figures::FIGURE_QUEUE_DIRECTORY;
 
 /// The specifications waiting to be drawn.
 ///
@@ -151,11 +154,34 @@ pub struct Queue {
     next: AtomicUsize,
 }
 
+/// Hands out a distinct queue name to every `Queue` built in this process.
+static QUEUES: AtomicUsize = AtomicUsize::new(0);
+
 impl Queue {
     /// A queue under `working_dir`, created on first use.
+    ///
+    /// # Why each queue gets a folder of its own
+    ///
+    /// The queue used to *be* `<working_dir>/.mosna-figures`, with entries
+    /// numbered from zero. Two analyses sharing a working directory — which is
+    /// the whole point of numbering the runs — therefore wrote `00000-…`,
+    /// `00001-…` into the same folder and overwrote each other's
+    /// specifications; and whichever finished first drew what was there and
+    /// then deleted the folder, so the other died with `cannot read
+    /// …/00002-histogram/figure.json` after computing everything it was asked
+    /// for. The analysis had succeeded and the command still reported failure.
+    ///
+    /// The name is the process id and a counter within it, which is unique
+    /// without coordination: two processes cannot share a pid at the same time,
+    /// and two queues in one process take different counters. They stay inside
+    /// the one dot-directory, so `clear-temporary` and the interface's image
+    /// scan still have a single place to skip.
     pub fn new(working_dir: &Path) -> Self {
+        let mine = QUEUES.fetch_add(1, Ordering::SeqCst);
         Self {
-            directory: working_dir.join(QUEUE_DIRECTORY),
+            directory: working_dir
+                .join(QUEUE_DIRECTORY)
+                .join(format!("{}-{mine}", std::process::id())),
             next: AtomicUsize::new(0),
         }
     }
@@ -202,10 +228,18 @@ impl Queue {
     /// on disk, and a leftover queue costs disk space and nothing else. It is
     /// reported by the caller, not raised.
     pub fn discard(&self) -> std::io::Result<()> {
-        match std::fs::remove_dir_all(&self.directory) {
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            other => other,
+        if let Err(error) = std::fs::remove_dir_all(&self.directory) {
+            if error.kind() != std::io::ErrorKind::NotFound {
+                return Err(error);
+            }
         }
+        // And the dot-directory the queues live in, once the last one has gone.
+        // `remove_dir` refuses a directory that is not empty, which is exactly
+        // the test wanted: another analysis still has a queue in there.
+        if let Some(parent) = self.directory.parent() {
+            let _ = std::fs::remove_dir(parent);
+        }
+        Ok(())
     }
 }
 
@@ -317,7 +351,9 @@ mod tests {
     #[test]
     fn the_queue_is_named_so_the_gallery_never_shows_it() {
         let queue = Queue::new(Path::new("/runs"));
-        assert_eq!(queue.directory(), Path::new("/runs/.mosna-figures"));
+        // Inside the dot-directory — each run has a folder of its own in there,
+        // so two analyses sharing a working directory do not collide.
+        assert!(queue.directory().starts_with("/runs/.mosna-figures"));
         assert!(QUEUE_DIRECTORY.starts_with('.'));
     }
 
@@ -331,5 +367,68 @@ mod tests {
         queue.discard().unwrap();
         assert!(!queue.directory().exists());
         queue.discard().expect("discarding twice is not an error");
+    }
+
+    // -----------------------------------------------------------------------
+    // Two analyses sharing one working directory
+    // -----------------------------------------------------------------------
+
+    /// The queue used to be `<working_dir>/.mosna-figures` outright, with
+    /// entries numbered from zero. Two analyses running in one working
+    /// directory therefore wrote `00000-…`, `00001-…` into the *same* folder,
+    /// overwriting each other's specifications — and the first to finish drew
+    /// whatever was there and then deleted the folder, so the second failed
+    /// with `cannot read …/00002-histogram/figure.json`, having computed
+    /// everything it was asked for.
+    #[test]
+    fn two_queues_in_one_working_directory_do_not_share_a_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = Queue::new(dir.path());
+        let second = Queue::new(dir.path());
+
+        assert_ne!(
+            first.directory(),
+            second.directory(),
+            "two queues in one working directory share a folder"
+        );
+        // Both under the one dot-directory, so `clear-temporary` and the
+        // interface's image scan still know the single place to skip.
+        for queue in [&first, &second] {
+            assert!(queue
+                .directory()
+                .starts_with(dir.path().join(QUEUE_DIRECTORY)));
+        }
+    }
+
+    /// And discarding one leaves the other's specifications alone.
+    #[test]
+    fn discarding_one_queue_leaves_the_other_standing() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = Queue::new(dir.path());
+        let second = Queue::new(dir.path());
+
+        first.push(Spec::new("histogram", "a", dir.path())).unwrap();
+        let kept = second.push(Spec::new("histogram", "b", dir.path())).unwrap();
+
+        first.discard().unwrap();
+        assert!(
+            kept.is_file(),
+            "discarding one queue took the other's specifications with it"
+        );
+    }
+
+    /// The numbering is per queue, so neither has to know the other exists.
+    #[test]
+    fn each_queue_numbers_its_own_specifications() {
+        let dir = tempfile::tempdir().unwrap();
+        let first = Queue::new(dir.path());
+        let second = Queue::new(dir.path());
+
+        first.push(Spec::new("histogram", "a", dir.path())).unwrap();
+        first.push(Spec::new("histogram", "b", dir.path())).unwrap();
+        second.push(Spec::new("histogram", "c", dir.path())).unwrap();
+
+        assert_eq!(first.len(), 2);
+        assert_eq!(second.len(), 1);
     }
 }
