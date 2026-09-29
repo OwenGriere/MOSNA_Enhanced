@@ -2621,6 +2621,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "mosna-setup"
+version = "0.1.0"
+dependencies = [
+ "eframe",
+ "egui",
+ "image",
+ "rfd",
+ "tempfile",
+]
+
+[[package]]
 name = "mosna-testkit"
 version = "0.1.0"
 dependencies = [

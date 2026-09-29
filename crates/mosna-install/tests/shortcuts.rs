@@ -153,6 +153,64 @@ fn uninstalling_removes_the_launcher() {
     assert!(!home.path().join("Desktop/mosna.desktop").exists());
 }
 
+/// The graphical installer lets the user decline the desktop launcher. The
+/// install must then leave the desktop untouched, and still succeed.
+#[test]
+fn the_desktop_launcher_can_be_declined() {
+    let build = tempfile::tempdir().unwrap();
+    let prefix = tempfile::tempdir().unwrap();
+    let home = tempfile::tempdir().unwrap();
+    let layout = Layout::for_platform(prefix.path(), Platform::Unix);
+
+    Installer::new(
+        layout.clone(),
+        sources(build.path(), Platform::Unix),
+        unix_environment(home.path()),
+    )
+    .without_desktop_shortcut()
+    .install()
+    .unwrap();
+
+    assert!(!home.path().join("Desktop/mosna.desktop").exists());
+    assert!(layout.interface_binary().is_file());
+}
+
+/// On Windows, declining the desktop launcher keeps the Start Menu one:
+/// without it there would be no way left to start the application.
+#[test]
+fn declining_the_desktop_keeps_the_start_menu() {
+    let build = tempfile::tempdir().unwrap();
+    let prefix = tempfile::tempdir().unwrap();
+    let profile = tempfile::tempdir().unwrap();
+    let environment = Environment {
+        user_profile: Some(profile.path().to_path_buf()),
+        app_data: Some(profile.path().join("AppData/Roaming")),
+        ..Default::default()
+    };
+
+    let plan = Installer::new(
+        Layout::for_platform(prefix.path(), Platform::Windows),
+        sources(build.path(), Platform::Windows),
+        environment,
+    )
+    .without_desktop_shortcut()
+    .plan();
+
+    let launchers: Vec<PathBuf> = plan
+        .actions()
+        .iter()
+        .filter_map(|action| match action {
+            mosna_install::Action::WriteShortcut { path, .. } => Some(path.clone()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(launchers.len(), 1, "{launchers:?}");
+    assert!(
+        launchers[0].to_string_lossy().contains("Start Menu"),
+        "{launchers:?}"
+    );
+}
+
 /// A shortcut belonging to something else in the same folder is left alone.
 #[test]
 fn uninstalling_leaves_other_launchers_alone() {

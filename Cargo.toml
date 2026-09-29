@@ -11,6 +11,7 @@ members = [
     "crates/mosna-pipeline",
     "crates/mosna-cli",
     "crates/mosna-gui",
+    "crates/mosna-setup",
     "benchmark",
 ]
 

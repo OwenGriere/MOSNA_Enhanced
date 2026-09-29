@@ -1,4 +1,4 @@
-//! Tests of the two installer scripts, written before `install.ps1` exists.
+//! Tests of the installer script, and of how the Windows installer fits beside it.
 //!
 //! The scripts are the first thing a user runs and the one part of the project
 //! no compiler checks. What can be checked is that they are there, that they
@@ -22,12 +22,12 @@ fn script(name: &str) -> String {
 }
 
 // ---------------------------------------------------------------------------
-// Both platforms have a script
+// Both platforms have an installer
 // ---------------------------------------------------------------------------
 
 #[test]
-fn each_platform_has_an_installer_script() {
-    for name in ["install.sh", "install.ps1"] {
+fn each_platform_has_an_installer() {
+    for name in ["install.sh", "INSTALLATION.exe"] {
         assert!(root().join(name).is_file(), "{name} is missing");
     }
 }
@@ -46,14 +46,15 @@ fn the_shell_script_is_executable() {
 }
 
 // ---------------------------------------------------------------------------
-// They hand over to the tested installer
+// It hands over to the tested installer
 // ---------------------------------------------------------------------------
 
-/// Neither script may copy files itself: every decision belongs in
+/// The script may not copy files itself: every decision belongs in
 /// `mosna-install`, which has tests.
 #[test]
-fn both_scripts_delegate_to_the_installer() {
-    for name in ["install.sh", "install.ps1"] {
+fn the_script_delegates_to_the_installer() {
+    {
+        let name = "install.sh";
         let text = script(name);
         assert!(
             text.contains("mosna-install"),
@@ -66,10 +67,11 @@ fn both_scripts_delegate_to_the_installer() {
     }
 }
 
-/// Both build the two binaries the install needs.
+/// It builds the two binaries the install needs.
 #[test]
-fn both_scripts_build_what_they_install() {
-    for name in ["install.sh", "install.ps1"] {
+fn the_script_builds_what_it_installs() {
+    {
+        let name = "install.sh";
         let text = script(name);
         assert!(
             text.contains("--bin mosna "),
@@ -82,7 +84,7 @@ fn both_scripts_build_what_they_install() {
 
 /// Every option the manual mentions has to exist in the script it belongs to.
 #[test]
-fn the_documented_options_are_the_ones_the_scripts_accept() {
+fn the_documented_options_are_the_ones_the_script_accepts() {
     let shell = script("install.sh");
     for option in ["--prefix", "--dry-run", "--uninstall"] {
         assert!(
@@ -90,23 +92,14 @@ fn the_documented_options_are_the_ones_the_scripts_accept() {
             "install.sh does not accept {option}"
         );
     }
-
-    let powershell = script("install.ps1");
-    for option in ["-Prefix", "-DryRun", "-Uninstall"] {
-        assert!(
-            powershell.contains(option),
-            "install.ps1 does not accept {option}"
-        );
-    }
 }
 
-/// `--uninstall` must work after a failed build, so neither script may build
+/// `--uninstall` must work after a failed build, so the script may not build
 /// first unconditionally.
 #[test]
 fn uninstalling_does_not_require_a_build() {
-    for name in ["install.sh", "install.ps1"] {
-        // Case-folded, because the two scripts spell the flag differently and
-        // what matters is only which comes first.
+    {
+        let name = "install.sh";
         let text = script(name).to_lowercase();
         let builds = text.find("cargo build").expect("no build at all");
         let guards = text.find("uninstall");
@@ -117,10 +110,11 @@ fn uninstalling_does_not_require_a_build() {
     }
 }
 
-/// Both explain how to get Rust rather than failing with `command not found`.
+/// It explains how to get Rust rather than failing with `command not found`.
 #[test]
 fn a_missing_toolchain_is_explained() {
-    for name in ["install.sh", "install.ps1"] {
+    {
+        let name = "install.sh";
         assert!(
             script(name).contains("rustup"),
             "{name} does not say how to install the toolchain"
@@ -132,7 +126,7 @@ fn a_missing_toolchain_is_explained() {
 // The paths they pass
 // ---------------------------------------------------------------------------
 
-/// The artefacts the scripts point at must exist in the tree.
+/// The artefacts the script points at must exist in the tree.
 ///
 /// This is the test that catches a move: a script quietly passing a path that
 /// no longer exists fails only on a user's machine, at install time.
@@ -145,137 +139,18 @@ fn the_paths_the_scripts_pass_exist() {
         );
     }
 
-    for name in ["install.sh", "install.ps1"] {
+    {
+        let name = "install.sh";
         let text = script(name);
         assert!(
-            text.contains("CONFIG/configuration.yaml")
-                || text.contains("CONFIG\\configuration.yaml"),
+            text.contains("CONFIG/configuration.yaml"),
             "{name} does not ship the configuration"
         );
         assert!(
-            !text.contains("../CONFIG") && !text.contains("..\\CONFIG"),
+            !text.contains("../CONFIG"),
             "{name} still reaches outside the project for its configuration"
         );
     }
-}
-
-// ---------------------------------------------------------------------------
-// The Windows one-liner
-// ---------------------------------------------------------------------------
-
-/// `bootstrap.ps1` is fetched and executed straight from the network, so it
-/// gets its own rules: it must survive having no arguments, must not reach for
-/// anything over plain HTTP, and must hand over to the installer rather than
-/// growing an installation of its own.
-#[test]
-fn the_windows_bootstrap_exists() {
-    assert!(
-        root().join("bootstrap.ps1").is_file(),
-        "bootstrap.ps1 is missing"
-    );
-}
-
-/// Piped into `iex`, a script receives no arguments at all. A mandatory
-/// parameter would make it prompt — from a pipeline, that hangs.
-#[test]
-fn the_bootstrap_runs_with_no_arguments() {
-    let text = script("bootstrap.ps1");
-    assert!(
-        !text.contains("Mandatory = $true") && !text.contains("Mandatory=$true"),
-        "a mandatory parameter cannot be supplied through `irm | iex`"
-    );
-}
-
-/// It installs the toolchain instead of failing on a machine that has none —
-/// that is the entire reason for its existence.
-#[test]
-fn the_bootstrap_installs_the_toolchain_itself() {
-    let text = script("bootstrap.ps1");
-    assert!(text.contains("rustup"), "it does not install Rust");
-    assert!(
-        text.contains("cargo"),
-        "it does not check whether Rust is already there"
-    );
-}
-
-/// It fetches the sources, by either route: `git` when it is there, the zip
-/// GitHub serves when it is not.
-#[test]
-fn the_bootstrap_fetches_the_sources_with_or_without_git() {
-    let text = script("bootstrap.ps1");
-    assert!(text.contains("git clone"), "no clone path");
-    assert!(
-        text.contains(".zip") || text.contains("Expand-Archive"),
-        "no fallback for a machine without git"
-    );
-}
-
-/// Everything it downloads comes over TLS. A bootstrap fetched over plain HTTP
-/// is an invitation to run someone else's code.
-#[test]
-fn the_bootstrap_only_downloads_over_tls() {
-    let text = script("bootstrap.ps1");
-    assert!(
-        !text.contains("http://"),
-        "bootstrap.ps1 downloads something over plain HTTP"
-    );
-}
-
-/// It ends by handing over, so there is exactly one implementation of the
-/// install and it is the tested one.
-#[test]
-fn the_bootstrap_delegates_to_the_installer() {
-    let text = script("bootstrap.ps1");
-    assert!(
-        text.contains("install.ps1"),
-        "the bootstrap does not run the installer"
-    );
-}
-
-/// An existing checkout is updated or refused, never silently overwritten:
-/// the directory it picks may be one the user put something else in.
-#[test]
-fn the_bootstrap_does_not_clobber_an_existing_directory() {
-    let text = script("bootstrap.ps1");
-    assert!(
-        text.contains("git pull") || text.contains("Force"),
-        "it neither updates an existing checkout nor guards against one"
-    );
-}
-
-/// The command the README tells people to paste must name the script that
-/// actually exists, on the branch that actually exists. A stale one-liner is a
-/// broken install for everyone who copies it.
-#[test]
-fn the_readme_one_liner_matches_the_shipped_script() {
-    let readme = std::fs::read_to_string(root().join("README.md")).unwrap();
-    let line = readme
-        .lines()
-        .find(|line| line.contains("bootstrap.ps1") && line.contains("iex"))
-        .expect("the README does not give the one-line Windows install");
-
-    assert!(
-        line.contains("https://"),
-        "the one-liner is not over TLS: {line}"
-    );
-
-    // The branch in the URL is the one the script itself declares, read from
-    // its `$Branch = '...'` assignment rather than guessed.
-    let script = script("bootstrap.ps1");
-    let branch = script
-        .lines()
-        .find_map(|line| {
-            let rest = line.trim().strip_prefix("$Branch")?.trim_start();
-            let value = rest.strip_prefix('=')?.trim();
-            Some(value.trim_matches('\'').trim_matches('"').to_string())
-        })
-        .expect("bootstrap.ps1 does not say which branch it fetches");
-
-    assert!(
-        line.contains(&branch),
-        "the README fetches a different branch from the `{branch}` the script \
-         clones: {line}"
-    );
 }
 
 // ---------------------------------------------------------------------------
@@ -304,29 +179,15 @@ fn the_shell_script_checks_the_build_prerequisites() {
 
 /// And the renderer has to actually be handed to the installer, or the install
 /// silently produces an application that analyses and draws nothing.
-///
-/// Both scripts, because an install that draws figures on one platform and not
-/// on the other is the kind of difference nobody finds until a user reports it.
 #[test]
-fn both_scripts_install_the_figure_renderer() {
-    for name in ["install.sh", "install.ps1"] {
+fn the_script_installs_the_figure_renderer() {
+    {
+        let name = "install.sh";
         assert!(
             script(name).contains("--renderer"),
             "{name} does not pass the figure renderer to the installer"
         );
     }
-}
-
-/// The Windows script has to ask for Python too. It cannot check the version —
-/// that rule lives in the installer, where it is tested — but a machine with no
-/// interpreter at all should be told before it builds.
-#[test]
-fn the_windows_script_checks_for_an_interpreter() {
-    let text = script("install.ps1");
-    assert!(
-        text.contains("python"),
-        "install.ps1 does not check for a Python interpreter"
-    );
 }
 
 /// And it must say what to type, per distribution family — "install Python"
@@ -376,5 +237,85 @@ fn the_readme_lists_the_same_prerequisites() {
     assert!(
         !readme.contains("fontconfig"),
         "the README still asks for fontconfig, which nothing links against now"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// The Windows installer, and each platform removing the other's files
+// ---------------------------------------------------------------------------
+
+/// What a Windows user double-clicks. It is committed, not built on the
+/// machine: it has to be a real Windows program with a window, no console.
+#[test]
+fn the_windows_installer_is_a_windows_program() {
+    let bytes =
+        std::fs::read(root().join("INSTALLATION.exe")).expect("INSTALLATION.exe is missing");
+    assert_eq!(&bytes[..2], b"MZ", "not a Windows executable");
+    let pe = u32::from_le_bytes(bytes[0x3C..0x40].try_into().unwrap()) as usize;
+    assert_eq!(&bytes[pe..pe + 4], b"PE\0\0");
+    // IMAGE_SUBSYSTEM_WINDOWS_GUI, in the PE32+ optional header.
+    let subsystem = u16::from_le_bytes(bytes[pe + 24 + 68..pe + 24 + 70].try_into().unwrap());
+    assert_eq!(subsystem, 2, "INSTALLATION.exe would open a console window");
+}
+
+/// Without a manifest, Windows takes a program named INSTALLATION for a legacy
+/// installer and runs it as an administrator — for a user who is not one, an
+/// administrator's account, so MOSNA would land in someone else's profile.
+#[test]
+fn the_windows_installer_runs_as_the_user() {
+    let bytes = std::fs::read(root().join("INSTALLATION.exe")).unwrap();
+    let manifest = b"requestedExecutionLevel level=\"asInvoker\"";
+    assert!(
+        bytes.windows(manifest.len()).any(|window| window == manifest),
+        "INSTALLATION.exe carries no asInvoker manifest; rebuild it (see crates/mosna-setup/src/lib.rs)"
+    );
+}
+
+/// install.sh deletes the Windows installer once it has installed; a name that
+/// no longer exists means the list has drifted.
+#[test]
+fn install_sh_deletes_exactly_the_windows_installer() {
+    let text = script("install.sh");
+    let line = text
+        .lines()
+        .find(|line| {
+            line.trim_start()
+                .starts_with("for name in INSTALLATION.exe")
+        })
+        .expect("install.sh no longer deletes the Windows files");
+    let names: Vec<&str> = line.trim_start()["for name in ".len()..]
+        .trim_end_matches("; do")
+        .split_whitespace()
+        .collect();
+    assert_eq!(names, ["INSTALLATION.exe"]);
+    for name in names {
+        assert!(
+            root().join(name).is_file(),
+            "install.sh deletes {name}, which does not exist"
+        );
+    }
+}
+
+/// A dry run, an uninstall or a request for help installs nothing, so it must
+/// not delete anything either.
+#[test]
+fn install_sh_only_cleans_up_after_a_real_install() {
+    let text = script("install.sh");
+    for flag in ["--uninstall", "--dry-run", "--help"] {
+        let line = text
+            .lines()
+            .find(|line| line.contains(flag) && line.contains(")"))
+            .unwrap_or_else(|| panic!("install.sh does not recognise {flag}"));
+        assert!(
+            line.contains("installing=false"),
+            "{flag} still cleans up: {line}"
+        );
+    }
+    let cleanup = text.find("for name in INSTALLATION.exe").unwrap();
+    let guard = text[..cleanup].rfind(r#"if [ "$installing" = true ]"#);
+    assert!(guard.is_some(), "the cleanup is not guarded");
+    assert!(
+        !text.contains("exec cargo run"),
+        "an exec would end the script before the cleanup"
     );
 }

@@ -94,8 +94,8 @@ impl<R: Run> Figures<R> {
                 eprintln!(
                     "[QT_INFO] Figures not drawn: {reason}\n\
                      The analysis is complete and its tables are written. To \
-                     draw the figures, install MOSNA's renderer with install.ps1 \
-                     or install.sh, without -NoFigures / --no-figures."
+                     draw the figures, install MOSNA again with INSTALLATION.exe \
+                     (figures ticked) or install.sh (without --no-figures)."
                 );
                 return Ok(());
             }

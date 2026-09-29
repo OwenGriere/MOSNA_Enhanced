@@ -33,6 +33,10 @@ struct Cli {
     #[arg(long)]
     renderer: Option<PathBuf>,
 
+    /// Do not put a launcher on the desktop. The menu entry is still written.
+    #[arg(long)]
+    no_desktop_shortcut: bool,
+
     /// Remove a previous install instead of writing one.
     #[arg(long)]
     uninstall: bool,
@@ -67,7 +71,10 @@ fn main() -> anyhow::Result<()> {
         renderer: cli.renderer.filter(|path| path.is_dir()),
     };
 
-    let installer = Installer::new(layout.clone(), sources, environment.clone());
+    let mut installer = Installer::new(layout.clone(), sources, environment.clone());
+    if cli.no_desktop_shortcut {
+        installer = installer.without_desktop_shortcut();
+    }
 
     let mut report = if cli.uninstall {
         installer.uninstall()?

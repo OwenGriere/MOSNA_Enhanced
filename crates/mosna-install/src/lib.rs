@@ -44,6 +44,9 @@ pub struct Installer {
     sources: Sources,
     /// Decides where the launchers go; detected from the process by default.
     environment: Environment,
+    /// Whether a launcher is put on the desktop. The menu entry is written
+    /// either way: without it the application could not be started at all.
+    desktop_shortcut: bool,
 }
 
 impl Installer {
@@ -60,7 +63,14 @@ impl Installer {
             layout,
             sources,
             environment,
+            desktop_shortcut: true,
         }
+    }
+
+    /// Leave the desktop alone, for someone who starts MOSNA from the menu.
+    pub fn without_desktop_shortcut(mut self) -> Self {
+        self.desktop_shortcut = false;
+        self
     }
 
     pub fn layout(&self) -> &Layout {
@@ -135,7 +145,12 @@ impl Installer {
 
         // The launchers come last: they point at files that must already exist,
         // and a Windows link refuses a target that is not there yet.
+        let desktop = self.environment.desktop_dir();
         for shortcut in self.layout.shortcuts(&self.environment) {
+            let on_desktop = desktop.is_some() && shortcut.path.parent() == desktop.as_deref();
+            if on_desktop && !self.desktop_shortcut {
+                continue;
+            }
             actions.push(Action::WriteShortcut {
                 layout: self.layout.clone(),
                 kind: shortcut.kind,

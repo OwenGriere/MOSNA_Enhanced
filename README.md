@@ -38,6 +38,21 @@ output layout and the same three-step workflow — an existing
 
 ## Install
 
+**On Windows, the simplest way:** download the repository (**Code → Download
+ZIP**, then *Extract all*), open the folder and double-click
+**`INSTALLATION.exe`**. A window asks where to put MOSNA, whether to add a
+desktop shortcut and whether to install the figures; it then moves the folder
+there, installs whatever is missing (the Microsoft C++ build tools, Rust,
+Python — Windows asks once for administrator rights), builds and installs
+MOSNA. Allow 20 to 40 minutes the first time. A log is kept in
+`%TEMP%\mosna-install.log`.
+
+**On Linux**, run `./install.sh` as described below.
+
+Once installed, each platform deletes the other's installer: `install.sh` goes
+on Windows, `INSTALLATION.exe` on Linux. To uninstall on Windows, run
+`target\release\mosna-install.exe --uninstall` from the MOSNA folder.
+
 The analyses are Rust and depend on no scientific stack. The **figures** are
 drawn by [`xy`](https://github.com/reflex-dev/xy), a Python charting library,
 which is why an interpreter is needed. What this needs, to build:
@@ -63,23 +78,6 @@ works in full.
 `MOSNA_PYTHON` overrides the interpreter, which is what to set when working
 from a checkout against an environment of your own.
 
-Nothing needs to be compiled: each release carries binaries for Windows and
-Linux, so neither the Rust toolchain nor a C++ compiler has to be installed.
-
-```powershell
-# Windows, in one command — downloads the latest release and installs it.
-irm https://raw.githubusercontent.com/OwenGriere/MOSNA_Enhanced/main/bootstrap.ps1 | iex
-```
-
-That command runs a script fetched from the network. Reading it first is the
-sensible thing to do with any such script, this one included:
-
-```powershell
-irm https://raw.githubusercontent.com/OwenGriere/MOSNA_Enhanced/main/bootstrap.ps1 -OutFile bootstrap.ps1
-notepad bootstrap.ps1
-.\bootstrap.ps1
-```
-
 ```bash
 # Linux / macOS, from a downloaded release or a checkout
 ./install.sh                     # into ~/.local, with a desktop launcher
@@ -96,27 +94,10 @@ notepad bootstrap.ps1
 | `mosna` and `mosna-gui` | 38 MB | everything |
 | Python environment (`xy`, numpy) | ~85 MB | the figures only |
 
-`--no-figures` / `-NoFigures` skips the second row. The analyses then run
+`--no-figures` (or unticking the figures on Windows) skips the second row. The analyses then run
 exactly as before and write all of their tables; only the images are left
 undrawn, and each run says so instead of failing. Installing the renderer later
 draws the figures the next run produces.
-
-Building from source is still supported (`-FromSource`, or running
-`install.sh` in a checkout) but costs considerably more: on Windows it needs the
-Microsoft C++ build tools, several gigabytes, because Rust links with
-`link.exe` and one dependency is C. `install.ps1` checks for them and says so
-before starting a build rather than failing in the middle of one.
-
-From an unpacked release or a clone you already have, skip the bootstrap and
-install directly. The script recognises which it is in: beside pre-built
-binaries it compiles nothing.
-
-```powershell
-.\install.ps1                    # into %LOCALAPPDATA%\Programs\MOSNA
-.\install.ps1 -NoFigures         # smallest install
-.\install.ps1 -DryRun
-.\install.ps1 -Uninstall
-```
 
 Both create a desktop icon, as the Python `setup.sh` did, plus an application
 menu entry (Start Menu on Windows). The full instructions are also in the
@@ -172,7 +153,7 @@ exists, which is what lets them be run on results copied off a cluster.
 
 ```
 .
-├── install.sh / install.ps1  build and install, per platform
+├── install.sh / INSTALLATION.exe  build and install, per platform
 ├── CONFIG/                   the shipped starting configuration
 ├── assets/                   logo and the manual's figures
 ├── python/                   the figure renderer, built on `xy`
@@ -207,7 +188,7 @@ kept because it names what each crate is responsible for.
 | Python | Rust |
 |---|---|
 | `GUI_MOSNA.py` | `crates/mosna-gui` |
-| `setup.sh` / `setup_windows.bat` | `install.sh` / `install.ps1`, `crates/mosna-install` |
+| `setup.sh` / `setup_windows.bat` | `install.sh` / `INSTALLATION.exe`, `crates/mosna-install`, `crates/mosna-setup` |
 | the manual | `crates/mosna-gui/src/docs` |
 | `package/tysserand_network.py` | `mosna-pipeline::tysserand_network` |
 | `package/assortativity.py` | `mosna-pipeline::assortativity` |

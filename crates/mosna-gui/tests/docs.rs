@@ -198,7 +198,7 @@ fn the_manual_explains_how_to_install() {
 
     assert!(all.contains("install.sh"), "Linux is not covered:\n{all}");
     assert!(
-        all.contains("install.ps1"),
+        all.contains("mosna-install.exe"),
         "Windows is not covered:\n{all}"
     );
     assert!(

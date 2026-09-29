@@ -191,39 +191,17 @@ jobs:
         run: cargo doc --workspace --no-deps
 
   # ---------------------------------------------------------------------------
-  # The installer scripts.
+  # The installer script.
   #
-  # Neither is compiled, so nothing else in this file would notice a typo in
-  # them — and they are the first thing a new user runs, on a machine where a
-  # stack trace is the whole experience. Parsing is not testing, but it catches
-  # the class of mistake that cannot be caught by reading: an unbalanced brace
-  # in a here-string, a parameter block that does not parse.
+  # It is not compiled, so nothing else in this file would notice a typo in it
+  # — and it is the first thing a new user runs. Parsing is not testing, but it
+  # catches the class of mistake that cannot be caught by reading.
   # ---------------------------------------------------------------------------
   scripts:
-    name: installer scripts
-    runs-on: windows-latest
+    name: installer script
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      - name: Parse the PowerShell scripts
-        shell: pwsh
-        run: |
-          $failed = $false
-          foreach ($script in 'bootstrap.ps1', 'install.ps1') {
-              $errors = $null
-              [System.Management.Automation.Language.Parser]::ParseFile(
-                  (Resolve-Path $script), [ref] $null, [ref] $errors) | Out-Null
-              if ($errors) {
-                  $failed = $true
-                  Write-Host "::error file=$script::$($errors.Count) parse error(s)"
-                  $errors | ForEach-Object {
-                      Write-Host "  line $($_.Extent.StartLineNumber): $($_.Message)"
-                  }
-              } else {
-                  Write-Host "$script parses cleanly."
-              }
-          }
-          if ($failed) { exit 1 }
 
       - name: Check the shell script
         shell: bash

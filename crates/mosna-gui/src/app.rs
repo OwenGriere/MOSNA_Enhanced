@@ -536,9 +536,17 @@ impl MosnaApp {
                     sweep.begin(next);
                 }
             }
+            // The sweep stops, but keeps what it has: dropping it threw away
+            // every finished row, the reason the last one failed and the
+            // comparison table, all for a run that merely could not start.
             Err(error) => {
+                if let Some(sweep) = &mut self.sweep {
+                    sweep.stopping = true;
+                    if sweep.failure.is_none() {
+                        sweep.failure = Some(error.clone());
+                    }
+                }
                 self.notice = Some(error);
-                self.sweep = None;
             }
         }
     }

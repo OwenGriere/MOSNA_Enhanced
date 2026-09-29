@@ -166,38 +166,27 @@ fn installation() -> Chapter {
                 title: T::new("Installing on Windows", "Installer sous Windows"),
                 blocks: vec![
                     Block::Paragraph(T::new(
-                        "Install the Rust toolchain from rustup.rs, then run the installer \
-                         from PowerShell in the MOSNA_Rust directory.",
-                        "Installez la chaîne d'outils Rust depuis rustup.rs, puis lancez \
-                         l'installeur depuis PowerShell, dans le dossier MOSNA_Rust.",
+                        "Double-click INSTALLATION.exe in the MOSNA folder. A window asks \
+                         where to put MOSNA, whether to add a desktop shortcut and whether to \
+                         install the figures, then installs whatever is missing (the Microsoft \
+                         C++ build tools, Rust, Python) and MOSNA itself.",
+                        "Double-cliquez sur INSTALLATION.exe dans le dossier de MOSNA. Une \
+                         fenêtre demande où placer MOSNA, s'il faut un raccourci sur le bureau \
+                         et s'il faut installer les figures, puis installe ce qui manque (outils \
+                         C++ de Microsoft, Rust, Python) et MOSNA lui-même.",
                     )),
-                    Block::Code {
-                        caption: T::new("Install", "Installer"),
-                        lines: vec!["cd MOSNA_Rust", ".\\install.ps1"],
-                    },
                     Block::Paragraph(T::new(
-                        "This installs into %LOCALAPPDATA%\\Programs\\MOSNA and creates two \
-                         shortcuts: one in the Start Menu and one on your desktop.",
-                        "Cela installe dans %LOCALAPPDATA%\\Programs\\MOSNA et crée deux \
-                         raccourcis : un dans le menu Démarrer et un sur votre bureau.",
+                        "This installs into %LOCALAPPDATA%\\Programs\\MOSNA, with a shortcut in \
+                         the Start Menu and, if asked for, one on your desktop.",
+                        "Cela installe dans %LOCALAPPDATA%\\Programs\\MOSNA, avec un raccourci \
+                         dans le menu Démarrer et, si vous l'avez demandé, un sur le bureau.",
                     )),
                     Block::Code {
-                        caption: T::new("Other options", "Autres options"),
+                        caption: T::new("Remove it again", "Le désinstaller"),
                         lines: vec![
-                            ".\\install.ps1 -DryRun       # show what would happen",
-                            ".\\install.ps1 -Uninstall    # remove it again",
+                            "cd MOSNA_Enhanced",
+                            "target\\release\\mosna-install.exe --uninstall",
                         ],
-                    },
-                    Block::Callout {
-                        kind: CalloutKind::Warning,
-                        text: T::new(
-                            "PowerShell may refuse to run a downloaded script. If it does, \
-                             allow it for this session only with: \
-                             Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass",
-                            "PowerShell peut refuser d'exécuter un script téléchargé. Le cas \
-                             échéant, autorisez-le pour cette session seulement avec : \
-                             Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass",
-                        ),
                     },
                 ],
             },

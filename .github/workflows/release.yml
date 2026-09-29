@@ -83,7 +83,7 @@ jobs:
             cp "target/${{ matrix.target }}/release/$binary$suffix" "$out/"
           done
           cp -r CONFIG assets python "$out/"
-          cp install.ps1 install.sh "$out/"
+          cp install.sh "$out/"
           cp README.md "$out/"
           echo "${{ github.ref_name }}" > "$out/VERSION"
 
@@ -111,9 +111,6 @@ jobs:
         with:
           merge-multiple: true
 
-      # `bootstrap.ps1` asks the API for the latest release and takes the asset
-      # whose name matches `mosna-windows-*.zip`, so the names above are part of
-      # the contract and not decoration.
       - name: Publish the release
         uses: softprops/action-gh-release@v2
         with:
