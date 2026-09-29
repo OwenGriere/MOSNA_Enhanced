@@ -237,6 +237,7 @@ fn draw_field(ui: &mut egui::Ui, field: &mut crate::model::field::Field) -> bool
         }
 
         FieldKind::MultiColumnPicker { columns, selected } => {
+            let available = ui.available_width();
             let caption = match selected.len() {
                 0 => "— select column(s) —".to_string(),
                 1 => selected[0].clone(),
@@ -244,35 +245,30 @@ fn draw_field(ui: &mut egui::Ui, field: &mut crate::model::field::Field) -> bool
                 n => format!("{n} columns selected"),
             };
             let mut changed = false;
-            egui::ComboBox::from_id_salt(id)
-                .selected_text(caption)
-                .width(ui.available_width())
-                .wrap_mode(egui::TextWrapMode::Truncate)
-                .show_ui(ui, |ui| {
-                    // The menu stays open across clicks, as the Qt one does,
-                    // because choosing several columns one at a time is the
-                    // normal case.
-                    if ui.button("Select all").clicked() {
-                        *selected = columns.clone();
-                        changed = true;
-                    }
-                    if ui.button("Clear all").clicked() {
-                        selected.clear();
-                        changed = true;
-                    }
-                    ui.separator();
-                    for column in columns.iter() {
-                        let mut picked = selected.contains(column);
-                        if ui.checkbox(&mut picked, column).clicked() {
-                            if picked {
-                                selected.push(column.clone());
-                            } else {
-                                selected.retain(|c| c != column);
-                            }
-                            changed = true;
+            // The menu stays open across clicks, as the Qt one does, because
+            // choosing several columns one at a time is the normal case.
+            crate::panels::multi_select(ui, id, caption, Some(available), |ui| {
+                if ui.button("Select all").clicked() {
+                    *selected = columns.clone();
+                    changed = true;
+                }
+                if ui.button("Clear all").clicked() {
+                    selected.clear();
+                    changed = true;
+                }
+                ui.separator();
+                for column in columns.iter() {
+                    let mut picked = selected.contains(column);
+                    if ui.checkbox(&mut picked, column).clicked() {
+                        if picked {
+                            selected.push(column.clone());
+                        } else {
+                            selected.retain(|c| c != column);
                         }
+                        changed = true;
                     }
-                });
+                }
+            });
             changed
         }
 
@@ -352,6 +348,7 @@ fn actions(app: &mut MosnaApp, ui: &mut egui::Ui) {
     });
 
     ui.add_space(4.0);
+
     // The rows are decided in `Step::rows`, where the arrangement can be
     // stated as a test rather than discovered by dragging the panel.
     for row in Step::rows() {
@@ -397,6 +394,27 @@ fn actions(app: &mut MosnaApp, ui: &mut egui::Ui) {
                 }
             }
         });
+
+        // Directly under step 3, because that is the step it sweeps — and
+        // outside the disabled scope above, because it starts no work: it opens
+        // a screen, and a user who stepped back to look at a figure has to be
+        // able to return to the sweep they left running.
+        if row.as_slice() == [Step::NicheAnalysis]
+            && ui
+                .add_sized(
+                    [ui.available_width(), 0.0],
+                    egui::Button::new("Sensitivity analysis…"),
+                )
+                .on_hover_text(
+                    "Run step 3 over a grid of parameters and compare what each \
+                     combination finds.\nEvery point of the grid is an ordinary \
+                     niche analysis.",
+                )
+                .clicked()
+        {
+            app.open_sensitivity();
+        }
+
         ui.add_space(3.0);
     }
 }

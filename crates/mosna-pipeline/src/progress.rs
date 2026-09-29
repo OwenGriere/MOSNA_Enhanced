@@ -11,6 +11,21 @@ pub trait Progress: Sync {
 
     /// Progress through a step.
     fn step(&self, current: usize, total: usize, description: &str);
+
+    /// Name the run directory this analysis is writing into.
+    ///
+    /// # Why this is part of the protocol
+    ///
+    /// A run's numbers are handed out by the register while the analysis runs,
+    /// so nothing outside the process knows them until it has finished — and a
+    /// sweep has to link each configuration it launched to the results it
+    /// produced. Reading it back out of a log line meant for humans, or
+    /// guessing at the newest directory, are both ways of being wrong on the
+    /// day two runs overlap.
+    ///
+    /// Defaulted to nothing, so a reporter that does not care — every one under
+    /// test — need not mention it.
+    fn run_directory(&self, _name: &str) {}
 }
 
 /// Emits the `[QT_INFO]` and `[QT_PROGRESS]` lines the GUI parses.
@@ -25,6 +40,10 @@ impl Progress for StdoutProgress {
 
     fn step(&self, current: usize, total: usize, description: &str) {
         mosna_io::emit_qt_progress(current, total, description);
+    }
+
+    fn run_directory(&self, name: &str) {
+        println!("[QT_RUN] {name}");
     }
 }
 
@@ -44,6 +63,7 @@ mod tests {
     fn the_silent_reporter_accepts_everything() {
         SilentProgress.info("ignored");
         SilentProgress.step(1, 2, "ignored");
+        SilentProgress.run_directory("1-1-1");
     }
 
     /// The trait must stay object-safe: the pipelines take `&dyn Progress` so

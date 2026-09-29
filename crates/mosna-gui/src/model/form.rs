@@ -196,6 +196,39 @@ impl Form {
         }
     }
 
+    /// Write back one tab of one section, leaving the rest of the document
+    /// alone.
+    ///
+    /// What a sweep needs: the General settings every run of its grid shares,
+    /// without the sub-sections, which are the thing it varies. Writing those
+    /// back too would take whatever the Parameters panel happened to be showing
+    /// and make it the starting point of a grid the user had already described
+    /// elsewhere.
+    pub fn apply_tab_to(&self, config: &mut RawConfig, section: &str, tab: &str) {
+        let Some(section_state) = self.sections.iter().find(|s| s.name == section) else {
+            return;
+        };
+        let Some(tab_state) = section_state.tabs.iter().find(|t| t.name == tab) else {
+            return;
+        };
+        for group in &tab_state.groups {
+            for field in &group.fields {
+                let value = field.value();
+                if tab_state.name == "General" {
+                    config.set(&section_state.name, &field.key, value);
+                } else {
+                    set_nested(
+                        config,
+                        &section_state.name,
+                        &tab_state.name,
+                        &field.key,
+                        value,
+                    );
+                }
+            }
+        }
+    }
+
     /// Grey out the parameters the chosen algorithms do not use.
     ///
     /// Port of `update_clustering_fields`: `resolution` belongs to leiden,
@@ -580,5 +613,50 @@ Niche Analysis:
             }
             other => panic!("expected a column picker, got {other:?}"),
         }
+    }
+
+    /// A sweep writes back only the General settings its grid shares, so the
+    /// sub-sections it varies are not overwritten by whatever the Parameters
+    /// panel happened to be showing.
+    #[test]
+    fn one_tab_can_be_written_back_on_its_own() {
+        let mut form = form();
+        form.set_text(
+            "Niche Analysis",
+            "General",
+            "Processing method",
+            "Per sample",
+        );
+        // Different from what the fixture holds, so the assertion below means
+        // something.
+        form.set_text("Niche Analysis", "Aggregated nodes", "metric", "manhattan");
+
+        let mut config = RawConfig::from_yaml_str(SAMPLE).unwrap();
+        form.apply_tab_to(&mut config, "Niche Analysis", "General");
+
+        assert_eq!(
+            config
+                .get("Niche Analysis", "Processing method")
+                .and_then(|v| v.as_str()),
+            Some("Per sample"),
+            "the General tab was not written"
+        );
+        assert_eq!(
+            config
+                .get("Niche Analysis", "Aggregated nodes")
+                .and_then(|sub| sub.get("metric"))
+                .and_then(|v| v.as_str()),
+            Some("cosine"),
+            "a sub-section the sweep varies was written back over"
+        );
+    }
+
+    /// A tab that is not there writes nothing rather than panicking.
+    #[test]
+    fn writing_back_an_absent_tab_does_nothing() {
+        let mut config = RawConfig::from_yaml_str(SAMPLE).unwrap();
+        let before = config.to_yaml_string().unwrap();
+        form().apply_tab_to(&mut config, "Niche Analysis", "Nowhere");
+        assert_eq!(config.to_yaml_string().unwrap(), before);
     }
 }

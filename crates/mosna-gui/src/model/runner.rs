@@ -123,6 +123,12 @@ pub enum OutputLine {
         total: usize,
         description: String,
     },
+    /// The run directory the analysis has just claimed.
+    ///
+    /// A run's numbers come from the register while it runs, so this is the
+    /// only reliable way for a sweep to link what it launched to what it
+    /// produced — see [`mosna_pipeline::progress::Progress::run_directory`].
+    Run(String),
     /// Anything else: shown in the log, nothing more.
     Plain,
 }
@@ -142,6 +148,13 @@ pub enum OutputLine {
 pub fn parse_output_line(line: &str) -> OutputLine {
     if let Some(message) = line.strip_prefix("[QT_INFO]") {
         return OutputLine::Info(message.trim().to_string());
+    }
+
+    if let Some(name) = line.strip_prefix("[QT_RUN]") {
+        let name = name.trim();
+        if !name.is_empty() {
+            return OutputLine::Run(name.to_string());
+        }
     }
 
     if let Some(payload) = line.strip_prefix("[QT_PROGRESS]") {
@@ -323,5 +336,36 @@ mod tests {
             "Clear temporary data",
             "clearing is still the last thing offered"
         );
+    }
+
+    /// A sweep links the configuration it launched to the results it produced
+    /// through this line, and nothing else: the numbers are handed out by the
+    /// register while the run is going, so nothing outside knows them before.
+    #[test]
+    fn a_run_line_carries_its_directory() {
+        assert_eq!(
+            parse_output_line("[QT_RUN] 1-1-3"),
+            OutputLine::Run("1-1-3".to_string())
+        );
+        assert_eq!(
+            parse_output_line("[QT_RUN]  ps-2  "),
+            OutputLine::Run("ps-2".to_string())
+        );
+    }
+
+    /// An empty one names nothing and is not guessed at.
+    #[test]
+    fn a_run_line_without_a_directory_is_plain_output() {
+        assert_eq!(parse_output_line("[QT_RUN]"), OutputLine::Plain);
+        assert_eq!(parse_output_line("[QT_RUN]   "), OutputLine::Plain);
+    }
+
+    /// And it is not mistaken for the lines that share its shape.
+    #[test]
+    fn a_run_line_is_not_an_info_line() {
+        assert!(matches!(
+            parse_output_line("[QT_INFO] 1-1-3"),
+            OutputLine::Info(_)
+        ));
     }
 }

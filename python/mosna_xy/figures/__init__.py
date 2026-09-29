@@ -20,6 +20,7 @@ from mosna_xy.figures import (
     mixing_matrix,
     network,
     niche_composition,
+    sensitivity,
 )
 from mosna_xy.spec import Spec
 
@@ -36,6 +37,9 @@ KINDS: tuple[str, ...] = (
     "niche_composition",
     "histogram",
     "embedding",
+    sensitivity.AGREEMENT_KIND,
+    sensitivity.MATRIX_KIND,
+    sensitivity.STABILITY_KIND,
 )
 
 #: What draws each of them.
@@ -48,4 +52,7 @@ BUILDERS: dict[str, Callable[[Spec], object | None]] = {
     niche_composition.KIND: niche_composition.build,
     histogram.KIND: histogram.build,
     embedding.KIND: embedding.build,
+    sensitivity.AGREEMENT_KIND: sensitivity.build_agreement,
+    sensitivity.MATRIX_KIND: sensitivity.build_matrix,
+    sensitivity.STABILITY_KIND: sensitivity.build_stability,
 }

@@ -26,6 +26,7 @@ pub mod niche_record;
 pub mod niche_runs;
 pub mod progress;
 pub mod report;
+pub mod sweep_compare;
 pub mod tysserand_network;
 pub mod verif_cpu;
 
@@ -33,8 +34,9 @@ pub use assortativity::assortativity;
 pub use clear_temporary::clear_temporary;
 pub use error::{PipelineError, Result};
 pub use figures::{FigureSink, NoFigures};
-pub use niche_analysis::niche_analysis;
+pub use niche_analysis::{niche_analysis, niche_analysis_in};
 pub use progress::{Progress, SilentProgress, StdoutProgress};
 pub use report::generate_report;
+pub use sweep_compare::compare_sweep;
 pub use tysserand_network::tysserand_network;
 pub use verif_cpu::verif_cpu;

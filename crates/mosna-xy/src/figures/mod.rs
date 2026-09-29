@@ -14,3 +14,4 @@ pub mod histogram;
 pub mod mean_std;
 pub mod mixing_matrix;
 pub mod network;
+pub mod sensitivity;

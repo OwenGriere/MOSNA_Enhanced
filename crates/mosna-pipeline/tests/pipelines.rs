@@ -11,7 +11,8 @@ use mosna_config::RawConfig;
 use mosna_io::read::get_opener::{read_table, Extension};
 use mosna_io::{find_sample, Table};
 use mosna_pipeline::{
-    assortativity, clear_temporary, niche_analysis, tysserand_network, NoFigures, SilentProgress,
+    assortativity, clear_temporary, niche_analysis, niche_analysis_in, tysserand_network,
+    NoFigures, SilentProgress,
 };
 
 /// A working directory holding a `raw` sub-directory of nodes files.
@@ -1152,8 +1153,13 @@ fn a_network_directory_that_is_not_parquet_is_refused_before_anything_runs() {
     let before = write_csv_cohort(&csv_dir);
 
     let configuration = with_network_directory(config(), "csv_net", "csv");
-    let error = niche_analysis(&configuration, workspace.root(), &SilentProgress, &NoFigures)
-        .expect_err("a CSV network directory was accepted");
+    let error = niche_analysis(
+        &configuration,
+        workspace.root(),
+        &SilentProgress,
+        &NoFigures,
+    )
+    .expect_err("a CSV network directory was accepted");
 
     let message = error.to_string();
     assert!(message.contains("parquet"), "{message}");
@@ -1213,7 +1219,10 @@ fn labels_of(workspace: &Workspace, column: &str) -> Vec<f64> {
 /// The same configuration with a different edge rule in step 1.
 fn with_edges_method(config: RawConfig, method: &str) -> RawConfig {
     edit(config, |yaml| {
-        yaml.replace("  Edges method: delaunay", &format!("  Edges method: {method}"))
+        yaml.replace(
+            "  Edges method: delaunay",
+            &format!("  Edges method: {method}"),
+        )
     })
 }
 
@@ -1232,8 +1241,11 @@ fn with_network_directory(config: RawConfig, directory: &str, extension: &str) -
         let (head, tail) = yaml.split_at(niche);
         format!(
             "{head}{}",
-            tail.replace("  Network directory: Default", &format!("  Network directory: {directory}"))
-                .replace("  Extension: parquet", &format!("  Extension: {extension}"))
+            tail.replace(
+                "  Network directory: Default",
+                &format!("  Network directory: {directory}")
+            )
+            .replace("  Extension: parquet", &format!("  Extension: {extension}"))
         )
     })
 }
@@ -1335,7 +1347,12 @@ fn the_register_stays_readable_under_concurrent_runs() {
         .map(|n| {
             let root = root.clone();
             std::thread::spawn(move || {
-                niche_analysis(&with_n_clusters(config(), n), &root, &SilentProgress, &NoFigures)
+                niche_analysis(
+                    &with_n_clusters(config(), n),
+                    &root,
+                    &SilentProgress,
+                    &NoFigures,
+                )
             })
         })
         .collect();
@@ -1370,7 +1387,9 @@ fn a_recycled_number_does_not_overwrite_another_runs_results() {
     let first = with_order(config(), 2);
     niche_analysis(&first, workspace.root(), &SilentProgress, &NoFigures).unwrap();
     let kept = std::fs::read_to_string(
-        workspace.root().join("Niche_Analysis/1-1-1/parameters.json"),
+        workspace
+            .root()
+            .join("Niche_Analysis/1-1-1/parameters.json"),
     )
     .unwrap();
 
@@ -1382,7 +1401,9 @@ fn a_recycled_number_does_not_overwrite_another_runs_results() {
 
     assert_eq!(
         std::fs::read_to_string(
-            workspace.root().join("Niche_Analysis/1-1-1/parameters.json")
+            workspace
+                .root()
+                .join("Niche_Analysis/1-1-1/parameters.json")
         )
         .unwrap(),
         kept,
@@ -1406,7 +1427,10 @@ fn the_same_settings_twice_reuse_their_directory_and_say_so() {
         "a re-run of identical settings was not announced as one: {:?}",
         spoken.lines()
     );
-    assert_eq!(run_directories(&workspace.root().join("Niche_Analysis")).len(), 1);
+    assert_eq!(
+        run_directories(&workspace.root().join("Niche_Analysis")).len(),
+        1
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -1447,7 +1471,13 @@ fn a_run_after_a_failure_is_not_told_it_has_run_before() {
     );
 
     let spoken = Spoken::default();
-    niche_analysis(&with_n_clusters(config(), 2), workspace.root(), &spoken, &NoFigures).unwrap();
+    niche_analysis(
+        &with_n_clusters(config(), 2),
+        workspace.root(),
+        &spoken,
+        &NoFigures,
+    )
+    .unwrap();
     assert!(
         !spoken.said("same settings"),
         "a fresh run was announced as a repeat: {:?}",
@@ -1492,7 +1522,9 @@ fn a_per_sample_run_records_each_sample_as_it_goes() {
     assert_eq!(samples.len(), 3, "{run}");
     for numbers in samples.values() {
         assert!(
-            numbers.as_str().is_some_and(|n| n.matches('-').count() == 2),
+            numbers
+                .as_str()
+                .is_some_and(|n| n.matches('-').count() == 2),
             "a sample does not name its cache numbers: {run}"
         );
     }
@@ -1586,7 +1618,10 @@ fn changing_the_normalisation_records_a_rendering_rather_than_a_run() {
     niche_analysis(&clr, workspace.root(), &spoken, &NoFigures).unwrap();
 
     // One run, not two.
-    assert_eq!(run_directories(&workspace.root().join("Niche_Analysis")).len(), 1);
+    assert_eq!(
+        run_directories(&workspace.root().join("Niche_Analysis")).len(),
+        1
+    );
     assert!(
         !spoken.said("overwritten"),
         "adding a rendering was announced as an overwrite: {:?}",
@@ -1628,7 +1663,10 @@ fn with_clusterer(config: RawConfig, clusterer: &str) -> RawConfig {
 /// The same configuration with a different normalisation.
 fn with_normalize(config: RawConfig, normalize: &str) -> RawConfig {
     edit(config, |yaml| {
-        yaml.replace("    normalize: total", &format!("    normalize: {normalize}"))
+        yaml.replace(
+            "    normalize: total",
+            &format!("    normalize: {normalize}"),
+        )
     })
 }
 
@@ -1669,8 +1707,13 @@ fn a_missing_custom_network_directory_is_reported_as_a_path() {
     let workspace = Workspace::new(2, 36, &["A", "B"]);
     let configuration = with_network_directory(config(), "not_here", "parquet");
 
-    let error = niche_analysis(&configuration, workspace.root(), &SilentProgress, &NoFigures)
-        .expect_err("a missing custom directory was not reported");
+    let error = niche_analysis(
+        &configuration,
+        workspace.root(),
+        &SilentProgress,
+        &NoFigures,
+    )
+    .expect_err("a missing custom directory was not reported");
 
     let message = error.to_string();
     assert!(message.contains("not_here"), "{message}");
@@ -1827,7 +1870,10 @@ fn a_per_sample_run_still_caches_each_sample_separately() {
         .iter()
         .filter(|line| line.contains("Reusing the cached projection"))
         .count();
-    assert_eq!(reused, 2, "one projection per sample should have been reused");
+    assert_eq!(
+        reused, 2,
+        "one projection per sample should have been reused"
+    );
 }
 
 /// The aggregated mode is untouched: it still numbers its runs `a-r-c`.
@@ -1957,17 +2003,14 @@ fn a_per_sample_run_that_fails_is_not_left_running() {
 
     // A phenotype column nothing has: the run gets as far as the composition
     // of its first sample and fails there.
-    let doomed = edit(
-        with_processing_method(config(), "Per sample"),
-        |yaml| {
-            let at = yaml.find("Niche Analysis:").unwrap();
-            let (head, tail) = yaml.split_at(at);
-            format!(
-                "{head}{}",
-                tail.replace("  Phenotype column: Cluster", "  Phenotype column: Absent")
-            )
-        },
-    );
+    let doomed = edit(with_processing_method(config(), "Per sample"), |yaml| {
+        let at = yaml.find("Niche Analysis:").unwrap();
+        let (head, tail) = yaml.split_at(at);
+        format!(
+            "{head}{}",
+            tail.replace("  Phenotype column: Cluster", "  Phenotype column: Absent")
+        )
+    });
     assert!(niche_analysis(&doomed, workspace.root(), &SilentProgress, &NoFigures).is_err());
 
     let register = register_of(workspace.root());
@@ -2150,8 +2193,13 @@ fn a_numbered_run_that_was_passed_over_leaves_no_entry_behind() {
     let workspace = Workspace::new(2, 36, &["A", "B"]);
     tysserand_network(&config(), workspace.root(), &SilentProgress, &NoFigures).unwrap();
 
-    niche_analysis(&with_order(config(), 2), workspace.root(), &SilentProgress, &NoFigures)
-        .unwrap();
+    niche_analysis(
+        &with_order(config(), 2),
+        workspace.root(),
+        &SilentProgress,
+        &NoFigures,
+    )
+    .unwrap();
     std::fs::remove_file(workspace.root().join("Niche_Analysis/runs.json")).unwrap();
     niche_analysis(&config(), workspace.root(), &SilentProgress, &NoFigures).unwrap();
 
@@ -2334,7 +2382,250 @@ fn a_clusterer_without_a_graph_reports_no_components() {
     )
     .unwrap();
     assert!(
-        run["result"].get("graph_components").is_none_or(|v| v.is_null()),
+        run["result"]
+            .get("graph_components")
+            .is_none_or(|v| v.is_null()),
         "gmm claims a graph it never built: {run}"
     );
+}
+
+// ---------------------------------------------------------------------------
+// What the progress bar is counting
+// ---------------------------------------------------------------------------
+
+/// Step 3 used to report three steps, with the reduction and the clustering
+/// merged into the second. They are the two stages whose cost differs most —
+/// a projection is minutes, a partition is seconds — so a bar that lumps them
+/// together sits still through the expensive one and cannot say which is
+/// running.
+#[test]
+fn the_reduction_and_the_clustering_are_counted_apart() {
+    let workspace = Workspace::new(2, 36, &["A", "B"]);
+    tysserand_network(&config(), workspace.root(), &SilentProgress, &NoFigures).unwrap();
+
+    let steps = RecordingSteps::default();
+    niche_analysis(&config(), workspace.root(), &steps, &NoFigures).unwrap();
+
+    let seen = steps.descriptions();
+    for stage in ["aggregation", "reduction", "clustering"] {
+        assert!(
+            seen.iter().any(|d| d.to_lowercase().contains(stage)),
+            "no step announced the {stage}: {seen:?}"
+        );
+    }
+
+    // And every step of one run counts against the same total.
+    let totals: std::collections::BTreeSet<usize> =
+        steps.steps().iter().map(|(_, total, _)| *total).collect();
+    assert_eq!(totals.len(), 1, "the total moved mid-run: {totals:?}");
+    assert!(
+        *totals.iter().next().unwrap() >= 4,
+        "the stages were not counted apart"
+    );
+}
+
+/// A run without a reduction has no reduction stage to wait for, and must not
+/// leave a quarter of the bar unexplained.
+#[test]
+fn a_run_without_a_reduction_counts_one_stage_fewer() {
+    let workspace = Workspace::new(2, 36, &["A", "B"]);
+    let configuration = config_with_reducer("none");
+    tysserand_network(
+        &configuration,
+        workspace.root(),
+        &SilentProgress,
+        &NoFigures,
+    )
+    .unwrap();
+
+    let steps = RecordingSteps::default();
+    niche_analysis(&configuration, workspace.root(), &steps, &NoFigures).unwrap();
+
+    let last = steps.steps().last().cloned().expect("some progress");
+    assert_eq!(last.0, last.1, "the bar did not reach its total");
+    assert!(
+        !steps
+            .descriptions()
+            .iter()
+            .any(|d| d.to_lowercase().contains("reduction")),
+        "a run with no reduction announced one"
+    );
+}
+
+/// Records the progress steps a run reports, so a test can assert on the bar
+/// rather than on the log.
+#[derive(Default)]
+struct RecordingSteps(std::sync::Mutex<Vec<(usize, usize, String)>>);
+
+impl mosna_pipeline::progress::Progress for RecordingSteps {
+    fn info(&self, _message: &str) {}
+    fn step(&self, current: usize, total: usize, description: &str) {
+        self.0
+            .lock()
+            .unwrap()
+            .push((current, total, description.to_string()));
+    }
+}
+
+impl RecordingSteps {
+    fn steps(&self) -> Vec<(usize, usize, String)> {
+        self.0.lock().unwrap().clone()
+    }
+    fn descriptions(&self) -> Vec<String> {
+        self.steps().into_iter().map(|(_, _, d)| d).collect()
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Where a run's results are written
+// ---------------------------------------------------------------------------
+
+/// A sweep of two hundred runs would bury the handful a user started
+/// deliberately, so its results go in a sub-directory of their own. The
+/// register does not move with them — see the test below for why.
+#[test]
+fn a_run_can_write_its_results_into_a_sub_directory() {
+    let workspace = Workspace::new(2, 36, &["A", "B"]);
+    tysserand_network(&config(), workspace.root(), &SilentProgress, &NoFigures).unwrap();
+
+    niche_analysis_in(
+        &config(),
+        workspace.root(),
+        Some("sensitivity_analysis"),
+        &SilentProgress,
+        &NoFigures,
+    )
+    .unwrap();
+
+    let niche_dir = workspace.root().join("Niche_Analysis");
+    assert!(
+        niche_dir
+            .join("sensitivity_analysis/1-1-1/run.json")
+            .is_file(),
+        "the run did not land in its sub-directory: {:?}",
+        run_directories(&niche_dir)
+    );
+    assert!(
+        !niche_dir.join("1-1-1").exists(),
+        "the run also landed at the top level"
+    );
+
+    // The register stays where every run's register is.
+    assert!(niche_dir.join("runs.json").is_file());
+    assert!(!niche_dir.join("sensitivity_analysis/runs.json").exists());
+}
+
+/// The intermediate files do not move: they are named by the run's numbers and
+/// shared with every other run that computes the same stage, which is what lets
+/// a sweep read back what a hand-started run already produced.
+#[test]
+fn a_run_in_a_sub_directory_shares_the_intermediate_files() {
+    let workspace = Workspace::new(2, 36, &["A", "B"]);
+    tysserand_network(&config(), workspace.root(), &SilentProgress, &NoFigures).unwrap();
+
+    // By hand first, then the same settings as part of a sweep.
+    niche_analysis(&config(), workspace.root(), &SilentProgress, &NoFigures).unwrap();
+
+    let spoken = Spoken::default();
+    niche_analysis_in(
+        &config(),
+        workspace.root(),
+        Some("sensitivity_analysis"),
+        &spoken,
+        &NoFigures,
+    )
+    .unwrap();
+
+    for stage in ["aggregated features", "projection", "partition"] {
+        assert!(
+            spoken.said(&format!("Reusing the cached {stage}")),
+            "the sweep recomputed the {stage} the first run had already done"
+        );
+    }
+    assert!(
+        workspace
+            .root()
+            .join("temp/intermediate_files/var_aggreg-1/var_aggreg_1.parquet")
+            .is_file(),
+        "the intermediate files moved with the results"
+    );
+}
+
+/// The reason the register stays put: run numbers name the label column written
+/// into every nodes file. A sweep numbering from one alongside hand-started
+/// runs would write a second, different `niches_1-1-1` over the first.
+#[test]
+fn a_sub_directory_does_not_restart_the_numbering() {
+    let workspace = Workspace::new(2, 36, &["A", "B"]);
+    tysserand_network(&config(), workspace.root(), &SilentProgress, &NoFigures).unwrap();
+
+    niche_analysis(&config(), workspace.root(), &SilentProgress, &NoFigures).unwrap();
+    niche_analysis_in(
+        &with_n_clusters(config(), 2),
+        workspace.root(),
+        Some("sensitivity_analysis"),
+        &SilentProgress,
+        &NoFigures,
+    )
+    .unwrap();
+
+    let niche_dir = workspace.root().join("Niche_Analysis");
+    assert!(niche_dir.join("1-1-1").is_dir(), "the hand-started run");
+    assert!(
+        niche_dir.join("sensitivity_analysis/1-1-2").is_dir(),
+        "the swept run took the next number, not the first: {:?}",
+        run_directories(&niche_dir.join("sensitivity_analysis"))
+    );
+
+    // Two distinct label columns, so the two partitions can be told apart.
+    let table = read_table(
+        workspace.net_dir().join("nodes_patient-1_sample-1.parquet"),
+        Extension::Parquet,
+    )
+    .unwrap();
+    assert!(table.has_column("niches_1-1-1"));
+    assert!(table.has_column("niches_1-1-2"));
+}
+
+/// A per-sample sweep lands in the sub-directory too, keeping its own shape.
+#[test]
+fn a_per_sample_run_lands_in_the_sub_directory_as_well() {
+    let workspace = Workspace::new(2, 36, &["A", "B"]);
+    tysserand_network(&config(), workspace.root(), &SilentProgress, &NoFigures).unwrap();
+
+    niche_analysis_in(
+        &with_processing_method(config(), "Per sample"),
+        workspace.root(),
+        Some("sensitivity_analysis"),
+        &SilentProgress,
+        &NoFigures,
+    )
+    .unwrap();
+
+    let run = workspace
+        .root()
+        .join("Niche_Analysis/sensitivity_analysis/ps-1");
+    assert!(run.join("run.json").is_file(), "{run:?}");
+    assert!(run.join("patient-1_sample-1/run.json").is_file());
+}
+
+/// Without a sub-directory nothing changes: a run started from the action bar
+/// writes where it always has.
+#[test]
+fn a_run_without_a_sub_directory_writes_where_it_always_has() {
+    let workspace = Workspace::new(2, 36, &["A", "B"]);
+    tysserand_network(&config(), workspace.root(), &SilentProgress, &NoFigures).unwrap();
+    niche_analysis_in(
+        &config(),
+        workspace.root(),
+        None,
+        &SilentProgress,
+        &NoFigures,
+    )
+    .unwrap();
+
+    assert!(workspace
+        .root()
+        .join("Niche_Analysis/1-1-1/run.json")
+        .is_file());
 }

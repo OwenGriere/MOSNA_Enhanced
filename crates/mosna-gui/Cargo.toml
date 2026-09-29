@@ -45,6 +45,8 @@ image = { version = "0.25", default-features = false, features = [
     "ico",
 ] }
 rfd = "0.17"
+serde_json.workspace = true
 
 [dev-dependencies]
+mosna-pipeline = { path = "../mosna-pipeline" }
 tempfile = "3"

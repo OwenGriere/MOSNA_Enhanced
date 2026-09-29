@@ -4,11 +4,13 @@
 //! and `merge_niche_pheno.py`.
 
 pub mod aggregate_cell_types;
+pub mod agreement;
 pub mod composition;
 pub mod find_all_phenotypes;
 pub mod merge_niche_pheno;
 
 pub use aggregate_cell_types::aggregate_cell_types;
+pub use agreement::{adjusted_mutual_information, adjusted_rand_index, jaccard_stability};
 pub use composition::{make_niches_composition, NicheComposition, Normalize};
 pub use find_all_phenotypes::find_all_phenotypes;
 pub use merge_niche_pheno::merge_niche_pheno;

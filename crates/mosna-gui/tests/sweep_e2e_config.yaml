@@ -1,0 +1,56 @@
+Tysserand:
+  Nodes directory: raw
+  Patient column name: patient
+  Sample column name: sample
+  Extension: parquet
+  X coordinates column: X_position
+  Y coordinates column: Y_position
+  Phenotype column: Cluster
+  Edges method: delaunay
+  Min neighbors: 3
+  CPU: 4
+# A complete Niche Analysis section, so a test can check that every
+# configuration a sweep produces still passes `assert_params`.
+Niche Analysis:
+  Network directory: Default
+  Extension: parquet
+  Patient column name: patient
+  Sample column name: sample
+  Processing method: Aggregated nodes
+  Niches method: NAS
+  Phenotype column: Cluster
+  Column to aggregate: Cluster
+  Plot Network: false
+  X coordinates column for niches: X_position
+  Y coordinates column for niches: Y_position
+  CPU: 4
+  Aggregated nodes:
+    reducer_type: umap
+    dim_clust: 2
+    n_neighbors: 20
+    metric: euclidean
+    min_dist: 0.0
+    clusterer_type: gmm
+    k_cluster: 20
+    n_clusters: 6
+    resolution: 0.05
+    min_cluster_size: 100
+    normalize: total
+    order: '1'
+    stat_funcs: np.mean,np.std
+    stat_names: [mean, std]
+  Per sample:
+    reducer_type: umap
+    dim_clust: 2
+    n_neighbors: 20
+    metric: euclidean
+    min_dist: 0.0
+    clusterer_type: gmm
+    k_cluster: 20
+    n_clusters: 5
+    resolution: 0.05
+    min_cluster_size: 100
+    normalize: total
+    order: '1'
+    stat_funcs: np.mean,np.std
+    stat_names: [mean, std]

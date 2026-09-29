@@ -13,6 +13,10 @@ pub fn show(app: &mut MosnaApp, ui: &mut egui::Ui) {
         )
         .show(ui, |ui| {
             ui.horizontal(|ui| {
+                // Top left, before anything else: which of the two MOSNA
+                // interfaces this window is.
+                crate::panels::badge::show(ui);
+
                 let text = match app.working_dir() {
                     Some(path) => format!("Working directory: {}", path.display()),
                     None => "Working directory: not set".to_string(),

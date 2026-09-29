@@ -7,4 +7,5 @@ pub mod form;
 pub mod log;
 pub mod network;
 pub mod runner;
+pub mod sweep;
 pub mod viewer;

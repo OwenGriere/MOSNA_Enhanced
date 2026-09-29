@@ -162,6 +162,31 @@ impl<R: Run> FigureSink for Figures<R> {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
+    fn sensitivity(
+        &self,
+        pairs: &[String],
+        ari: &[f64],
+        ami: &[f64],
+        runs: &[String],
+        matrix: &[f64],
+        reference: &str,
+        niches: &[u32],
+        stability_runs: &[String],
+        stability: &[f64],
+        save_dir: &Path,
+    ) -> mosna_pipeline::Result<()> {
+        self.push(figures::sensitivity::agreement(pairs, ari, ami, save_dir))?;
+        self.push(figures::sensitivity::matrix(runs, matrix, save_dir))?;
+        self.push(figures::sensitivity::stability(
+            reference,
+            niches,
+            stability_runs,
+            stability,
+            save_dir,
+        ))
+    }
+
     fn niche_composition(
         &self,
         composition: &NicheComposition,

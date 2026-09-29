@@ -71,6 +71,33 @@ pub trait FigureSink: Sync {
         Ok(())
     }
 
+    /// The three figures a finished sweep is read through.
+    ///
+    /// Grouped into one method rather than three because they are one answer:
+    /// the agreement along the grid, the agreement between every pair, and the
+    /// fate of each niche. A caller with one of them and not the others has a
+    /// sweep it cannot read.
+    ///
+    /// `matrix` is row-major and square over `runs`; `stability` is row-major,
+    /// one row per niche of `reference` and one column per run in
+    /// `stability_runs`.
+    #[allow(clippy::too_many_arguments)]
+    fn sensitivity(
+        &self,
+        _pairs: &[String],
+        _ari: &[f64],
+        _ami: &[f64],
+        _runs: &[String],
+        _matrix: &[f64],
+        _reference: &str,
+        _niches: &[u32],
+        _stability_runs: &[String],
+        _stability: &[f64],
+        _save_dir: &Path,
+    ) -> crate::Result<()> {
+        Ok(())
+    }
+
     /// The clustered 2-D projection, from `package/core/NAS/plot_embedding.py`.
     fn embedding(
         &self,

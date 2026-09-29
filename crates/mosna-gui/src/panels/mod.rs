@@ -4,16 +4,49 @@
 //! directory, then a horizontal split of Browser, Viewer and Parameters, with
 //! the status bar and progress bar under the viewer.
 
+pub mod badge;
 pub mod browser;
 pub mod documentation;
 pub mod layout;
 pub mod modals;
 pub mod network;
 pub mod parameters;
+pub mod sensitivity;
 pub mod top_bar;
 pub mod viewer;
 
 use crate::theme;
+
+/// A drop-down for choosing several things at once.
+///
+/// # Why this exists rather than a bare `ComboBox`
+///
+/// egui closes a combo box on *any* click, inside the popup or outside it —
+/// `PopupCloseBehavior::CloseOnClick` is its default. That is right for a menu
+/// where one value is picked and the menu's work is then done, and wrong for
+/// every menu in MOSNA where several are ticked: choosing four phenotypes meant
+/// opening the menu four times, and the code that drew them said in a comment
+/// that the menu stayed open while it did not.
+///
+/// Single-choice menus keep the default deliberately. Making those stay open
+/// would leave a popup covering the value it had just set, waiting for a click
+/// somewhere else to dismiss it.
+pub fn multi_select<R>(
+    ui: &mut egui::Ui,
+    id: impl std::hash::Hash + std::fmt::Debug,
+    caption: impl Into<egui::WidgetText>,
+    width: Option<f32>,
+    contents: impl FnOnce(&mut egui::Ui) -> R,
+) -> Option<R> {
+    let mut combo = egui::ComboBox::from_id_salt(id)
+        .selected_text(caption)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .wrap_mode(egui::TextWrapMode::Truncate);
+    if let Some(width) = width {
+        combo = combo.width(width);
+    }
+    combo.show_ui(ui, contents).inner
+}
 
 /// A panel heading, in the accent colour.
 pub fn header(ui: &mut egui::Ui, text: &str) {

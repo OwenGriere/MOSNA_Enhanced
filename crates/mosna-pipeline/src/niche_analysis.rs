@@ -37,6 +37,69 @@ use crate::progress::Progress;
 const MODE_AGGREGATED: &str = "aggregated";
 const MODE_PER_SAMPLE: &str = "per_sample";
 
+/// The stages of one run, in order, as the progress bar counts them.
+///
+/// # Why they are counted apart
+///
+/// Step 3 used to report three steps with the reduction and the clustering
+/// merged into the second. Those are the two stages whose cost differs most —
+/// a projection is minutes on a real cohort, a partition is seconds — so the
+/// bar sat still through the expensive one and could not say which was
+/// running. A sweep makes that worse: the same two stages are what the cache
+/// does or does not spare, and a bar that cannot tell them apart cannot show
+/// the sweep working.
+///
+/// The reduction is absent when `reducer_type: none`, so the total is four or
+/// three depending on the run, and every step of one run counts against the
+/// same total.
+struct Stages {
+    /// The stages this run actually has, in order.
+    names: Vec<&'static str>,
+    done: std::cell::Cell<usize>,
+}
+
+impl Stages {
+    fn of(params: &NicheParams, what: &'static str) -> Self {
+        let mut names = vec!["aggregation"];
+        if params.reducer_type != ReducerType::None {
+            names.push("reduction");
+        }
+        names.push("clustering");
+        names.push(what);
+        Self {
+            names,
+            done: std::cell::Cell::new(0),
+        }
+    }
+
+    fn total(&self) -> usize {
+        self.names.len()
+    }
+
+    /// Announce that the stage now starting is under way.
+    fn begin(&self, progress: &dyn Progress) {
+        let at = self.done.get();
+        let name = self.names.get(at).copied().unwrap_or("finishing");
+        progress.step(
+            at,
+            self.total(),
+            &format!("[PROCESS] Niche analysis — {name}"),
+        );
+    }
+
+    /// Announce that the stage just finished is done.
+    fn end(&self, progress: &dyn Progress) {
+        let at = (self.done.get() + 1).min(self.total());
+        self.done.set(at);
+        let name = self.names.get(at).copied().unwrap_or("done");
+        progress.step(
+            at,
+            self.total(),
+            &format!("[PROCESS] Niche analysis — {name}"),
+        );
+    }
+}
+
 /// Identify spatial niches.
 ///
 /// Aggregates each cell's neighbourhood into a feature vector, reduces it with
@@ -45,6 +108,34 @@ const MODE_PER_SAMPLE: &str = "per_sample";
 pub fn niche_analysis(
     config: &RawConfig,
     working_dir: &Path,
+    progress: &dyn Progress,
+    figures: &dyn FigureSink,
+) -> Result<()> {
+    niche_analysis_in(config, working_dir, None, progress, figures)
+}
+
+/// The same, writing its results into a sub-directory of `Niche_Analysis`.
+///
+/// # Why only the results move
+///
+/// A sweep of two hundred runs would bury the handful a user started
+/// deliberately, so it is given a directory of its own —
+/// `Niche_Analysis/sensitivity_analysis/1-1-3/`.
+///
+/// The register does not go with it, and neither do the intermediate files.
+/// Both are keyed on the run's three numbers, and those numbers name the label
+/// column written into every nodes file: a sweep numbering from one alongside
+/// hand-started runs would write a second, different `niches_1-1-1` over the
+/// first, and nothing downstream could tell the two partitions apart. One
+/// register per working directory is what keeps a number meaning one thing.
+///
+/// Sharing the intermediate files is the other half of it, and the half that
+/// makes a sweep affordable: a swept run whose settings a hand-started run
+/// already computed reads every stage back instead of recomputing it.
+pub fn niche_analysis_in(
+    config: &RawConfig,
+    working_dir: &Path,
+    results_in: Option<&str>,
     progress: &dyn Progress,
     figures: &dyn FigureSink,
 ) -> Result<()> {
@@ -122,6 +213,12 @@ pub fn niche_analysis(
     // numbered directory can be read back into the settings behind it.
     let caches = Caches::under(working_dir);
     let niche_dir = working_dir.join("Niche_Analysis");
+    // Where the results land. The register, the lock and the caches all stay
+    // with `niche_dir`; only this moves.
+    let results_dir = match results_in {
+        Some(name) => niche_dir.join(name),
+        None => niche_dir.clone(),
+    };
 
     let cohort = Cohort {
         fingerprint: digest.fingerprint.clone(),
@@ -141,10 +238,11 @@ pub fn niche_analysis(
             &cohort,
             Some(digest.total_rows()),
             &niche_dir,
+            &results_dir,
             MODE_AGGREGATED,
             None,
         )?;
-        let save_dir = announce(&niche_dir, &stems, progress);
+        let save_dir = announce(&results_dir, &stems, progress);
 
         // The outcome is recorded either way: a run that dies half-way is
         // marked failed rather than left claiming to be running, and the
@@ -186,6 +284,7 @@ pub fn niche_analysis(
             &use_attributes,
             &digest,
             &niche_dir,
+            &results_dir,
             &caches,
             &cohort,
             progress,
@@ -360,6 +459,7 @@ impl Stems {
         cohort: &Cohort,
         observations: Option<usize>,
         niche_dir: &Path,
+        results_dir: &Path,
         mode: &str,
         sample: Option<&str>,
     ) -> Result<Self> {
@@ -381,13 +481,13 @@ impl Stems {
                 // A directory that already holds a *different* run keeps it.
                 &|candidate: RunNumbers| {
                     !niche_record::belongs_to_another(
-                        &niche_dir.join(candidate.directory()),
+                        &results_dir.join(candidate.directory()),
                         &fingerprint,
                     )
                 },
             );
             catalogue.save()?;
-            let repeat = niche_dir.join(numbers.directory()).is_dir();
+            let repeat = results_dir.join(numbers.directory()).is_dir();
             (numbers, repeat)
         };
 
@@ -442,7 +542,10 @@ fn clustering_identity(
     clustering: &serde_json::Value,
 ) -> serde_json::Value {
     let mut flat = serde_json::Map::new();
-    for source in [Some(features), reduction, Some(clustering)].into_iter().flatten() {
+    for source in [Some(features), reduction, Some(clustering)]
+        .into_iter()
+        .flatten()
+    {
         if let Some(object) = source.as_object() {
             for (key, value) in object {
                 flat.insert(key.clone(), value.clone());
@@ -495,6 +598,9 @@ fn niche_column(run: &str) -> String {
 fn announce(niche_dir: &Path, stems: &Stems, progress: &dyn Progress) -> PathBuf {
     let name = stems.numbers.directory();
     let save_dir = niche_dir.join(&name);
+    // Said as soon as it is known, so a sweep can link the configuration it
+    // launched to the results it is about to produce.
+    progress.run_directory(&name);
     if stems.repeat {
         progress.info(&format!(
             "[INFO] The same settings were run before as Niche_Analysis/{name}; \
@@ -510,12 +616,7 @@ fn announce(niche_dir: &Path, stems: &Stems, progress: &dyn Progress) -> PathBuf
 /// half-way used to leave that directory empty and unrecorded, so the next run
 /// handed the same number was told its settings had already been run — a
 /// warning about results that did not exist.
-fn finish(
-    niche_dir: &Path,
-    save_dir: &Path,
-    stems: &Stems,
-    outcome: Result<()>,
-) -> Result<()> {
+fn finish(niche_dir: &Path, save_dir: &Path, stems: &Stems, outcome: Result<()>) -> Result<()> {
     match outcome {
         Ok(()) => {
             stems.complete(niche_dir, Status::Done)?;
@@ -560,8 +661,9 @@ fn run_aggregated(
     let params = &settings.aggregated;
     let sample_column = settings.sample_column.as_deref();
 
+    let stages = Stages::of(params, "composition and figures");
     progress.info("[PROCESS] Spatial Omic Features for all networks");
-    progress.step(0, 3, "[PROCESS] Niches Analysis");
+    stages.begin(progress);
 
     let var_aggreg = load_or_compute_features(
         settings,
@@ -575,12 +677,15 @@ fn run_aggregated(
         expected_rows,
         progress,
     )?;
-    progress.step(1, 3, "[PROCESS] Niches Analysis");
+    stages.end(progress);
 
-    progress.info("[PROCESS] Reduction and Clustering of Spatial Niches");
-    let (input, labels, components) =
-        cached_reduce_and_cluster(&var_aggreg, params, caches, stems, progress)?;
-    progress.step(2, 3, "[PROCESS] Niches Analysis");
+    let input = cached_reduce(&var_aggreg, params, caches, stems, progress)?;
+    if stems.reduces {
+        stages.end(progress);
+    }
+    let (labels, components) =
+        cached_cluster(&input, var_aggreg.n_rows, params, caches, stems, progress)?;
+    stages.end(progress);
 
     draw_clusters(&input, &labels, save_dir, progress, figures)?;
     save_embedding(
@@ -619,14 +724,7 @@ fn run_aggregated(
     }
 
     plot_networks(
-        settings,
-        net_dir,
-        extension,
-        data_index,
-        &labels,
-        save_dir,
-        progress,
-        figures,
+        settings, net_dir, extension, data_index, &labels, save_dir, progress, figures,
     )?;
 
     progress.info("[PROCESS] Generate Niches Composition");
@@ -659,7 +757,7 @@ fn run_aggregated(
         Outcome::of(&labels, components),
     )
     .write(save_dir)?;
-    progress.step(3, 3, "[PROCESS] Niches Analysis");
+    stages.end(progress);
     Ok(())
 }
 
@@ -705,6 +803,7 @@ fn run_per_sample(
     aggregate_columns: &[String],
     use_attributes: &[String],
     digest: &niche_cohort::CohortDigest,
+    register_root: &Path,
     save_root: &Path,
     caches: &Caches,
     cohort: &Cohort,
@@ -723,8 +822,8 @@ fn run_per_sample(
     // cluster count. The per-sample caches carry the exact identity.
     let identity = Stems::identity(params, aggregate_columns, use_attributes, cohort, None);
     let run = {
-        let _guard = RegisterLock::acquire(save_root)?;
-        let mut catalogue = Catalogue::load(save_root)?;
+        let _guard = RegisterLock::acquire(register_root)?;
+        let mut catalogue = Catalogue::load(register_root)?;
         let id = catalogue.per_sample_run_avoiding(
             &identity.fingerprint,
             &identity.parameters,
@@ -743,6 +842,7 @@ fn run_per_sample(
     let run_name = PerSampleRun::directory(run);
     let run_dir = save_root.join(&run_name);
     let repeat = run_dir.is_dir();
+    progress.run_directory(&run_name);
 
     // Written before the first sample starts, so the directory is spoken for
     // from the moment it is claimed rather than once something has finished in
@@ -780,6 +880,7 @@ fn run_per_sample(
         aggregate_columns,
         use_attributes,
         digest,
+        register_root,
         save_root,
         &run_dir,
         &run_name,
@@ -797,8 +898,8 @@ fn run_per_sample(
         Status::Failed
     };
     {
-        let _guard = RegisterLock::acquire(save_root)?;
-        let mut catalogue = Catalogue::load(save_root)?;
+        let _guard = RegisterLock::acquire(register_root)?;
+        let mut catalogue = Catalogue::load(register_root)?;
         catalogue.mark_per_sample(run, status);
         catalogue.save()?;
     }
@@ -824,6 +925,7 @@ fn run_every_sample(
     aggregate_columns: &[String],
     use_attributes: &[String],
     digest: &niche_cohort::CohortDigest,
+    register_root: &Path,
     save_root: &Path,
     run_dir: &Path,
     run_name: &str,
@@ -852,6 +954,7 @@ fn run_every_sample(
             use_attributes,
             cohort,
             Some(rows),
+            register_root,
             save_root,
             MODE_PER_SAMPLE,
             Some(&sample),
@@ -876,11 +979,11 @@ fn run_every_sample(
         );
         // `finish` records the sample's own outcome and propagates a failure,
         // so anything past this point is a sample that completed.
-        finish(save_root, &save_dir, sample_stems, outcome)?;
+        finish(register_root, &save_dir, sample_stems, outcome)?;
         done.push(sample.clone());
         {
-            let _guard = RegisterLock::acquire(save_root)?;
-            let mut catalogue = Catalogue::load(save_root)?;
+            let _guard = RegisterLock::acquire(register_root)?;
+            let mut catalogue = Catalogue::load(register_root)?;
             catalogue.record_sample(run, &sample, sample_stems.numbers);
             catalogue.save()?;
         }
@@ -958,8 +1061,15 @@ fn run_one_sample(
             expected_rows,
             progress,
         )?;
-        let (input, labels, components) =
-            cached_reduce_and_cluster(&var_aggreg, params, caches, sample_stems, progress)?;
+        let input = cached_reduce(&var_aggreg, params, caches, sample_stems, progress)?;
+        let (labels, components) = cached_cluster(
+            &input,
+            var_aggreg.n_rows,
+            params,
+            caches,
+            sample_stems,
+            progress,
+        )?;
 
         draw_clusters(&input, &labels, save_dir, progress, figures)?;
         save_embedding(
@@ -984,14 +1094,7 @@ fn run_one_sample(
         }
 
         plot_networks(
-            settings,
-            net_dir,
-            extension,
-            single,
-            &labels,
-            save_dir,
-            progress,
-            figures,
+            settings, net_dir, extension, single, &labels, save_dir, progress, figures,
         )?;
 
         if let Some(phenotype_column) = settings.phenotype_column.as_deref() {
@@ -1100,37 +1203,41 @@ fn load_or_compute_features(
     Ok(var_aggreg)
 }
 
-/// The projection and the partition, each read back when a run already made it.
+/// The projection, read back when a run already made it.
 ///
-/// The two stages are cached separately on purpose: moving `resolution` should
-/// cost the clustering and not the projection, which is the expensive one.
-fn cached_reduce_and_cluster(
+/// Split from the partition on purpose, and not only for the cache: the two
+/// stages are what the progress bar counts apart, and they are what a sweep
+/// pays for separately — moving `resolution` costs the clustering alone, where
+/// it used to cost both.
+fn cached_reduce(
     var_aggreg: &VarAggreg,
     params: &NicheParams,
     caches: &Caches,
     stems: &Stems,
     progress: &dyn Progress,
-) -> Result<(ClusterInput, Vec<u32>, Option<usize>)> {
+) -> Result<ClusterInput> {
     let n_rows = var_aggreg.n_rows;
     let reduction_path = caches.reduction_path(&stems.numbers);
 
-    // A projection belongs to the feature table it projected, and a partition
-    // to the matrix it partitioned. Neither name says so, so each file is asked
-    // what it came from before it is believed.
-    let input = match stems
+    // A projection belongs to the feature table it projected. The name does not
+    // say so, so the file is asked what it came from before it is believed.
+    match stems
         .reduces
         .then(|| niche_cache::read_matrix(&reduction_path, &stems.reduction_source, n_rows))
         .flatten()
     {
         Some((values, width)) => {
             progress.info("[INFO] Reusing the cached projection");
-            ClusterInput {
+            Ok(ClusterInput {
                 values,
                 width,
                 reduced: true,
-            }
+            })
         }
         None => {
+            if stems.reduces {
+                progress.info("[PROCESS] Reduction of Spatial Niches");
+            }
             let input = project(var_aggreg, params)?;
             if stems.reduces {
                 niche_cache::write_matrix(
@@ -1140,33 +1247,42 @@ fn cached_reduce_and_cluster(
                     input.width,
                 )?;
             }
-            input
+            Ok(input)
         }
-    };
+    }
+}
 
+/// The partition, on the same terms.
+fn cached_cluster(
+    input: &ClusterInput,
+    n_rows: usize,
+    params: &NicheParams,
+    caches: &Caches,
+    stems: &Stems,
+    progress: &dyn Progress,
+) -> Result<(Vec<u32>, Option<usize>)> {
     let clustering_path = caches.clustering_path(&stems.numbers);
     let source = stems.clustering_source.as_str();
-    let (labels, components) = match niche_cache::read_labels(&clustering_path, source, n_rows) {
+
+    match niche_cache::read_labels(&clustering_path, source, n_rows) {
         Some(labels) => {
             progress.info("[INFO] Reusing the cached partition");
             // The graph's shape travels with the partition, so a run reading it
             // back reports the same floor as the run that computed it.
-            let components = niche_cache::recorded_components(&clustering_path);
-            (labels, components)
+            Ok((labels, niche_cache::recorded_components(&clustering_path)))
         }
         None => {
-            let (labels, components) = cluster(&input, n_rows, params, progress)?;
+            progress.info("[PROCESS] Clustering of Spatial Niches");
+            let (labels, components) = cluster(input, n_rows, params, progress)?;
             niche_cache::write_labels_with_components(
                 &clustering_path,
                 source,
                 &labels,
                 components,
             )?;
-            (labels, components)
+            Ok((labels, components))
         }
-    };
-
-    Ok((input, labels, components))
+    }
 }
 
 fn compute_features(
@@ -1422,7 +1538,9 @@ fn connected_components(n_rows: usize, edges: &[(usize, usize, f64)]) -> usize {
             parent[ra] = rb;
         }
     }
-    (0..n_rows).filter(|&node| find(&mut parent, node) == node).count()
+    (0..n_rows)
+        .filter(|&node| find(&mut parent, node) == node)
+        .count()
 }
 
 /// Draw each sample's network with its cells coloured by niche.

@@ -2558,8 +2558,10 @@ dependencies = [
  "mosna-core",
  "mosna-io",
  "mosna-paths",
+ "mosna-pipeline",
  "regex",
  "rfd",
+ "serde_json",
  "serde_yaml",
  "tempfile",
 ]

@@ -34,8 +34,8 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 use mosna_pipeline::{
-    assortativity, clear_temporary, generate_report, niche_analysis, tysserand_network,
-    StdoutProgress,
+    assortativity, clear_temporary, compare_sweep, generate_report, niche_analysis_in,
+    tysserand_network, StdoutProgress,
 };
 use mosna_xy::Figures;
 
@@ -110,6 +110,15 @@ pub enum Command {
         file: PathBuf,
         #[arg(long = "working_dir")]
         working_dir: PathBuf,
+        /// Write the results into this sub-directory of `Niche_Analysis`.
+        ///
+        /// A sweep of two hundred runs would otherwise bury the handful started
+        /// by hand. Only the results move: the register and the intermediate
+        /// files stay where they are, because a run's numbers name the label
+        /// column written into every nodes file and two registers would hand
+        /// the same number to two different partitions.
+        #[arg(long = "results-in")]
+        results_in: Option<String>,
         /// Formats each figure is written in, comma-separated.
         ///
         /// Every figure is written as a PNG and as an interactive HTML, which
@@ -118,6 +127,25 @@ pub enum Command {
         /// inspecting one run rather than for comparing many. `--figure-formats
         /// png` halves the output; the HTML can be redrawn later from the
         /// embedding and the cached partition.
+        #[arg(long = "figure-formats", default_value = "png,html")]
+        figure_formats: String,
+    },
+
+    /// Compare the runs of a sensitivity sweep and draw the three figures.
+    ///
+    /// Takes the configuration for the two columns that say how the cohort is
+    /// split, and nothing else: the runs it compares are the directories that
+    /// are there, and their labels are in the network files. It can therefore
+    /// be pointed at a sweep from last week.
+    #[command(name = "compare-sweep")]
+    CompareSweep {
+        #[arg(long = "file")]
+        file: PathBuf,
+        #[arg(long = "working_dir")]
+        working_dir: PathBuf,
+        /// The sub-directory of `Niche_Analysis` holding the sweep.
+        #[arg(long = "results-in", default_value = "sensitivity_analysis")]
+        results_in: String,
         #[arg(long = "figure-formats", default_value = "png,html")]
         figure_formats: String,
     },
@@ -147,6 +175,7 @@ impl Command {
             Command::TysserandNetwork { .. } => "tysserand-network",
             Command::Assortativity { .. } => "assortativity",
             Command::NicheAnalysis { .. } => "niche-analysis",
+            Command::CompareSweep { .. } => "compare-sweep",
             Command::ClearTemporary { .. } => "clear-temporary",
             Command::GenerateReport { .. } => "generate-report",
         }
@@ -159,7 +188,8 @@ impl Command {
         let spelled = match self {
             Command::TysserandNetwork { figure_formats, .. }
             | Command::Assortativity { figure_formats, .. }
-            | Command::NicheAnalysis { figure_formats, .. } => figure_formats.as_str(),
+            | Command::NicheAnalysis { figure_formats, .. }
+            | Command::CompareSweep { figure_formats, .. } => figure_formats.as_str(),
             Command::ClearTemporary { .. } | Command::GenerateReport { .. } => "",
         };
         spelled
@@ -218,11 +248,41 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
         Command::NicheAnalysis {
             ref file,
             ref working_dir,
+            ref results_in,
             ..
         } => {
             let config = mosna_config::get_config(file)?;
             let figures = sink(working_dir);
-            niche_analysis(&config, working_dir, &progress, &figures)?;
+            niche_analysis_in(
+                &config,
+                working_dir,
+                results_in.as_deref(),
+                &progress,
+                &figures,
+            )?;
+            figures.render()?;
+        }
+        Command::CompareSweep {
+            ref file,
+            ref working_dir,
+            ref results_in,
+            ..
+        } => {
+            // Through the typed view rather than by reading the YAML here: the
+            // two columns mean what `NicheAnalysisConfig` says they mean, and a
+            // second reading of the same keys is a second thing to keep in step.
+            let config = mosna_config::get_config(file)?;
+            let settings = mosna_config::NicheAnalysisConfig::from_raw(&config)?;
+
+            let figures = sink(working_dir);
+            compare_sweep(
+                working_dir,
+                results_in,
+                &settings.patient_column,
+                settings.sample_column.as_deref(),
+                &progress,
+                &figures,
+            )?;
             figures.render()?;
         }
         Command::ClearTemporary { ref working_dir } => {
@@ -251,6 +311,7 @@ mod tests {
             "tysserand-network",
             "assortativity",
             "niche-analysis",
+            "compare-sweep",
             "clear-temporary",
             "generate-report",
         ];
@@ -371,6 +432,68 @@ mod tests {
                 ])
                 .is_err(),
                 "`{name}` accepted --figure-formats"
+            );
+        }
+    }
+
+    /// A sweep writes its results apart from the runs started by hand, so two
+    /// hundred of them do not bury the handful that were chosen.
+    #[test]
+    fn an_analysis_can_be_told_where_to_put_its_results() {
+        let cli = Cli::parse_from([
+            "mosna",
+            "niche-analysis",
+            "--file",
+            "c.yaml",
+            "--working_dir",
+            "/w",
+            "--results-in",
+            "sensitivity_analysis",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::NicheAnalysis { results_in, .. } => {
+                assert_eq!(results_in.as_deref(), Some("sensitivity_analysis"));
+            }
+            other => panic!("expected a niche analysis, got {other:?}"),
+        }
+    }
+
+    /// Without it the results go where they always have.
+    #[test]
+    fn results_go_to_the_usual_place_unless_told_otherwise() {
+        let cli = Cli::parse_from([
+            "mosna",
+            "niche-analysis",
+            "--file",
+            "c.yaml",
+            "--working_dir",
+            "/w",
+        ])
+        .unwrap();
+        match cli.command {
+            Command::NicheAnalysis { results_in, .. } => assert_eq!(results_in, None),
+            other => panic!("expected a niche analysis, got {other:?}"),
+        }
+    }
+
+    /// And the steps that write nothing to `Niche_Analysis` do not offer it.
+    #[test]
+    fn the_other_steps_do_not_offer_a_results_directory() {
+        for name in ["tysserand-network", "assortativity"] {
+            assert!(
+                Cli::parse_from([
+                    "mosna",
+                    name,
+                    "--file",
+                    "c.yaml",
+                    "--working_dir",
+                    "/w",
+                    "--results-in",
+                    "x"
+                ])
+                .is_err(),
+                "`{name}` accepted --results-in"
             );
         }
     }

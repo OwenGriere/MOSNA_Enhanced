@@ -381,3 +381,92 @@ def test_axis_names_are_hidden_rather_than_replaced_by_row_numbers(make_spec) ->
 def test_a_title_reaches_the_chart(make_spec) -> None:
     chart = figures.BUILDERS["histogram"](histogram(make_spec, title="Something else"))
     assert chart.title == "Something else"
+
+
+# ---------------------------------------------------------------------------
+# The three figures a finished sweep is read through
+# ---------------------------------------------------------------------------
+
+
+def sweep_agreement(make_spec, **overrides):
+    body = {
+        "arrays": {
+            "ari": (np.array([1.0, 0.42, 0.10]), "f64"),
+            "ami": (np.array([1.0, 0.61, 0.23]), "f64"),
+        },
+        "pairs": ["1-1-1 → 1-1-2", "1-1-2 → 1-1-3", "1-1-3 → 1-1-4"],
+        "colours": ["#1f4e99", "#c47f17"],
+        "title": "Agreement between consecutive runs",
+    }
+    return make_spec("sweep_agreement", stem="Sensitivity_Agreement", **(body | overrides))
+
+
+def sweep_matrix(make_spec, **overrides):
+    body = {
+        "arrays": {
+            "values": (np.array([[1.0, 0.3], [0.3, 1.0]]), "f64"),
+            "domain": (np.array([0.0, 1.0]), "f64"),
+        },
+        "runs": ["1-1-1", "1-1-2"],
+        "title": "Adjusted Rand index between every pair of runs",
+    }
+    return make_spec("sweep_matrix", stem="Sensitivity_Agreement_Matrix", **(body | overrides))
+
+
+def sweep_stability(make_spec, **overrides):
+    body = {
+        "arrays": {
+            "values": (np.array([[1.0, 0.8], [0.4, 0.1]]), "f64"),
+            "domain": (np.array([0.0, 1.0]), "f64"),
+        },
+        "niches": ["0", "1"],
+        "runs": ["1-1-2", "1-1-3"],
+        "title": "How the niches of run 1-1-1 fare in the other runs",
+    }
+    return make_spec("sweep_stability", stem="Sensitivity_Niche_Stability", **(body | overrides))
+
+
+@pytest.mark.parametrize(
+    "build_spec", [sweep_agreement, sweep_matrix, sweep_stability]
+)
+def test_a_sweep_figure_draws(make_spec, build_spec):
+    """Each of the three produces a chart from what Rust queues for it."""
+    spec = build_spec(make_spec)
+    chart = figures.BUILDERS[spec.kind](spec)
+    assert chart is not None
+
+
+@pytest.mark.parametrize(
+    "build_spec", [sweep_agreement, sweep_matrix, sweep_stability]
+)
+def test_a_sweep_figure_with_no_data_draws_nothing(make_spec, build_spec):
+    """A sweep of one run has nothing to compare.
+
+    Nothing to draw is not a failure: the runs themselves succeeded, and a
+    renderer that raised here would turn a sweep that worked into one that
+    reports an error.
+    """
+    spec = build_spec(make_spec, arrays={})
+    assert figures.BUILDERS[spec.kind](spec) is None
+
+
+def test_the_agreement_draws_one_line_per_measure(make_spec):
+    """Both measures, because they part company where the niches are uneven."""
+    spec = sweep_agreement(make_spec)
+    chart = figures.BUILDERS[spec.kind](spec)
+
+    marks = [child for child in chart.children if type(child).__name__ == "Mark"]
+    names = {getattr(mark, "name", None) for mark in marks}
+    assert "ARI" in names
+    assert "AMI" in names
+
+
+def test_the_agreement_draws_without_the_second_measure(make_spec):
+    """A sweep whose mutual information could not be computed still shows the
+    index that could."""
+    spec = sweep_agreement(
+        make_spec,
+        arrays={"ari": (np.array([1.0, 0.4]), "f64")},
+        pairs=["a → b", "b → c"],
+    )
+    assert figures.BUILDERS[spec.kind](spec) is not None
