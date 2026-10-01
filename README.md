@@ -38,27 +38,82 @@ output layout and the same three-step workflow — an existing
 
 ## Install
 
-**On Windows, the simplest way:** download the repository (**Code → Download
-ZIP**, then *Extract all*), open the folder and double-click
-**`INSTALLATION.exe`**. A window asks where to put MOSNA, whether to add a
-desktop shortcut and whether to install the figures; it then moves the folder
-there, installs whatever is missing (the Microsoft C++ build tools, Rust,
-Python — Windows asks once for administrator rights), builds and installs
-MOSNA. Allow 20 to 40 minutes the first time. A log is kept in
-`%TEMP%\mosna-install.log`.
+| | Windows | Linux (and macOS) |
+|---|---|---|
+| installer | `INSTALLATION.exe`, double-clicked | `./install.sh`, in a terminal |
+| prerequisites | none, it installs what is missing | Rust 1.82+, a C compiler, Python 3.11+ |
+| installed into | `%LOCALAPPDATA%\Programs\MOSNA` | `~/.local` (or `--prefix`) |
+| first install | 20 to 40 minutes | a few minutes |
 
-**On Linux**, run `./install.sh` as described below.
+Both build MOSNA from the sources, then hand over to the same installer,
+`mosna-install`, so the result is the same on both: the `mosna` and
+`mosna-gui` binaries, the starting configuration, the icon, a desktop shortcut
+and an application menu entry, and — unless the figures are left out — a
+Python environment of its own for the figure renderer. Nothing is written into
+the Python you work in.
 
-Once installed, each platform deletes the other's installer: `install.sh` goes
-on Windows, `INSTALLATION.exe` on Linux. To uninstall on Windows, run
-`target\release\mosna-install.exe --uninstall` from the MOSNA folder.
+Each installer then deletes the other's: once installed, `INSTALLATION.exe`
+removes `install.sh` and `install.sh` removes `INSTALLATION.exe`, so an
+installed folder only keeps the files for its own system.
 
-The analyses are Rust and depend on no scientific stack. The **figures** are
-drawn by [`xy`](https://github.com/reflex-dev/xy), a Python charting library,
-which is why an interpreter is needed. What this needs, to build:
+### Windows — `INSTALLATION.exe`
+
+1. Download the repository: **Code → Download ZIP**, then right-click the ZIP
+   → **Extract all**. `INSTALLATION.exe` does not work from inside the ZIP: it
+   has to sit in the extracted folder, next to `Cargo.toml`.
+2. Open the extracted folder and double-click **`INSTALLATION.exe`**.
+3. A window asks for:
+   * **the folder to put MOSNA in** — by default `MOSNA_Enhanced` in your
+     user folder (`C:\Users\<you>\MOSNA_Enhanced`), since `Downloads` is no
+     place to keep it. A folder picked with **Parcourir…** receives a
+     `MOSNA_Enhanced` folder inside it; it must be empty, new, or an earlier
+     copy of MOSNA;
+   * **a desktop shortcut** — ticked by default; the Start Menu entry is
+     written either way;
+   * **the figures module** (Python, about 85 MB) — ticked by default.
+4. Click **Installer**. The window then:
+   1. moves the folder to the chosen place (the downloaded copy is removed);
+   2. installs what is missing, each only if it is not already there: the
+      **Microsoft C++ build tools** (several GB, the longest step — Windows
+      asks once for administrator rights), **Rust**, and **Python 3.12** when
+      the figures are wanted. It uses `winget` and falls back to the official
+      installers;
+   3. compiles MOSNA (10 to 20 minutes the first time);
+   4. installs it into `%LOCALAPPDATA%\Programs\MOSNA`, with the shortcuts;
+   5. deletes `install.sh`.
+5. At the end, **Lancer MOSNA** opens the interface. Afterwards, start it from
+   the desktop shortcut or the Start Menu.
+
+Leave the window open until it says so: it cannot be closed while installing.
+Everything it prints is also kept in `%TEMP%\mosna-install.log`, which is the
+file to look at, or to send, when something fails.
+
+**To update**, download and extract the new version and run its
+`INSTALLATION.exe`, choosing the folder MOSNA is already in. The window
+recognises the earlier copy and offers **Mettre à jour et installer**: your
+results and your configuration are kept, only MOSNA's own files are replaced.
+What is already installed (build tools, Rust, Python) is not reinstalled, and
+the build reuses the previous one, so an update is much faster.
+
+**To uninstall**, from MOSNA's folder:
+
+```bat
+target\release\mosna-install.exe --uninstall
+```
+
+The command line is installed but not added to the `PATH`; from a terminal, use
+`%LOCALAPPDATA%\Programs\MOSNA\bin\mosna.exe`.
+
+If the window does not open at all, the message that appears is almost always
+about the graphics driver (no OpenGL 2): update it, then run
+`INSTALLATION.exe` again.
+
+### Linux — `install.sh`
+
+What it needs, to build:
 
 * the **Rust toolchain**, 1.82 or newer — `curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh`
-* **Python 3.11 or newer**, and a **C compiler**:
+* a **C compiler**, and **Python 3.11 or newer** for the figures:
 
   | | |
   |---|---|
@@ -68,24 +123,45 @@ which is why an interpreter is needed. What this needs, to build:
   | openSUSE | `sudo zypper install gcc python3` |
 
 `install.sh` checks for all of this before it starts building, and names the
-command to run if something is missing. It then creates a virtual environment
-of its own under the install prefix — `share/mosna/venv` — and installs the
-renderer into it, so nothing is written into the Python you work in. The
-graphical interface additionally needs a running desktop session — X11 or
-Wayland, either is fine; on a headless machine the `mosna` command line still
-works in full.
-
-`MOSNA_PYTHON` overrides the interpreter, which is what to set when working
-from a checkout against an environment of your own.
+command to run if something is missing — Python is only asked for when the
+figures are wanted.
 
 ```bash
-# Linux / macOS, from a downloaded release or a checkout
+git clone https://github.com/OwenGriere/MOSNA_Enhanced.git
+cd MOSNA_Enhanced
 ./install.sh                     # into ~/.local, with a desktop launcher
-./install.sh --no-figures        # smallest install: no Python environment
-./install.sh --prefix /usr/local # for everyone
-./install.sh --dry-run           # show what would happen
-./install.sh --uninstall         # remove it again
 ```
+
+| option | |
+|---|---|
+| `--no-figures` | smallest install: no Python environment |
+| `--prefix /usr/local` | somewhere else, here for everyone (needs write access) |
+| `--no-desktop-shortcut` | no launcher on the desktop; the menu entry is still written |
+| `--dry-run` | show what would be done, without touching the disk |
+| `--uninstall` | remove it again — with the same `--prefix`, if one was given |
+
+It builds `mosna`, `mosna-gui` and `mosna-install` with `cargo build
+--release`, then installs:
+
+| | |
+|---|---|
+| `~/.local/bin/mosna`, `~/.local/bin/mosna-gui` | the command line and the interface |
+| `~/.local/share/mosna/` | the starting configuration, and the figures' environment, `venv/` |
+| `~/.local/share/applications/`, the desktop | the launchers, with the icon |
+
+and, once the install has succeeded, deletes `INSTALLATION.exe` (not on
+`--dry-run`, `--uninstall` or `--help`). If `~/.local/bin` is not on your
+`PATH`, which some distributions do not do, the installer says so and gives
+the full path to the interface.
+
+Run next to already-built binaries — the `mosna-linux-x86_64.tar.gz` of a
+[release](https://github.com/OwenGriere/MOSNA_Enhanced/releases), unpacked —
+the same script compiles nothing and needs no Rust nor C compiler.
+
+The graphical interface needs a running desktop session — X11 or Wayland,
+either is fine; on a headless machine the `mosna` command line still works in
+full. `MOSNA_PYTHON` overrides the interpreter used for the figures, which is
+what to set when working from a checkout against an environment of your own.
 
 ### How much it weighs
 
@@ -94,14 +170,16 @@ from a checkout against an environment of your own.
 | `mosna` and `mosna-gui` | 38 MB | everything |
 | Python environment (`xy`, numpy) | ~85 MB | the figures only |
 
-`--no-figures` (or unticking the figures on Windows) skips the second row. The analyses then run
-exactly as before and write all of their tables; only the images are left
-undrawn, and each run says so instead of failing. Installing the renderer later
-draws the figures the next run produces.
+The analyses are Rust and depend on no scientific stack; the **figures** are
+drawn by [`xy`](https://github.com/reflex-dev/xy), a Python charting library,
+which is the only reason Python is needed. `--no-figures` (or unticking the
+figures module on Windows) skips the second row: the analyses then run exactly
+as before and write all of their tables; only the images are left undrawn, and
+each run says so instead of failing. Installing the renderer later draws the
+figures the next run produces.
 
-Both create a desktop icon, as the Python `setup.sh` did, plus an application
-menu entry (Start Menu on Windows). The full instructions are also in the
-manual, inside the interface: **Viewer → Documentation → Installation**.
+The full instructions are also in the manual, inside the interface:
+**Viewer → Documentation → Installation**.
 
 ## Use
 
