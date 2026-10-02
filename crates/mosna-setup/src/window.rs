@@ -3,42 +3,39 @@
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::Receiver;
 
+use crate::console;
 use crate::install::{self, Choices, Event};
 use crate::place::{self, Placement};
+use crate::theme::{self, Backdrop};
 
 const TITLE: &str = "Installation de MOSNA Enhanced";
 
 /// Open the window. `source` is the MOSNA folder to install from, if one was
 /// found beside the program.
 pub fn show(source: Option<PathBuf>) -> eframe::Result<()> {
-    let mut viewport = egui::ViewportBuilder::default()
-        .with_title(TITLE)
-        .with_inner_size([640.0, 420.0])
-        .with_min_inner_size([520.0, 360.0]);
-    if let Some(icon) = source.as_deref().and_then(window_icon) {
-        viewport = viewport.with_icon(icon);
-    }
-    let options = eframe::NativeOptions {
-        viewport,
-        ..Default::default()
-    };
     eframe::run_native(
         TITLE,
-        options,
-        Box::new(|_| Ok(Box::new(Setup::new(source)))),
+        options(TITLE),
+        Box::new(|creation| {
+            theme::apply(&creation.egui_ctx);
+            Ok(Box::new(Setup::new(source, &creation.egui_ctx)))
+        }),
     )
 }
 
-fn window_icon(source: &Path) -> Option<egui::IconData> {
-    let image = image::open(source.join("assets").join("logo.ico"))
-        .ok()?
-        .into_rgba8();
-    let (width, height) = image.dimensions();
-    Some(egui::IconData {
-        rgba: image.into_raw(),
-        width,
-        height,
-    })
+/// The window both programs open, with MOSNA's icon.
+pub(crate) fn options(title: &str) -> eframe::NativeOptions {
+    let mut viewport = egui::ViewportBuilder::default()
+        .with_title(title)
+        .with_inner_size([720.0, 480.0])
+        .with_min_inner_size([560.0, 400.0]);
+    if let Some(icon) = theme::icon() {
+        viewport = viewport.with_icon(icon);
+    }
+    eframe::NativeOptions {
+        viewport,
+        ..Default::default()
+    }
 }
 
 enum Stage {
@@ -60,12 +57,85 @@ struct Setup {
     /// agrees to update it.
     confirm_update: bool,
     stage: Stage,
-    step: String,
-    log: Vec<String>,
+    journal: Journal,
+    backdrop: Backdrop,
+}
+
+/// What the worker has reported so far.
+pub(crate) struct Journal {
+    pub step: String,
+    /// Each line, laid out once as it arrives.
+    log: Vec<egui::text::LayoutJob>,
+    /// Whether the console shows colours, or every line alike.
+    colored: bool,
+}
+
+impl Journal {
+    pub fn new(colored: bool) -> Self {
+        Self {
+            step: String::new(),
+            log: Vec::new(),
+            colored,
+        }
+    }
+
+    fn push(&mut self, line: &str) {
+        self.log.push(console::layout(line, self.colored));
+    }
+
+    /// Take in what the worker sent; its outcome, once it has finished.
+    pub fn poll(&mut self, receiver: &Receiver<Event>) -> Option<Result<PathBuf, String>> {
+        let mut finished = None;
+        for event in receiver.try_iter() {
+            match event {
+                Event::Step(text) => {
+                    self.push("");
+                    self.push(&format!("==> {text}"));
+                    self.step = text;
+                }
+                Event::Line(text) => self.push(&text),
+                Event::Done(root) => finished = Some(Ok(root)),
+                Event::Failed(message) => {
+                    self.push("");
+                    for line in format!("ÉCHEC : {message}").lines() {
+                        self.push(line);
+                    }
+                    finished = Some(Err(message));
+                }
+            }
+        }
+        finished
+    }
+
+    /// The console, scrolled to its end, leaving room for a row of buttons.
+    ///
+    /// Lines are not wrapped — compiler output is read by its columns — and
+    /// only those in view are drawn: a first build prints hundreds.
+    pub fn show(&self, ui: &mut egui::Ui) {
+        let log_height = ui.available_height() - 48.0;
+        let row_height = ui.text_style_height(&egui::TextStyle::Monospace);
+        egui::Frame::group(ui.style())
+            .fill(theme::CONSOLE)
+            .show(ui, |ui| {
+                ui.spacing_mut().item_spacing.y = 1.0;
+                egui::ScrollArea::both()
+                    .max_height(log_height)
+                    .auto_shrink([false, false])
+                    .stick_to_bottom(true)
+                    .show_rows(ui, row_height, self.log.len(), |ui, rows| {
+                        for line in &self.log[rows] {
+                            ui.add(
+                                egui::Label::new(line.clone())
+                                    .wrap_mode(egui::TextWrapMode::Extend),
+                            );
+                        }
+                    });
+            });
+    }
 }
 
 impl Setup {
-    fn new(source: Option<PathBuf>) -> Self {
+    fn new(source: Option<PathBuf>, ctx: &egui::Context) -> Self {
         let home = std::env::var_os("USERPROFILE")
             .or_else(|| std::env::var_os("HOME"))
             .map(PathBuf::from)
@@ -84,8 +154,8 @@ impl Setup {
             problem: None,
             confirm_update: false,
             stage,
-            step: String::new(),
-            log: Vec::new(),
+            journal: Journal::new(true),
+            backdrop: Backdrop::new(ctx),
         }
     }
 
@@ -106,24 +176,7 @@ impl Setup {
         let Stage::Running(receiver) = &self.stage else {
             return;
         };
-        let mut finished = None;
-        for event in receiver.try_iter() {
-            match event {
-                Event::Step(text) => {
-                    self.log.push(String::new());
-                    self.log.push(format!("==> {text}"));
-                    self.step = text;
-                }
-                Event::Line(text) => self.log.push(text),
-                Event::Done(root) => finished = Some(Ok(root)),
-                Event::Failed(message) => {
-                    self.log.push(String::new());
-                    self.log.push(format!("ÉCHEC : {message}"));
-                    finished = Some(Err(message));
-                }
-            }
-        }
-        if let Some(outcome) = finished {
+        if let Some(outcome) = self.journal.poll(receiver) {
             self.stage = Stage::Finished(outcome);
         }
     }
@@ -193,7 +246,7 @@ impl Setup {
                 } else {
                     "Installer"
                 };
-                if ui.button(label).clicked() {
+                if theme::primary_button(ui, label).clicked() {
                     let destination = PathBuf::from(self.destination.trim());
                     match place::check(&self.source, &destination) {
                         Err(problem) => self.problem = Some(problem),
@@ -214,7 +267,7 @@ impl Setup {
             None => {
                 ui.horizontal(|ui| {
                     ui.spinner();
-                    ui.strong(&self.step);
+                    ui.strong(&self.journal.step);
                 });
             }
             Some(Ok(_)) => {
@@ -235,19 +288,7 @@ impl Setup {
             }
         }
         ui.add_space(6.0);
-
-        let log_height = ui.available_height() - 40.0;
-        egui::Frame::group(ui.style()).show(ui, |ui| {
-            egui::ScrollArea::vertical()
-                .max_height(log_height)
-                .auto_shrink([false, false])
-                .stick_to_bottom(true)
-                .show(ui, |ui| {
-                    for line in &self.log {
-                        ui.monospace(line);
-                    }
-                });
-        });
+        self.journal.show(ui);
 
         if let Some(outcome) = finished {
             ui.with_layout(egui::Layout::bottom_up(egui::Align::RIGHT), |ui| {
@@ -255,7 +296,7 @@ impl Setup {
                     if ui.button("Fermer").clicked() {
                         ui.ctx().send_viewport_cmd(egui::ViewportCommand::Close);
                     }
-                    if outcome.is_ok() && ui.button("Lancer MOSNA").clicked() {
+                    if outcome.is_ok() && theme::primary_button(ui, "Lancer MOSNA").clicked() {
                         if let Some(gui) = installed_interface() {
                             let _ = std::process::Command::new(gui).spawn();
                         }
@@ -289,7 +330,8 @@ impl eframe::App for Setup {
         }
 
         egui::CentralPanel::default().show(ui, |ui| {
-            ui.heading("Installer MOSNA Enhanced");
+            self.backdrop.paint(ui);
+            theme::heading(ui, "Installer MOSNA Enhanced");
             ui.add_space(10.0);
             match self.stage {
                 Stage::Lost => {

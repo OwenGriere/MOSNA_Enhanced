@@ -49,14 +49,24 @@ fn make_executable(_path: &Path) -> anyhow::Result<()> {
 
 /// Write a Windows shell link pointing at `target`.
 ///
-/// Produced without any COM call, so the installer cross-compiles and its
-/// output can be checked from Linux — the structure is asserted in the tests
-/// even though the link can only be *used* on Windows.
+/// On Windows the shell writes it. Elsewhere — and on Windows should the shell
+/// refuse — it is written by hand, without any COM call, so the installer
+/// cross-compiles and its output can be checked from Linux.
 pub fn write_windows_link(target: &Path, icon: Option<&Path>, path: &Path) -> anyhow::Result<()> {
     // A link to a missing target is a shortcut that opens nothing, and Windows
     // gives no useful error when it is clicked. Refuse it here instead.
     if !target.is_file() {
         anyhow::bail!("cannot link to {}: it does not exist", target.display());
+    }
+
+    // On Windows, the shell writes the link itself: what it writes carries the
+    // target's ID list and its volume's real serial number. The link written
+    // below has neither; Explorer shows it, with its icon, but cannot resolve
+    // it, so a double-click starts nothing. It remains as a fallback, and is
+    // what the tests can inspect from Linux.
+    #[cfg(windows)]
+    if write_with_shell(target, icon, path) {
+        return Ok(());
     }
 
     let mut link = crate::shell_link::ShellLink::new(target.to_string_lossy())
@@ -72,6 +82,44 @@ pub fn write_windows_link(target: &Path, icon: Option<&Path>, path: &Path) -> an
 
     link.write(path)
         .map_err(|e| anyhow::anyhow!("cannot write {}: {e}", path.display()))
+}
+
+/// Have Windows write the link, through `WScript.Shell`, which every Windows
+/// has. The paths travel in environment variables rather than in the script,
+/// so no quoting rule can mangle a space, a quote or an accented user name.
+#[cfg(windows)]
+fn write_with_shell(target: &Path, icon: Option<&Path>, path: &Path) -> bool {
+    use std::os::windows::process::CommandExt;
+    const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+    const SCRIPT: &str =
+        "$link = (New-Object -ComObject WScript.Shell).CreateShortcut($env:MOSNA_LINK); \
+        $link.TargetPath = $env:MOSNA_LINK_TARGET; \
+        $link.WorkingDirectory = $env:MOSNA_LINK_DIRECTORY; \
+        $link.Description = $env:MOSNA_LINK_NAME; \
+        if ($env:MOSNA_LINK_ICON) { $link.IconLocation = $env:MOSNA_LINK_ICON + ',0' }; \
+        $link.Save()";
+
+    let mut command = std::process::Command::new("powershell.exe");
+    command
+        .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
+        .env("MOSNA_LINK", path)
+        .env("MOSNA_LINK_TARGET", target)
+        .env("MOSNA_LINK_DIRECTORY", target.parent().unwrap_or(target))
+        .env("MOSNA_LINK_NAME", mosna_paths::layout::DISPLAY_NAME)
+        .env(
+            "MOSNA_LINK_ICON",
+            icon.filter(|candidate| candidate.is_file())
+                .map(|icon| icon.as_os_str().to_os_string())
+                .unwrap_or_default(),
+        )
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .creation_flags(CREATE_NO_WINDOW);
+    // A link left over from an earlier install would make the check below
+    // pass even if PowerShell wrote nothing.
+    let _ = std::fs::remove_file(path);
+    command.status().is_ok_and(|status| status.success()) && path.is_file()
 }
 
 #[cfg(test)]

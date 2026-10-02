@@ -5,7 +5,7 @@ edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "The graphical Windows installer, shipped as INSTALLATION.exe"
+description = "The graphical Windows installer and uninstaller, shipped as INSTALLATION.exe and UNINSTALL.exe"
 
 [lib]
 name = "mosna_setup"
@@ -15,9 +15,15 @@ path = "src/lib.rs"
 name = "mosna-setup"
 path = "src/main.rs"
 
+[[bin]]
+name = "mosna-uninstall"
+path = "src/uninstall_main.rs"
+
 [dependencies]
 eframe = "0.35"
 egui = "0.35"
+mosna-install.workspace = true
+mosna-paths.workspace = true
 image = { version = "0.25", default-features = false, features = ["ico", "png"] }
 rfd = "0.17"
 

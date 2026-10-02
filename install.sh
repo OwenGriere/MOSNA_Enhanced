@@ -136,10 +136,11 @@ else
         "${common[@]}" "${renderer[@]}" "${arguments[@]}"
 fi
 
-# Once MOSNA is installed, the Windows installer is of no use in this folder.
+# Once MOSNA is installed, the Windows installer and uninstaller are of no use
+# in this folder.
 # INSTALLATION.exe does the same the other way round.
 if [ "$installing" = true ]; then
-    for name in INSTALLATION.exe; do
+    for name in INSTALLATION.exe UNINSTALL.exe; do
         if [ -f "$here/$name" ]; then
             rm -f "$here/$name"
             echo "removed $name (Windows only)"

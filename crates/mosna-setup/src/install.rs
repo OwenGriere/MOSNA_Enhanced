@@ -12,12 +12,20 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc::Sender;
 
 use crate::place::{self, Placement};
+use crate::prerequisites::{self, Prerequisite};
 
 /// Deleted from the installed folder at the end: they only serve Linux.
 pub const LINUX_FILES: &[&str] = &["install.sh"];
 
 /// The oldest Python the figure renderer supports.
 const MINIMUM_PYTHON: &str = "(3, 11)";
+
+/// The Python installed when there is none, by winget or else directly.
+pub(crate) const PYTHON_PACKAGE: &str = "Python.Python.3.12";
+pub(crate) const PYTHON_INSTALLER: &str =
+    "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe";
+/// What winget calls the Microsoft C++ build tools.
+pub(crate) const BUILD_TOOLS_PACKAGE: &str = "Microsoft.VisualStudio.2022.BuildTools";
 
 /// What the user chose in the window.
 #[derive(Debug, Clone)]
@@ -54,22 +62,22 @@ pub struct Reporter {
 
 impl Reporter {
     pub fn new(sender: Sender<Event>) -> Self {
+        Self::logging_to(sender, &log_file())
+    }
+
+    pub fn logging_to(sender: Sender<Event>, log: &Path) -> Self {
         Self {
             sender,
-            log: std::fs::File::create(log_file()).ok(),
+            log: std::fs::File::create(log).ok(),
         }
     }
 
-    fn send(&mut self, event: Event) {
+    pub(crate) fn send(&mut self, event: Event) {
         if let Some(log) = &mut self.log {
             let _ = match &event {
                 Event::Step(text) => writeln!(log, "\n==> {text}"),
-                Event::Line(text) => writeln!(log, "{text}"),
-                Event::Done(root) => writeln!(
-                    log,
-                    "\nMOSNA est installé ; sources dans {}",
-                    root.display()
-                ),
+                Event::Line(text) => writeln!(log, "{}", crate::console::plain(text)),
+                Event::Done(root) => writeln!(log, "\nTerminé ({}).", root.display()),
                 Event::Failed(text) => writeln!(log, "\nÉCHEC : {text}"),
             };
         }
@@ -111,10 +119,10 @@ fn install(choices: &Choices, report: &mut Reporter) -> Result<PathBuf, String> 
         })?;
     report.line(format!("MOSNA est dans {}", root.display()));
 
-    install_build_tools(report)?;
-    let cargo = install_rust(report)?;
+    install_build_tools(&root, report)?;
+    let cargo = install_rust(&root, report)?;
     let python = if choices.figures {
-        Some(install_python(report)?)
+        Some(install_python(&root, report)?)
     } else {
         None
     };
@@ -135,7 +143,10 @@ fn install(choices: &Choices, report: &mut Reporter) -> Result<PathBuf, String> 
         ])
         .current_dir(&root)
         .env("PATH", prepend_path(&cargo_bin))
-        .env("CARGO_TERM_COLOR", "never");
+        // Cargo's colours, which the window shows; no progress bar, which
+        // would only be noise in a log.
+        .env("CARGO_TERM_COLOR", "always")
+        .env("CARGO_TERM_PROGRESS_WHEN", "never");
     if !stream(&mut build, report)? {
         return Err(
             "La compilation de MOSNA a échoué. Le détail est dans le journal ci-dessus.".into(),
@@ -188,11 +199,11 @@ fn install(choices: &Choices, report: &mut Reporter) -> Result<PathBuf, String> 
 // Prerequisites
 // ---------------------------------------------------------------------------
 
-fn exe(name: &str) -> String {
+pub(crate) fn exe(name: &str) -> String {
     format!("{name}{}", std::env::consts::EXE_SUFFIX)
 }
 
-fn program_files_x86() -> PathBuf {
+pub(crate) fn program_files_x86() -> PathBuf {
     std::env::var_os("ProgramFiles(x86)")
         .map(PathBuf::from)
         .unwrap_or_else(|| PathBuf::from(r"C:\Program Files (x86)"))
@@ -200,7 +211,7 @@ fn program_files_x86() -> PathBuf {
 
 /// Asked of vswhere rather than of the PATH: Git for Windows can put a GNU
 /// `link.exe` there, which is no linker at all.
-fn has_build_tools() -> bool {
+pub(crate) fn has_build_tools() -> bool {
     let vswhere = program_files_x86().join(r"Microsoft Visual Studio\Installer\vswhere.exe");
     Command::new(vswhere)
         .args(["-latest", "-products", "*", "-requires"])
@@ -215,7 +226,7 @@ fn has_build_tools() -> bool {
 
 /// Installed before Rust: rustup-init, finding no linker, would offer the whole
 /// of Visual Studio Community instead.
-fn install_build_tools(report: &mut Reporter) -> Result<(), String> {
+fn install_build_tools(root: &Path, report: &mut Reporter) -> Result<(), String> {
     if has_build_tools() {
         report.line("Outils C++ de Microsoft : déjà installés.");
         return Ok(());
@@ -225,11 +236,8 @@ fn install_build_tools(report: &mut Reporter) -> Result<(), String> {
     let workload = "--wait --passive --norestart --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended";
     // winget reports a reboot-pending install as a failure, so what counts is
     // whether the tools are there afterwards.
-    let installed = winget(
-        report,
-        "Microsoft.VisualStudio.2022.BuildTools",
-        &["--override", workload],
-    ) || has_build_tools();
+    let installed =
+        winget(report, BUILD_TOOLS_PACKAGE, &["--override", workload]) || has_build_tools();
     if !installed {
         let installer = std::env::temp_dir().join("vs_BuildTools.exe");
         download(
@@ -247,6 +255,7 @@ fn install_build_tools(report: &mut Reporter) -> Result<(), String> {
         stream(&mut command, report)?;
     }
     if has_build_tools() {
+        prerequisites::record(root, Prerequisite::BuildTools);
         Ok(())
     } else {
         Err("Les outils C++ de Microsoft n'ont pas pu être installés. Installez « Build Tools for Visual Studio » \
@@ -256,7 +265,7 @@ fn install_build_tools(report: &mut Reporter) -> Result<(), String> {
     }
 }
 
-fn cargo_path() -> Option<PathBuf> {
+pub(crate) fn cargo_path() -> Option<PathBuf> {
     let home = std::env::var_os("CARGO_HOME")
         .map(PathBuf::from)
         .or_else(|| {
@@ -266,7 +275,7 @@ fn cargo_path() -> Option<PathBuf> {
     cargo.is_file().then_some(cargo)
 }
 
-fn install_rust(report: &mut Reporter) -> Result<PathBuf, String> {
+fn install_rust(root: &Path, report: &mut Reporter) -> Result<PathBuf, String> {
     if let Some(cargo) = cargo_path() {
         report.line("Rust : déjà installé.");
         return Ok(cargo);
@@ -283,9 +292,11 @@ fn install_rust(report: &mut Reporter) -> Result<PathBuf, String> {
         "default",
     ]);
     stream(&mut command, report)?;
-    cargo_path().ok_or_else(|| {
-        "L'installation de Rust a échoué. Installez-le depuis https://rustup.rs, puis relancez INSTALLATION.exe.".into()
-    })
+    let cargo = cargo_path().ok_or_else(|| {
+        "L'installation de Rust a échoué. Installez-le depuis https://rustup.rs, puis relancez INSTALLATION.exe.".to_string()
+    })?;
+    prerequisites::record(root, Prerequisite::Rust);
+    Ok(cargo)
 }
 
 /// Every `name` on the PATH, in order — except the Microsoft Store's
@@ -366,19 +377,15 @@ fn find_python() -> Option<PathBuf> {
         .find_map(|(program, prefix)| usable_python(&program, &prefix))
 }
 
-fn install_python(report: &mut Reporter) -> Result<PathBuf, String> {
+fn install_python(root: &Path, report: &mut Reporter) -> Result<PathBuf, String> {
     if let Some(python) = find_python() {
         report.line(format!("Python : {}", python.display()));
         return Ok(python);
     }
     report.step("Installation de Python");
-    if !winget(report, "Python.Python.3.12", &["--scope", "user"]) || find_python().is_none() {
+    if !winget(report, PYTHON_PACKAGE, &["--scope", "user"]) || find_python().is_none() {
         let installer = std::env::temp_dir().join("python-installer.exe");
-        download(
-            report,
-            "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe",
-            &installer,
-        )?;
+        download(report, PYTHON_INSTALLER, &installer)?;
         let mut command = Command::new(&installer);
         command.args([
             "/quiet",
@@ -393,6 +400,7 @@ fn install_python(report: &mut Reporter) -> Result<PathBuf, String> {
          puis relancez INSTALLATION.exe — ou décochez le module de figures."
             .to_string()
     })?;
+    prerequisites::record(root, Prerequisite::Python);
     report.line(format!("Python : {}", python.display()));
     Ok(python)
 }
@@ -405,17 +413,30 @@ fn winget(report: &mut Reporter, id: &str, extra: &[&str]) -> bool {
         .args(["install", "--id", id, "-e", "--silent"])
         .args(["--accept-package-agreements", "--accept-source-agreements"])
         .args(extra);
-    match stream(&mut command, report) {
+    run_winget(&mut command, report)
+}
+
+/// Remove a package with winget; false as for [`winget`].
+pub(crate) fn winget_uninstall(report: &mut Reporter, id: &str) -> bool {
+    let mut command = Command::new("winget");
+    command
+        .args(["uninstall", "--id", id, "-e", "--silent"])
+        .arg("--accept-source-agreements");
+    run_winget(&mut command, report)
+}
+
+fn run_winget(command: &mut Command, report: &mut Reporter) -> bool {
+    match stream(command, report) {
         Ok(success) => success,
         Err(_) => {
-            report.line("winget n'est pas disponible ; téléchargement direct.");
+            report.line("winget n'est pas disponible ; méthode directe.");
             false
         }
     }
 }
 
 /// Download with the `curl.exe` Windows has shipped since 2018.
-fn download(report: &mut Reporter, url: &str, file: &Path) -> Result<(), String> {
+pub(crate) fn download(report: &mut Reporter, url: &str, file: &Path) -> Result<(), String> {
     report.line(format!("Téléchargement de {url}"));
     let mut command = Command::new("curl.exe");
     command
@@ -432,7 +453,7 @@ fn download(report: &mut Reporter, url: &str, file: &Path) -> Result<(), String>
 }
 
 /// The user's real desktop, from the registry: OneDrive redirects it.
-fn desktop_folder() -> Option<PathBuf> {
+pub(crate) fn desktop_folder() -> Option<PathBuf> {
     let output = Command::new("reg")
         .args([
             "query",
@@ -470,7 +491,7 @@ fn prepend_path(directory: &Path) -> std::ffi::OsString {
 // ---------------------------------------------------------------------------
 
 /// Hide the console window a program would otherwise open.
-trait NoWindow {
+pub(crate) trait NoWindow {
     fn no_window(&mut self) -> &mut Self;
     fn raw_args(&mut self, arguments: &str) -> &mut Self;
 }
@@ -504,7 +525,7 @@ impl NoWindow for Command {
 
 /// Run a program, forwarding each line it prints; whether it succeeded, or an
 /// error when it could not be started at all.
-fn stream(command: &mut Command, report: &mut Reporter) -> Result<bool, String> {
+pub(crate) fn stream(command: &mut Command, report: &mut Reporter) -> Result<bool, String> {
     let name = command.get_program().to_string_lossy().into_owned();
     let mut child = command
         .stdin(Stdio::null())

@@ -27,7 +27,7 @@ fn script(name: &str) -> String {
 
 #[test]
 fn each_platform_has_an_installer() {
-    for name in ["install.sh", "INSTALLATION.exe"] {
+    for name in ["install.sh", "INSTALLATION.exe", "UNINSTALL.exe"] {
         assert!(root().join(name).is_file(), "{name} is missing");
     }
 }
@@ -247,34 +247,40 @@ fn the_readme_lists_the_same_prerequisites() {
 /// What a Windows user double-clicks. It is committed, not built on the
 /// machine: it has to be a real Windows program with a window, no console.
 #[test]
-fn the_windows_installer_is_a_windows_program() {
-    let bytes =
-        std::fs::read(root().join("INSTALLATION.exe")).expect("INSTALLATION.exe is missing");
-    assert_eq!(&bytes[..2], b"MZ", "not a Windows executable");
-    let pe = u32::from_le_bytes(bytes[0x3C..0x40].try_into().unwrap()) as usize;
-    assert_eq!(&bytes[pe..pe + 4], b"PE\0\0");
-    // IMAGE_SUBSYSTEM_WINDOWS_GUI, in the PE32+ optional header.
-    let subsystem = u16::from_le_bytes(bytes[pe + 24 + 68..pe + 24 + 70].try_into().unwrap());
-    assert_eq!(subsystem, 2, "INSTALLATION.exe would open a console window");
+fn the_windows_installers_are_windows_programs() {
+    for name in ["INSTALLATION.exe", "UNINSTALL.exe"] {
+        let bytes =
+            std::fs::read(root().join(name)).unwrap_or_else(|_| panic!("{name} is missing"));
+        assert_eq!(&bytes[..2], b"MZ", "{name} is not a Windows executable");
+        let pe = u32::from_le_bytes(bytes[0x3C..0x40].try_into().unwrap()) as usize;
+        assert_eq!(&bytes[pe..pe + 4], b"PE\0\0");
+        // IMAGE_SUBSYSTEM_WINDOWS_GUI, in the PE32+ optional header.
+        let subsystem = u16::from_le_bytes(bytes[pe + 24 + 68..pe + 24 + 70].try_into().unwrap());
+        assert_eq!(subsystem, 2, "{name} would open a console window");
+    }
 }
 
 /// Without a manifest, Windows takes a program named INSTALLATION for a legacy
 /// installer and runs it as an administrator — for a user who is not one, an
 /// administrator's account, so MOSNA would land in someone else's profile.
 #[test]
-fn the_windows_installer_runs_as_the_user() {
-    let bytes = std::fs::read(root().join("INSTALLATION.exe")).unwrap();
-    let manifest = b"requestedExecutionLevel level=\"asInvoker\"";
-    assert!(
-        bytes.windows(manifest.len()).any(|window| window == manifest),
-        "INSTALLATION.exe carries no asInvoker manifest; rebuild it (see crates/mosna-setup/src/lib.rs)"
-    );
+fn the_windows_installers_run_as_the_user() {
+    for name in ["INSTALLATION.exe", "UNINSTALL.exe"] {
+        let bytes = std::fs::read(root().join(name)).unwrap();
+        let manifest = b"requestedExecutionLevel level=\"asInvoker\"";
+        assert!(
+            bytes
+                .windows(manifest.len())
+                .any(|window| window == manifest),
+            "{name} carries no asInvoker manifest; rebuild it (see crates/mosna-setup/src/lib.rs)"
+        );
+    }
 }
 
-/// install.sh deletes the Windows installer once it has installed; a name that
+/// install.sh deletes the Windows programs once it has installed; a name that
 /// no longer exists means the list has drifted.
 #[test]
-fn install_sh_deletes_exactly_the_windows_installer() {
+fn install_sh_deletes_exactly_the_windows_programs() {
     let text = script("install.sh");
     let line = text
         .lines()
@@ -287,7 +293,7 @@ fn install_sh_deletes_exactly_the_windows_installer() {
         .trim_end_matches("; do")
         .split_whitespace()
         .collect();
-    assert_eq!(names, ["INSTALLATION.exe"]);
+    assert_eq!(names, ["INSTALLATION.exe", "UNINSTALL.exe"]);
     for name in names {
         assert!(
             root().join(name).is_file(),

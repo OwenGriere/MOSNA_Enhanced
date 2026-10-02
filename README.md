@@ -53,7 +53,8 @@ Python environment of its own for the figure renderer. Nothing is written into
 the Python you work in.
 
 Each installer then deletes the other's: once installed, `INSTALLATION.exe`
-removes `install.sh` and `install.sh` removes `INSTALLATION.exe`, so an
+removes `install.sh` and `install.sh` removes `INSTALLATION.exe` and
+`UNINSTALL.exe`, so an
 installed folder only keeps the files for its own system.
 
 ### Windows — `INSTALLATION.exe`
@@ -95,7 +96,21 @@ results and your configuration are kept, only MOSNA's own files are replaced.
 What is already installed (build tools, Rust, Python) is not reinstalled, and
 the build reuses the previous one, so an update is much faster.
 
-**To uninstall**, from MOSNA's folder:
+**To uninstall**, double-click **`UNINSTALL.exe`** in MOSNA's folder. It
+always removes MOSNA, its shortcuts and its figures environment, and the build
+(`target\`, several GB); your configuration is kept. It also offers to remove:
+
+* **the C++ build tools, Rust and Python 3.12**, each one found on the machine.
+  Those `INSTALLATION.exe` installed itself are ticked: it writes them down in
+  `.mosna-prerequisites`, at the root of the folder. The others are left
+  unticked, since other software may use them. Removing the build tools asks
+  for administrator rights, and leaves the Visual Studio Installer itself, to
+  be removed from Settings → Apps if nothing else needs it.
+* **the MOSNA folder itself**, unticked: it holds whatever you put there,
+  results included.
+
+Its log is kept in `%TEMP%\mosna-uninstall.log`. To remove MOSNA alone from a
+terminal instead:
 
 ```bat
 target\release\mosna-install.exe --uninstall
@@ -149,7 +164,8 @@ It builds `mosna`, `mosna-gui` and `mosna-install` with `cargo build
 | `~/.local/share/mosna/` | the starting configuration, and the figures' environment, `venv/` |
 | `~/.local/share/applications/`, the desktop | the launchers, with the icon |
 
-and, once the install has succeeded, deletes `INSTALLATION.exe` (not on
+and, once the install has succeeded, deletes `INSTALLATION.exe` and
+`UNINSTALL.exe` (not on
 `--dry-run`, `--uninstall` or `--help`). If `~/.local/bin` is not on your
 `PATH`, which some distributions do not do, the installer says so and gives
 the full path to the interface.
@@ -232,6 +248,7 @@ exists, which is what lets them be run on results copied off a cluster.
 ```
 .
 ├── install.sh / INSTALLATION.exe  build and install, per platform
+├── UNINSTALL.exe             remove it again, on Windows
 ├── CONFIG/                   the shipped starting configuration
 ├── assets/                   logo and the manual's figures
 ├── python/                   the figure renderer, built on `xy`

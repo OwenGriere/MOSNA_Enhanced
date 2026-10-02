@@ -10,7 +10,10 @@
 //! asserted against the specification.
 //!
 //! What is produced is a link with `LinkInfo`, a display name, a working
-//! directory and an icon: enough for Explorer to show it and launch it.
+//! directory and an icon: enough for Explorer to show it, but — with no ID
+//! list and a volume serial number of zero — not always to launch it. On
+//! Windows the installer therefore has the shell write the link, and falls
+//! back to this one only when the shell refuses (see `shortcut.rs`).
 
 use std::path::Path;
 

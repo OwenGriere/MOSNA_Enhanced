@@ -27,6 +27,7 @@ description = "MOSNA GUI — Rust port of the spatial network construction and a
 mosna-config = { path = "crates/mosna-config" }
 mosna-testkit = { path = "crates/mosna-testkit" }
 mosna-paths = { path = "crates/mosna-paths" }
+mosna-install = { path = "crates/mosna-install" }
 mosna-io = { path = "crates/mosna-io" }
 mosna-core = { path = "crates/mosna-core" }
 mosna-xy = { path = "crates/mosna-xy" }

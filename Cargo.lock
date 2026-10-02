@@ -2627,6 +2627,8 @@ dependencies = [
  "eframe",
  "egui",
  "image",
+ "mosna-install",
+ "mosna-paths",
  "rfd",
  "tempfile",
 ]

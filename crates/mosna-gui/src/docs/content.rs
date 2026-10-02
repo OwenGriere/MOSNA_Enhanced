@@ -181,8 +181,21 @@ fn installation() -> Chapter {
                         "Cela installe dans %LOCALAPPDATA%\\Programs\\MOSNA, avec un raccourci \
                          dans le menu Démarrer et, si vous l'avez demandé, un sur le bureau.",
                     )),
+                    Block::Paragraph(T::new(
+                        "To remove it again, double-click UNINSTALL.exe in the MOSNA folder. \
+                         It removes MOSNA and its shortcuts and, if you tick them, the C++ \
+                         build tools, Rust and Python that the installation added — and the \
+                         MOSNA folder itself. Your configuration is kept.",
+                        "Pour le désinstaller, double-cliquez sur UNINSTALL.exe dans le dossier \
+                         de MOSNA. Il supprime MOSNA et ses raccourcis et, si vous les cochez, \
+                         les outils C++, Rust et Python que l'installation a ajoutés — ainsi que \
+                         le dossier de MOSNA lui-même. Votre configuration est conservée.",
+                    )),
                     Block::Code {
-                        caption: T::new("Remove it again", "Le désinstaller"),
+                        caption: T::new(
+                            "Or, MOSNA alone, from a terminal",
+                            "Ou, MOSNA seul, depuis un terminal",
+                        ),
                         lines: vec![
                             "cd MOSNA_Enhanced",
                             "target\\release\\mosna-install.exe --uninstall",
