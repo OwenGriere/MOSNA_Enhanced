@@ -229,6 +229,114 @@ mosna clear-temporary                                    --working_dir /data/run
 The last two take no configuration: they act on a directory that already
 exists, which is what lets them be run on results copied off a cluster.
 
+## MCP server — checking inputs and comparing the two implementations
+
+### Why
+
+MOSNA exists twice: MOSNA_GUI (Python) and MOSNA_Enhanced (Rust). They read the
+same `configuration.yaml` and the same `nodes_…` files, and run the same three
+steps. `mosna-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io)
+server that gives an assistant such as Claude access to both. It is useful for
+three things:
+
+- **Catching bad inputs before a run.** The pipelines only check that the
+  configured columns exist. The server also finds the problems that make a run
+  fail late or give a wrong result without any error:
+  - files skipped silently because of their name;
+  - coordinates that are text, missing or all on one line;
+  - duplicate cell positions;
+  - phenotypes stored as `3` in one file and `3.0` in another;
+  - a configuration field left empty.
+
+  Each problem is reported with the implementation it affects (Rust, Python or
+  both).
+- **Running a step in either implementation**, from a conversation. Changed
+  parameters go into a copy of the configuration, never into yours.
+- **Checking that both implementations agree.** It compares networks edge by
+  edge, assortativity tables with a tolerance that accounts for random
+  permutations, and niche partitions with ARI/AMI. Each comparison explains how
+  to read its result.
+
+The same server ships in both repositories, so it is available whichever one
+you downloaded. With only one repository, the checks and comparisons still all
+work; `run_step` works for the implementation that is present.
+
+### Connecting it to Claude
+
+Build it once, from the root of the repository:
+
+```bash
+cargo build --release -p mosna-mcp
+```
+
+**Claude Code** — register it with one command (from the same folder):
+
+```bash
+claude mcp add mosna -- "$PWD/target/release/mosna-mcp"
+```
+
+Add `-s project` to share it with everyone who opens this folder. Claude Code
+then writes the entry to a `.mcp.json` file at the root. Type `/mcp` in Claude
+Code to check that `mosna` is connected.
+
+**Claude Desktop** — open *Settings → Developer → Edit Config* and add the
+server to `claude_desktop_config.json`, then restart Claude Desktop:
+
+```json
+{
+  "mcpServers": {
+    "mosna": {
+      "command": "/absolute/path/to/target/release/mosna-mcp",
+      "env": {
+        "MOSNA_GUI_PYTHON": "/home/me/miniconda3/envs/mosna-GUI/bin/python"
+      }
+    }
+  }
+}
+```
+
+On Windows the command is `…\target\release\mosna-mcp.exe` (with `\\` inside
+the JSON).
+
+**Finding the two implementations.** When the two repositories sit side by side
+(`…/MOSNA_Enhanced` and `…/MOSNA_GUI`), the server finds both by itself. To
+check what it found, ask Claude to call the `backends` tool. These variables
+override what the server finds on its own:
+
+| Variable | Points at |
+|---|---|
+| `MOSNA_BIN` | the `mosna` binary of MOSNA_Enhanced |
+| `MOSNA_GUI_DIR` | the MOSNA_GUI folder (the one holding `package/`) |
+| `MOSNA_GUI_PYTHON` | the Python of MOSNA_GUI's environment, e.g. the `mosna-GUI` conda env |
+| `MOSNA_MCP_PROTECTED` | folders no run may write into, separated like `PATH` |
+
+With Claude Code, pass them on the command line:
+`claude mcp add mosna --env MOSNA_GUI_PYTHON=… -- …/mosna-mcp`.
+
+### Using it
+
+You talk to Claude normally; it picks the tools. For example:
+
+> Check my configuration and the nodes files in `/data/cohort` before I run anything.
+
+> Run step 1 with Rust and with Python into `/tmp/run_rust` and `/tmp/run_py`, then compare the networks.
+
+> Compare the assortativity of these two runs; they used 500 permutations.
+
+> Why did the niche analysis fail?
+
+| Tool | What it does |
+|---|---|
+| `check_config` | validates `configuration.yaml`, section by section, for both implementations |
+| `check_nodes` | checks that the nodes files can become networks (naming, coordinates, cell count, phenotypes) |
+| `check_network` | checks the `nodes_*` / `edges_*` pairs that steps 2 and 3 read |
+| `run_step` | runs a step with `rust` or `python`, in the background, after checking its inputs |
+| `job_status`, `cancel_job` | progress, the end of the log, and why a step failed |
+| `compare_networks` | edge Jaccard between two runs; on the same inputs, exactly 1 is expected |
+| `compare_assortativity` | compares two `net_stat.csv`: counts must be equal, permutation statistics only within random error |
+| `compare_partitions` | ARI and AMI between two niche partitions; Python's niche step is unseeded, so even two Python runs agree only partly |
+| `backends` | which implementations were found, and how to point at a missing one |
+
 ## Design goals
 
 1. **Identical usage.** Same `CONFIG/configuration.yaml`, same output file
@@ -270,6 +378,7 @@ exists, which is what lets them be run on results copied off a cluster.
     ├── mosna-xy/           figure specifications, handed to the renderer
     ├── mosna-pipeline/     the four analyses
     ├── mosna-cli/          command line interface
+    ├── mosna-mcp/          MCP server over both implementations (also in MOSNA_GUI)
     ├── mosna-gui/          graphical interface, and the bilingual manual
     ├── mosna-paths/        where things live, per platform
     └── mosna-install/      the installer, desktop and Start Menu shortcuts

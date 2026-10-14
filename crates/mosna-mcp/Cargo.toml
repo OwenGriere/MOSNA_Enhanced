@@ -1,0 +1,31 @@
+[package]
+name = "mosna-mcp"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "MCP server checking MOSNA inputs and driving both implementations, Rust and Python"
+
+[lib]
+name = "mosna_mcp"
+path = "src/lib.rs"
+
+[[bin]]
+name = "mosna-mcp"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+rayon.workspace = true
+regex.workspace = true
+serde_json.workspace = true
+serde_yaml.workspace = true
+arrow-schema = "56"
+
+mosna-config.workspace = true
+mosna-io.workspace = true
+
+[dev-dependencies]
+tempfile = "3"
+arrow-array = "56"
