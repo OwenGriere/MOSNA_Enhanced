@@ -25,16 +25,30 @@
   <a href="https://crates.io/crates/proptest"><img alt="proptest 1.11" src="https://img.shields.io/badge/proptest-1.11-6D747C?style=flat-square&labelColor=2B2F36"></a>
 </p>
 
-<h1 align="center">Mosna Enhanced : A version of Mosna rewritted in Rust for a better performance</h1>
+<h1 align="center">MOSNA Enhanced — MOSNA and Tysserand reimplemented in Rust</h1>
 
 Spatial network construction and analysis for spatial omics: a native
 application that reconstructs a spatial network per sample, measures which cell
 types sit next to which, and groups neighbourhoods into spatial niches.
 
-This is the Rust implementation, and the root of the project. It replaces the
-earlier Python/PySide6 version, keeping the same configuration file, the same
-output layout and the same three-step workflow — an existing
-`CONFIG/configuration.yaml` works unchanged.
+## Architecture
+
+MOSNA Enhanced reimplements in Rust the algorithms of two Python tools from
+PancaldiLAB, [Tysserand](https://github.com/PancaldiLab/tysserand) and
+[MOSNA](https://github.com/PancaldiLab/MOSNA), and runs them as one native
+program, with no Python scientific stack:
+
+| Step | Algorithms from | Rust |
+|---|---|---|
+| 1 — spatial networks (Delaunay, kNN, edge trimming) | Tysserand | `mosna-core::geometry` |
+| 2 — assortativity (mixing matrices, permutation null, z-scores) | MOSNA | `mosna-core::assortativity` |
+| 3 — niches (neighbourhood aggregation, UMAP, GMM / Leiden / spectral) | MOSNA | `mosna-core::{nas, reduction, clustering, niches}` |
+
+Around this scientific core, `mosna-pipeline` runs the three steps,
+`mosna-config` and `mosna-io` read the configuration and the tables, and
+`mosna-cli` and `mosna-gui` are the command line and the interface. Python is
+only used to draw the figures: `mosna-xy` describes each one, and the `xy`
+renderer in `python/` draws it.
 
 ## Install
 
@@ -229,217 +243,6 @@ mosna clear-temporary                                    --working_dir /data/run
 The last two take no configuration: they act on a directory that already
 exists, which is what lets them be run on results copied off a cluster.
 
-## MCP server — checking inputs and comparing the two implementations
+## Benchmark
 
-### Why
-
-MOSNA exists twice: MOSNA_GUI (Python) and MOSNA_Enhanced (Rust). They read the
-same `configuration.yaml` and the same `nodes_…` files, and run the same three
-steps. `mosna-mcp` is a [Model Context Protocol](https://modelcontextprotocol.io)
-server that gives an assistant such as Claude access to both. It is useful for
-three things:
-
-- **Catching bad inputs before a run.** The pipelines only check that the
-  configured columns exist. The server also finds the problems that make a run
-  fail late or give a wrong result without any error:
-  - files skipped silently because of their name;
-  - coordinates that are text, missing or all on one line;
-  - duplicate cell positions;
-  - phenotypes stored as `3` in one file and `3.0` in another;
-  - a configuration field left empty.
-
-  Each problem is reported with the implementation it affects (Rust, Python or
-  both).
-- **Running a step in either implementation**, from a conversation. Changed
-  parameters go into a copy of the configuration, never into yours.
-- **Checking that both implementations agree.** It compares networks edge by
-  edge, assortativity tables with a tolerance that accounts for random
-  permutations, and niche partitions with ARI/AMI. Each comparison explains how
-  to read its result.
-
-The same server ships in both repositories, so it is available whichever one
-you downloaded. With only one repository, the checks and comparisons still all
-work; `run_step` works for the implementation that is present.
-
-### Connecting it to Claude
-
-Build it once, from the root of the repository:
-
-```bash
-cargo build --release -p mosna-mcp
-```
-
-**Claude Code** — register it with one command (from the same folder):
-
-```bash
-claude mcp add mosna -- "$PWD/target/release/mosna-mcp"
-```
-
-Add `-s project` to share it with everyone who opens this folder. Claude Code
-then writes the entry to a `.mcp.json` file at the root. Type `/mcp` in Claude
-Code to check that `mosna` is connected.
-
-**Claude Desktop** — open *Settings → Developer → Edit Config* and add the
-server to `claude_desktop_config.json`, then restart Claude Desktop:
-
-```json
-{
-  "mcpServers": {
-    "mosna": {
-      "command": "/absolute/path/to/target/release/mosna-mcp",
-      "env": {
-        "MOSNA_GUI_PYTHON": "/home/me/miniconda3/envs/mosna-GUI/bin/python"
-      }
-    }
-  }
-}
-```
-
-On Windows the command is `…\target\release\mosna-mcp.exe` (with `\\` inside
-the JSON).
-
-**Finding the two implementations.** When the two repositories sit side by side
-(`…/MOSNA_Enhanced` and `…/MOSNA_GUI`), the server finds both by itself. To
-check what it found, ask Claude to call the `backends` tool. These variables
-override what the server finds on its own:
-
-| Variable | Points at |
-|---|---|
-| `MOSNA_BIN` | the `mosna` binary of MOSNA_Enhanced |
-| `MOSNA_GUI_DIR` | the MOSNA_GUI folder (the one holding `package/`) |
-| `MOSNA_GUI_PYTHON` | the Python of MOSNA_GUI's environment, e.g. the `mosna-GUI` conda env |
-| `MOSNA_MCP_PROTECTED` | folders no run may write into, separated like `PATH` |
-
-With Claude Code, pass them on the command line:
-`claude mcp add mosna --env MOSNA_GUI_PYTHON=… -- …/mosna-mcp`.
-
-### Using it
-
-You talk to Claude normally; it picks the tools. For example:
-
-> Check my configuration and the nodes files in `/data/cohort` before I run anything.
-
-> Run step 1 with Rust and with Python into `/tmp/run_rust` and `/tmp/run_py`, then compare the networks.
-
-> Compare the assortativity of these two runs; they used 500 permutations.
-
-> Why did the niche analysis fail?
-
-| Tool | What it does |
-|---|---|
-| `check_config` | validates `configuration.yaml`, section by section, for both implementations |
-| `check_nodes` | checks that the nodes files can become networks (naming, coordinates, cell count, phenotypes) |
-| `check_network` | checks the `nodes_*` / `edges_*` pairs that steps 2 and 3 read |
-| `run_step` | runs a step with `rust` or `python`, in the background, after checking its inputs |
-| `job_status`, `cancel_job` | progress, the end of the log, and why a step failed |
-| `compare_networks` | edge Jaccard between two runs; on the same inputs, exactly 1 is expected |
-| `compare_assortativity` | compares two `net_stat.csv`: counts must be equal, permutation statistics only within random error |
-| `compare_partitions` | ARI and AMI between two niche partitions; Python's niche step is unseeded, so even two Python runs agree only partly |
-| `backends` | which implementations were found, and how to point at a missing one |
-
-## Design goals
-
-1. **Identical usage.** Same `CONFIG/configuration.yaml`, same output file
-   names and directory layout, same three analysis steps, same GUI layout, and
-   the same `[QT_PROGRESS]` / `[QT_INFO]` protocol between the interface and the
-   compute processes. Either interface can drive either backend.
-2. **One file per function.** Every Python function has a Rust module of the
-   same name, in a directory mirroring the Python package layout.
-3. **No hidden numerical drift.** Where an algorithm had to be reimplemented,
-   the port is tested against the mathematical definition, not against a
-   transcription of the Python.
-4. **Test-driven.** Every module was written after the tests that pin it. See
-   `TESTING.md`.
-
-## Layout
-
-```
-.
-├── install.sh / INSTALLATION.exe  build and install, per platform
-├── UNINSTALL.exe             remove it again, on Windows
-├── CONFIG/                   the shipped starting configuration
-├── assets/                   logo and the manual's figures
-├── python/                   the figure renderer, built on `xy`
-├── test/                     small real datasets, and the testing discipline
-├── benchmark/                the bench: drift, reproducibility, recovery, timings
-├── Cargo.toml                workspace
-└── crates/
-    ├── mosna-config/       configuration.yaml model, round-trip, validation
-    ├── mosna-io/           parquet/csv/tsv tables, network file discovery
-    ├── mosna-core/         scientific core
-    │   ├── geometry/       Delaunay, kNN, edge trimming  (<- tysserand)
-    │   ├── nas/            Neighbors Aggregation Statistics
-    │   ├── assortativity/  mixing matrices, permutation null, z-scores
-    │   ├── linalg/         symmetric eigen, Cholesky, k-means
-    │   ├── reduction/      UMAP
-    │   ├── clustering/     GMM, Leiden, spectral
-    │   ├── niches/         niche composition
-    │   └── stats/          percentiles, Ward linkage, CLR
-    ├── mosna-xy/           figure specifications, handed to the renderer
-    ├── mosna-pipeline/     the four analyses
-    ├── mosna-cli/          command line interface
-    ├── mosna-mcp/          MCP server over both implementations (also in MOSNA_GUI)
-    ├── mosna-gui/          graphical interface, and the bilingual manual
-    ├── mosna-paths/        where things live, per platform
-    └── mosna-install/      the installer, desktop and Start Menu shortcuts
-```
-
-## Python → Rust map
-
-The Python sources this port replaces are no longer in the tree; the mapping is
-kept because it names what each crate is responsible for.
-
-| Python | Rust |
-|---|---|
-| `GUI_MOSNA.py` | `crates/mosna-gui` |
-| `setup.sh` / `setup_windows.bat` | `install.sh` / `INSTALLATION.exe`, `crates/mosna-install`, `crates/mosna-setup` |
-| the manual | `crates/mosna-gui/src/docs` |
-| `package/tysserand_network.py` | `mosna-pipeline::tysserand_network` |
-| `package/assortativity.py` | `mosna-pipeline::assortativity` |
-| `package/niche_analysis.py` | `mosna-pipeline::niche_analysis` |
-| `package/clear_temporary.py` | `mosna-pipeline::clear_temporary` |
-| — (new) | `mosna-pipeline::report` |
-| `package/utils/*` | `mosna-config`, `mosna-io` |
-| `package/core/*` | `mosna-core`, `mosna-xy`, `python/mosna_xy` |
-| `mosna-package/mosna/neighbors.py` | `mosna-core::nas` |
-| `mosna-package/mosna/assortativity.py` | `mosna-core::assortativity` |
-| `mosna-package/mosna/clustering.py` | `mosna-core::{reduction, clustering}` |
-| `mosna-package/mosna/niches.py` | `mosna-core::niches` |
-| `mosna-package/mosna/plotting.py` | `mosna-xy`, `python/mosna_xy` |
-| `tysserand/tysserand.py` | `mosna-core::geometry` |
-
-## Build and test
-
-```bash
-cargo build --release
-python3 -m venv .venv && .venv/bin/pip install -e python   # the figure renderer
-cargo test --workspace
-.venv/bin/python -m pytest python                          # and its own tests
-```
-
-The release profile uses fat LTO and a single codegen unit. There is no LAPACK
-or BLAS dependency: the linear algebra needed (symmetric eigensolver, Cholesky,
-k-means) is implemented in `mosna-core::linalg`, sized for the small matrices
-that actually occur. Python appears in one place and one only — drawing the
-figures — and the tests that check a figure was drawn run the real renderer.
-A checkout with a `.venv` at its root is found automatically, which is what
-lets `cargo test` draw figures from any crate's directory.
-
-CI runs the same checks on Linux and Windows, with `-D warnings`, plus a deep
-property-test pass — see `.github/workflows/rust.yml`.
-
-```bash
-cargo run --release -p mosna-bench -- all
-```
-
-runs the bench: numerical drift against recorded references, reproducibility
-across thread counts, recovery of planted niches, and a timing sweep. See
-`benchmark/README.md`.
-
-## Status
-
-The port is complete: the three analyses run, write their files and their
-figures, the interface drives them, and the repository is self-contained.
-`cargo test --workspace` and `pytest python` are the record of what is
-guaranteed — every module ships with the tests that pin it, and
-`test/TESTING.md` states the discipline they were written under.
+*To come.*
