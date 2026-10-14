@@ -528,6 +528,22 @@ fn workflow() -> Chapter {
                              voulu : il remplace le rapport précédent au lieu de s'y ajouter.",
                         ),
                         T::new(
+                            "Plot all figures — draws every figure that the analyses run with \
+                             « Without plotting figures » ticked (the box at the top of the \
+                             Tysserand, Assortativity and Niche Analysis panels) set aside, \
+                             from the first run on. Nothing is computed again: those runs \
+                             wrote their tables and every other file as usual, and kept a \
+                             full description of each figure. Clearing the temporary data \
+                             does not remove those descriptions.",
+                            "Plot all figures — dessine toutes les figures mises de côté par \
+                             les analyses lancées avec « Without plotting figures » coché (la \
+                             case en haut des panneaux Tysserand, Assortativity et Niche \
+                             Analysis), depuis la première. Rien n'est recalculé : ces analyses \
+                             ont écrit leurs tableaux et tous leurs autres fichiers comme \
+                             d'habitude, et gardé une description complète de chaque figure. \
+                             Vider les données temporaires ne supprime pas ces descriptions.",
+                        ),
+                        T::new(
                             "Clear temporary data — deletes the temp folder and the \
                              intermediate networks in it. The figures, the tables and the \
                              report are kept.",

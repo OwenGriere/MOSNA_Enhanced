@@ -86,6 +86,23 @@ fn sections(app: &mut MosnaApp, ui: &mut egui::Ui) {
     ui.data_mut(|d| d.insert_temp(egui::Id::new("section_tab"), section_index));
     ui.separator();
 
+    // At the very top of an analysis's panel, above its parameters: it says
+    // what the run will produce rather than how it computes.
+    if let Some(step) = crate::model::runner::Step::for_section(&names[section_index]) {
+        if let Some(ticked) = app.without_figures.get_mut(step) {
+            ui.checkbox(
+                ticked,
+                egui::RichText::new("Without plotting figures").size(theme::size::LABEL),
+            )
+            .on_hover_text(
+                "Run this analysis without drawing its figures. The tables and every \
+                 other file are written as usual; the figures are set aside, and \
+                 \"Plot all figures\" draws them later without computing again.",
+            );
+            ui.add_space(4.0);
+        }
+    }
+
     let tabs: Vec<String> = app.form.sections[section_index]
         .tabs
         .iter()

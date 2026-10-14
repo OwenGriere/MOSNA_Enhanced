@@ -82,6 +82,13 @@ pub enum Command {
         /// embedding and the cached partition.
         #[arg(long = "figure-formats", default_value = "png,html")]
         figure_formats: String,
+        /// Write the tables, but set the figures aside instead of drawing them.
+        ///
+        /// Drawing is a large part of a run's time on a big cohort. What is
+        /// set aside is every figure's full description, so `render-figures`
+        /// draws them later without computing anything again.
+        #[arg(long = "no-figures")]
+        no_figures: bool,
     },
 
     /// Step 2 — z-scored assortativity and mixing matrices.
@@ -101,6 +108,13 @@ pub enum Command {
         /// embedding and the cached partition.
         #[arg(long = "figure-formats", default_value = "png,html")]
         figure_formats: String,
+        /// Write the tables, but set the figures aside instead of drawing them.
+        ///
+        /// Drawing is a large part of a run's time on a big cohort. What is
+        /// set aside is every figure's full description, so `render-figures`
+        /// draws them later without computing anything again.
+        #[arg(long = "no-figures")]
+        no_figures: bool,
     },
 
     /// Step 3 — identify spatial niches.
@@ -129,6 +143,13 @@ pub enum Command {
         /// embedding and the cached partition.
         #[arg(long = "figure-formats", default_value = "png,html")]
         figure_formats: String,
+        /// Write the tables, but set the figures aside instead of drawing them.
+        ///
+        /// Drawing is a large part of a run's time on a big cohort. What is
+        /// set aside is every figure's full description, so `render-figures`
+        /// draws them later without computing anything again.
+        #[arg(long = "no-figures")]
+        no_figures: bool,
     },
 
     /// Compare the runs of a sensitivity sweep and draw the three figures.
@@ -146,6 +167,18 @@ pub enum Command {
         /// The sub-directory of `Niche_Analysis` holding the sweep.
         #[arg(long = "results-in", default_value = "sensitivity_analysis")]
         results_in: String,
+        #[arg(long = "figure-formats", default_value = "png,html")]
+        figure_formats: String,
+    },
+
+    /// Draw every figure set aside by a run started with `--no-figures`.
+    ///
+    /// Computes nothing: it reads the descriptions those runs left in the
+    /// working directory and hands them to the renderer, oldest first.
+    #[command(name = "render-figures")]
+    RenderFigures {
+        #[arg(long = "working_dir")]
+        working_dir: PathBuf,
         #[arg(long = "figure-formats", default_value = "png,html")]
         figure_formats: String,
     },
@@ -176,8 +209,19 @@ impl Command {
             Command::Assortativity { .. } => "assortativity",
             Command::NicheAnalysis { .. } => "niche-analysis",
             Command::CompareSweep { .. } => "compare-sweep",
+            Command::RenderFigures { .. } => "render-figures",
             Command::ClearTemporary { .. } => "clear-temporary",
             Command::GenerateReport { .. } => "generate-report",
+        }
+    }
+
+    /// Whether the figures are to be set aside rather than drawn.
+    pub fn no_figures(&self) -> bool {
+        match self {
+            Command::TysserandNetwork { no_figures, .. }
+            | Command::Assortativity { no_figures, .. }
+            | Command::NicheAnalysis { no_figures, .. } => *no_figures,
+            _ => false,
         }
     }
 
@@ -189,7 +233,8 @@ impl Command {
             Command::TysserandNetwork { figure_formats, .. }
             | Command::Assortativity { figure_formats, .. }
             | Command::NicheAnalysis { figure_formats, .. }
-            | Command::CompareSweep { figure_formats, .. } => figure_formats.as_str(),
+            | Command::CompareSweep { figure_formats, .. }
+            | Command::RenderFigures { figure_formats, .. } => figure_formats.as_str(),
             Command::ClearTemporary { .. } | Command::GenerateReport { .. } => "",
         };
         spelled
@@ -216,6 +261,15 @@ impl Command {
 pub fn run(cli: Cli) -> anyhow::Result<()> {
     let progress = StdoutProgress;
     let formats = cli.command.figure_formats();
+    let no_figures = cli.command.no_figures();
+    // Drawn now, or set aside for `render-figures`.
+    let finish = |figures: &Figures| -> anyhow::Result<()> {
+        if no_figures {
+            figures.defer().map(|_| ())
+        } else {
+            figures.render()
+        }
+    };
     let sink = |working_dir: &std::path::Path| {
         let borrowed: Vec<&str> = formats.iter().map(String::as_str).collect();
         Figures::with_renderer(
@@ -233,7 +287,7 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
             let config = mosna_config::get_config(file)?;
             let figures = sink(working_dir);
             tysserand_network(&config, working_dir, &progress, &figures)?;
-            figures.render()?;
+            finish(&figures)?;
         }
         Command::Assortativity {
             ref file,
@@ -243,7 +297,7 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
             let config = mosna_config::get_config(file)?;
             let figures = sink(working_dir);
             assortativity(&config, working_dir, &progress, &figures)?;
-            figures.render()?;
+            finish(&figures)?;
         }
         Command::NicheAnalysis {
             ref file,
@@ -260,7 +314,7 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
                 &progress,
                 &figures,
             )?;
-            figures.render()?;
+            finish(&figures)?;
         }
         Command::CompareSweep {
             ref file,
@@ -285,6 +339,13 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
             )?;
             figures.render()?;
         }
+        Command::RenderFigures {
+            ref working_dir, ..
+        } => {
+            let borrowed: Vec<&str> = formats.iter().map(String::as_str).collect();
+            let renderer = mosna_xy::renderer::Renderer::detect().formats(&borrowed);
+            mosna_xy::render_deferred(working_dir, &renderer)?;
+        }
         Command::ClearTemporary { ref working_dir } => {
             clear_temporary(working_dir, &progress)?;
         }
@@ -303,7 +364,7 @@ mod tests {
     /// The commands that take no configuration: they act on a directory that
     /// already exists, so asking for a YAML would be asking for something the
     /// user does not need to have.
-    const WITHOUT_CONFIG: [&str; 2] = ["clear-temporary", "generate-report"];
+    const WITHOUT_CONFIG: [&str; 3] = ["clear-temporary", "generate-report", "render-figures"];
 
     #[test]
     fn every_command_reports_its_own_name() {
@@ -314,6 +375,7 @@ mod tests {
             "compare-sweep",
             "clear-temporary",
             "generate-report",
+            "render-figures",
         ];
         for name in names {
             let argv: Vec<&str> = if WITHOUT_CONFIG.contains(&name) {
@@ -420,7 +482,7 @@ mod tests {
     /// The commands that draw nothing do not take it.
     #[test]
     fn the_commands_that_draw_nothing_do_not_offer_the_flag() {
-        for name in WITHOUT_CONFIG {
+        for name in ["clear-temporary", "generate-report"] {
             assert!(
                 Cli::parse_from([
                     "mosna",
@@ -434,6 +496,48 @@ mod tests {
                 "`{name}` accepted --figure-formats"
             );
         }
+    }
+
+    /// The three analyses can be run without drawing, and say so.
+    #[test]
+    fn an_analysis_can_set_its_figures_aside() {
+        for name in ["tysserand-network", "assortativity", "niche-analysis"] {
+            let cli = Cli::parse_from([
+                "mosna",
+                name,
+                "--file",
+                "c.yaml",
+                "--working_dir",
+                "/w",
+                "--no-figures",
+            ])
+            .unwrap();
+            assert!(cli.command.no_figures(), "`{name}` ignored --no-figures");
+
+            let cli = Cli::parse_from(["mosna", name, "--file", "c.yaml", "--working_dir", "/w"])
+                .unwrap();
+            assert!(
+                !cli.command.no_figures(),
+                "`{name}` skips its figures by default"
+            );
+        }
+    }
+
+    /// Drawing what was set aside needs a directory and nothing else: the
+    /// descriptions carry everything the figures need.
+    #[test]
+    fn the_figures_set_aside_are_drawn_from_a_directory_alone() {
+        let cli = Cli::parse_from(["mosna", "render-figures", "--working_dir", "/w"]).unwrap();
+        assert_eq!(cli.command.name(), "render-figures");
+        assert_eq!(cli.command.figure_formats(), vec!["png", "html"]);
+        assert!(Cli::parse_from([
+            "mosna",
+            "render-figures",
+            "--working_dir",
+            "/w",
+            "--no-figures"
+        ])
+        .is_err());
     }
 
     /// A sweep writes its results apart from the runs started by hand, so two

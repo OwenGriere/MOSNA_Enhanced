@@ -78,6 +78,11 @@ pub const STEP_CLEAR: Color32 = Color32::from_rgb(0x4E, 0x55, 0x5C);
 /// button next to it: the two that share a row have to be told apart at a
 /// glance, because one of them deletes.
 pub const STEP_REPORT: Color32 = Color32::from_rgb(0x2E, 0x6B, 0x63);
+/// The button that draws the figures set aside, beside the clear.
+///
+/// Off the gold ramp, the graphite and the report's teal alike: it shares a row
+/// with the button that deletes, and has to be told apart from it at a glance.
+pub const STEP_FIGURES: Color32 = Color32::from_rgb(0x4B, 0x3F, 0x7D);
 /// A failed run turns the progress bar this colour.
 pub const STEP_FAILED: Color32 = Color32::from_rgb(0xA3, 0x24, 0x1B);
 
@@ -349,6 +354,7 @@ pub fn step_colour(step: crate::model::runner::Step) -> Color32 {
         Step::Assortativity => STEP_ASSORTATIVITY,
         Step::NicheAnalysis => STEP_NICHES,
         Step::GenerateReport => STEP_REPORT,
+        Step::PlotFigures => STEP_FIGURES,
         Step::ClearTemporary => STEP_CLEAR,
     }
 }
@@ -400,6 +406,7 @@ mod tests {
             STEP_ASSORTATIVITY,
             STEP_NICHES,
             STEP_REPORT,
+            STEP_FIGURES,
             STEP_CLEAR,
             STEP_FAILED,
             ACCENT,

@@ -23,6 +23,15 @@ use mosna_io::SampleId;
 /// `mosna-xy` reads this rather than spelling it again.
 pub const FIGURE_QUEUE_DIRECTORY: &str = ".mosna-figures";
 
+/// Where the figures of a run started without plotting wait to be drawn.
+///
+/// Apart from [`FIGURE_QUEUE_DIRECTORY`] because `clear-temporary` removes
+/// that one wholesale, and these are not abandoned: they are the only copy of
+/// figures the user asked to draw later, and drawing them must not mean
+/// running the analysis again. A specification is self-contained, so clearing
+/// the intermediate networks costs them nothing.
+pub const DEFERRED_FIGURE_DIRECTORY: &str = ".mosna-figures-deferred";
+
 /// Receives everything the analyses would plot.
 pub trait FigureSink: Sync {
     /// The spatial network of one sample, coloured by phenotype.
