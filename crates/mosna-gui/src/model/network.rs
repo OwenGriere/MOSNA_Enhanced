@@ -733,52 +733,44 @@ const MIN_SCALE: f32 = 1e-4;
 const MAX_SCALE: f32 = 1e5;
 
 /// Smallest and largest a cell may be drawn, in pixels.
-const MIN_RADIUS: f32 = 0.5;
-const MAX_RADIUS: f32 = 6.0;
+///
+/// The floor is a whole pixel, so a wide view of a cohort is still a picture of
+/// cells rather than a haze; the ceiling is wide enough for a cell to be read
+/// as one, and its colour seen, once zoomed in.
+const MIN_RADIUS: f32 = 1.0;
+const MAX_RADIUS: f32 = 14.0;
 
 /// Fewest and most sides a cell's disc is built from.
 ///
 /// Six at the bottom, not four: a square rotated forty-five degrees is a
 /// diamond and reads as one, while a hexagon reads as a dot from two pixels up.
 const MIN_SEGMENTS: usize = 6;
-const MAX_SEGMENTS: usize = 16;
+const MAX_SEGMENTS: usize = 20;
 
 /// The radius, in pixels, to draw a cell at.
 ///
-/// Tied to the distance between cells rather than to the zoom alone: a dot
-/// that keeps growing swallows its neighbours, and one that keeps shrinking
-/// disappears. A third of the spacing leaves the network visible between the
-/// cells; the clamp keeps a dot hittable when zoomed out and modest when
-/// zoomed in.
+/// Tied to the distance between cells rather than to the zoom alone, so a cell
+/// shrinks as the view widens and grows back as it narrows. Close to half the
+/// spacing: neighbours nearly touch, which makes the cells the thing that is
+/// seen, while the gap between them still lets the edges through. The clamp
+/// keeps a dot visible when zoomed out and stops it swallowing its
+/// neighbours when zoomed in.
 pub fn point_radius(scale: f32, spacing: f32) -> f32 {
-    (spacing * scale / 3.0).clamp(MIN_RADIUS, MAX_RADIUS)
+    (spacing * scale * 0.42).clamp(MIN_RADIUS, MAX_RADIUS)
 }
 
 /// How many sides to build a cell's disc out of.
 ///
-/// A disc is a fan of triangles, and the panel draws up to sixty thousand of
-/// them, so the count follows the radius instead of being fixed. At half a
-/// pixel a hexagon and a circle are the same handful of pixels; at six a
-/// hexagon is visibly a hexagon. The two ends of the range are also the two
-/// ends of the cost: the widest views are the ones with the most cells in
-/// them, and those are the ones drawn at the smallest radius.
+/// A disc is a fan of triangles, and every cell in view is drawn, so the count
+/// follows the radius instead of being fixed. At a pixel a hexagon and a
+/// circle are the same handful of pixels; at fourteen a hexagon is visibly a
+/// hexagon. The two ends of the range are also the two ends of the cost: the
+/// widest views are the ones with the most cells in them, and those are the
+/// ones drawn at the smallest radius.
 pub fn circle_segments(radius: f32) -> usize {
-    // Three sides per pixel of radius, which saturates the cap exactly at the
-    // largest a cell is ever drawn and bottoms out well before the smallest.
-    ((radius * 3.0).ceil() as usize).clamp(MIN_SEGMENTS, MAX_SEGMENTS)
-}
-
-/// At most this many cells go into one mesh.
-///
-/// Past it the cells are drawn every `stride`-th. At a zoom where sixty
-/// thousand cells share the canvas each one is under a pixel and they overlap
-/// several deep, so the subsample is the same picture for a third of the
-/// vertices — and the vertices are what is copied to the GPU every frame.
-pub const CELL_BUDGET: usize = 60_000;
-
-/// Draw one cell in every `stride_for(n)`.
-pub fn stride_for(cells: usize) -> usize {
-    cells.div_ceil(CELL_BUDGET).max(1)
+    // A side per ~0.7 px of radius, which saturates the cap at the largest a
+    // cell is ever drawn and bottoms out well before the smallest.
+    ((radius * 1.45).ceil() as usize).clamp(MIN_SEGMENTS, MAX_SEGMENTS)
 }
 
 /// The region a mesh is built for, given what is on screen.
@@ -1385,14 +1377,22 @@ mod tests {
 
     /// A dot must stay hittable at any zoom, and never swallow its neighbour.
     #[test]
-    fn a_cell_is_drawn_between_half_a_pixel_and_a_few() {
+    fn a_cell_is_drawn_between_a_pixel_and_a_few() {
         for scale in [0.001, 0.05, 1.0, 20.0, 500.0] {
             let radius = point_radius(scale, 12.0);
             assert!(
-                (0.5..=6.0).contains(&radius),
+                (MIN_RADIUS..=MAX_RADIUS).contains(&radius),
                 "at scale {scale} a cell is {radius} px"
             );
         }
+    }
+
+    /// Larger than it used to be, and still shrinking as the view widens.
+    #[test]
+    fn a_cell_shrinks_as_the_view_widens() {
+        assert_eq!(point_radius(500.0, 12.0), MAX_RADIUS);
+        assert!(point_radius(0.5, 12.0) < point_radius(2.0, 12.0));
+        assert_eq!(point_radius(0.001, 12.0), MIN_RADIUS);
     }
 
     #[test]
@@ -1405,11 +1405,11 @@ mod tests {
     fn a_small_cell_is_built_from_fewer_sides_than_a_large_one() {
         assert_eq!(circle_segments(MIN_RADIUS), MIN_SEGMENTS);
         assert_eq!(circle_segments(MAX_RADIUS), MAX_SEGMENTS);
-        assert!(circle_segments(3.0) > circle_segments(1.0));
+        assert!(circle_segments(8.0) > circle_segments(1.0));
 
         // Never so few that the dot reads as a polygon, never so many that a
         // wide view pays for detail below a pixel.
-        for radius in [0.1, 0.5, 1.0, 2.5, 6.0, 100.0] {
+        for radius in [0.1, 0.5, 1.0, 2.5, 6.0, 14.0, 100.0] {
             let sides = circle_segments(radius);
             assert!(
                 (MIN_SEGMENTS..=MAX_SEGMENTS).contains(&sides),
@@ -1468,24 +1468,6 @@ mod tests {
                 mesh[1] * camera.scale + camera.offset[1],
             ];
             assert_eq!(camera.world_to_screen(point), expected);
-        }
-    }
-
-    #[test]
-    fn a_sample_within_budget_is_drawn_whole() {
-        assert_eq!(stride_for(0), 1);
-        assert_eq!(stride_for(CELL_BUDGET), 1);
-    }
-
-    #[test]
-    fn a_sample_over_budget_is_thinned_enough_to_fit() {
-        for cells in [CELL_BUDGET + 1, 200_000, 1_000_000] {
-            let stride = stride_for(cells);
-            assert!(
-                cells.div_ceil(stride) <= CELL_BUDGET,
-                "{cells} cells at stride {stride} still draws {} of them",
-                cells.div_ceil(stride)
-            );
         }
     }
 

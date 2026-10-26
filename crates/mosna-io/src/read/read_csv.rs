@@ -14,6 +14,28 @@ use arrow_array::{ArrayRef, Float64Array, Int64Array, StringArray};
 use crate::error::{IoError, Result};
 use crate::table::Table;
 
+/// The header line of a delimited file, and nothing after it.
+pub fn read_delimited_headers(path: impl AsRef<Path>, delimiter: u8) -> Result<Vec<String>> {
+    let path = path.as_ref();
+    let mut reader = csv::ReaderBuilder::new()
+        .delimiter(delimiter)
+        .has_headers(true)
+        .from_path(path)
+        .map_err(|source| IoError::Csv {
+            path: path.to_path_buf(),
+            source,
+        })?;
+    Ok(reader
+        .headers()
+        .map_err(|source| IoError::Csv {
+            path: path.to_path_buf(),
+            source,
+        })?
+        .iter()
+        .map(str::to_string)
+        .collect())
+}
+
 /// Read a delimited file with the given field separator.
 pub fn read_delimited(path: impl AsRef<Path>, delimiter: u8) -> Result<Table> {
     let path = path.as_ref();

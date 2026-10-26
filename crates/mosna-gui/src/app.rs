@@ -61,6 +61,8 @@ pub enum ViewerTab {
     Images,
     /// The network itself, drawn from the files rather than from a figure.
     Network,
+    /// The analyses waiting their turn, and the one running.
+    Queue,
     Log,
     Documentation,
 }
@@ -79,6 +81,8 @@ pub enum AnalysisTab {
 /// A running analysis.
 pub struct Run {
     pub step: Step,
+    /// The queued job this run is, or `None` for a run of a sweep.
+    pub job: Option<u64>,
     pub child: std::process::Child,
     pub output: Receiver<String>,
     pub started: Instant,
@@ -115,6 +119,8 @@ pub struct MosnaApp {
     /// The directory the analysis now running has claimed, once it says so.
     pub last_run_directory: Option<String>,
     pub run: Option<Run>,
+    /// The analyses the action bar queued, run one after the other.
+    pub queue: crate::model::queue::Queue,
 
     /// The manual, and where the reader is in it.
     pub documentation: Documentation,
@@ -189,6 +195,7 @@ impl MosnaApp {
             last_run_failed: false,
             last_run_directory: None,
             run: None,
+            queue: Default::default(),
             documentation: Documentation::build(),
             manual: ManualState::default(),
             browser_folded: false,
@@ -216,8 +223,13 @@ impl MosnaApp {
         // its camera and its colouring; keeping any of it would show one
         // dataset labelled as another.
         self.network.clear();
+        // The figures are found by name only. The nodes files are not touched
+        // until Refresh Nodes or Refresh Networks is pressed: a cohort of
+        // hundreds of samples on a network drive is not something to read
+        // because a directory was chosen.
+        self.rows.clear();
+        self.selected_row = None;
         self.refresh_images();
-        self.refresh_nodes();
     }
 
     /// Re-scan the nodes directory and fill the sample table.
@@ -238,10 +250,14 @@ impl MosnaApp {
     }
 
     /// Re-scan the network directory, which also resolves the edges files.
+    ///
+    /// Only the list: the Network tab is handed the same rows to choose from,
+    /// and a network is read when one is chosen there, not before.
     pub fn refresh_networks(&mut self) {
         match self.browser.discover_networks() {
             Ok(rows) => {
                 self.status = format!("{} file(s) found.", rows.len());
+                self.network.offer(&rows);
                 self.rows = rows;
                 self.selected_row = (!self.rows.is_empty()).then_some(0);
                 self.load_columns_of_selection();
@@ -256,6 +272,9 @@ impl MosnaApp {
 
     /// Read the columns of the selected nodes file and offer them to the
     /// column pickers, so the user chooses from real column names.
+    ///
+    /// The names only, from the parquet footer or the header line: the values
+    /// are not read, so this costs the same for ten cells as for a million.
     pub fn load_columns_of_selection(&mut self) {
         let Some(row) = self.selected_row.and_then(|i| self.rows.get(i)) else {
             return;
@@ -270,15 +289,8 @@ impl MosnaApp {
                 }
             };
 
-        match mosna_io::read::get_opener::read_table(&row.nodes_path, extension) {
-            Ok(table) => {
-                let columns: Vec<String> = table
-                    .column_names()
-                    .into_iter()
-                    .map(str::to_string)
-                    .collect();
-                self.form.set_available_columns(&columns);
-            }
+        match mosna_io::read::get_opener::table_columns(&row.nodes_path, extension) {
+            Ok(columns) => self.form.set_available_columns(&columns),
             Err(error) => {
                 self.status = format!("Could not read nodes file: {error}");
             }
@@ -301,11 +313,13 @@ impl MosnaApp {
         Ok(())
     }
 
-    /// Start an analysis, after saving the configuration it will read.
+    /// Queue an analysis, after saving the configuration it will read.
+    ///
+    /// It starts at once when nothing else is running, and otherwise waits in
+    /// the Queue tab for the ones added before it. The arguments, the working
+    /// directory and the configuration are all fixed now: the job runs with the
+    /// settings the panels showed when its button was pressed.
     pub fn start(&mut self, step: Step) {
-        if self.run.is_some() {
-            return;
-        }
         let Some(working_dir) = self.working_dir().map(Path::to_path_buf) else {
             self.notice = Some("Please choose a working directory first.".into());
             return;
@@ -315,12 +329,113 @@ impl MosnaApp {
             return;
         }
 
+        let id = self.queue.reserve_id();
+        let config_copy = if step.takes_config() {
+            match self.copy_config(id) {
+                Ok(path) => Some(path),
+                Err(error) => {
+                    self.notice = Some(format!("Failed to save config:\n{error}"));
+                    return;
+                }
+            }
+        } else {
+            None
+        };
+        let config_path = config_copy
+            .clone()
+            .unwrap_or_else(|| self.config_path.clone());
+
         let arguments = self
             .without_figures
-            .arguments(step, &self.config_path, &working_dir);
-        self.log.clear();
-        if let Err(error) = self.spawn(step, &arguments, &working_dir) {
-            self.notice = Some(error);
+            .arguments(step, &config_path, &working_dir);
+        let without_figures = self.without_figures.skips(step);
+        self.queue.add(
+            id,
+            step,
+            arguments,
+            working_dir,
+            config_copy,
+            without_figures,
+        );
+
+        if self.run.is_some() || self.sweep_is_busy() {
+            self.status = format!(
+                "{} added to the queue ({} waiting).",
+                step.label(),
+                self.queue.waiting()
+            );
+        }
+        self.advance_queue();
+    }
+
+    /// Write the configuration as it is now to a file of the job's own.
+    ///
+    /// Outside the working directory: Clear temporary data empties `temp/`,
+    /// and may well be queued before a job that still has to read its copy.
+    fn copy_config(&self, id: u64) -> anyhow::Result<PathBuf> {
+        let directory = std::env::temp_dir().join("mosna-queue");
+        std::fs::create_dir_all(&directory)?;
+        let path = directory.join(format!("job-{}-{id}.yaml", std::process::id()));
+        mosna_config::write_config(&self.config, &path)?;
+        Ok(path)
+    }
+
+    /// Whether a sweep holds the run slot, now or between two of its runs.
+    fn sweep_is_busy(&self) -> bool {
+        self.comparing || self.sweep.as_ref().is_some_and(|sweep| sweep.is_running())
+    }
+
+    /// Start the next queued job, if nothing is running.
+    pub fn advance_queue(&mut self) {
+        use crate::model::queue::JobState;
+
+        while self.run.is_none() && !self.sweep_is_busy() {
+            let Some(id) = self.queue.next_waiting() else {
+                return;
+            };
+            let Some(job) = self.queue.get(id) else {
+                return;
+            };
+            let (step, arguments, working_dir) =
+                (job.step, job.arguments.clone(), job.working_dir.clone());
+
+            self.log.clear();
+            match self.spawn(step, &arguments, &working_dir) {
+                Ok(()) => {
+                    if let Some(run) = &mut self.run {
+                        run.job = Some(id);
+                    }
+                    if let Some(job) = self.queue.get_mut(id) {
+                        job.state = JobState::Running;
+                    }
+                }
+                // This one cannot start; say so, and try the next.
+                Err(error) => {
+                    self.queue.finish(id, false, 0.0, || error.clone());
+                    self.notice = Some(error);
+                }
+            }
+        }
+    }
+
+    /// The red cross of a job in the Queue tab.
+    ///
+    /// A waiting or finished job leaves the list; a running one is killed, and
+    /// ends as cancelled rather than failed — no dialog, it was asked for.
+    pub fn cancel_job(&mut self, id: u64) {
+        use crate::model::queue::JobState;
+
+        let running = self.run.as_ref().is_some_and(|run| run.job == Some(id));
+        if running {
+            if let Some(job) = self.queue.get_mut(id) {
+                job.state = JobState::Cancelling;
+            }
+            if let Some(run) = &mut self.run {
+                let _ = run.child.kill();
+            }
+            self.status = "Cancelling…".to_string();
+        } else {
+            self.queue.remove(id);
         }
     }
 
@@ -367,6 +482,7 @@ impl MosnaApp {
                 self.last_run_directory = None;
                 self.run = Some(Run {
                     step,
+                    job: None,
                     child,
                     output,
                     started: Instant::now(),
@@ -382,7 +498,14 @@ impl MosnaApp {
     }
 
     /// Ask the running analysis to stop.
+    ///
+    /// A queued job is cancelled, which lets the queue carry on with the next
+    /// one; the jobs still waiting stay where they are.
     pub fn stop(&mut self) {
+        if let Some(id) = self.run.as_ref().and_then(|run| run.job) {
+            self.cancel_job(id);
+            return;
+        }
         if let Some(run) = &mut self.run {
             let _ = run.child.kill();
             self.status = "Stopping process...".to_string();
@@ -406,7 +529,7 @@ impl MosnaApp {
     /// wait for, and there is no way to cancel one from inside.
     pub fn start_sweep(&mut self) {
         let plan = self.sweep_form.plan();
-        if plan.is_empty() || self.working_dir().is_none() || self.run.is_some() {
+        if plan.is_empty() || self.working_dir().is_none() || self.run.is_some() || self.comparing {
             return;
         }
         if let Err(error) = self.sweep_base_config() {
@@ -724,16 +847,32 @@ impl MosnaApp {
 
     /// Drain the running analysis's output and notice when it finishes.
     pub fn poll_run(&mut self) {
-        let Some(run) = &mut self.run else { return };
+        let Some(run) = &mut self.run else {
+            // Idle: a job may have been waiting for a sweep to end.
+            self.advance_queue();
+            return;
+        };
 
         while let Ok(line) = run.output.try_recv() {
+            let job = run.job.and_then(|id| self.queue.get_mut(id));
             match parse_output_line(&line) {
-                OutputLine::Info(message) => self.status = message,
+                OutputLine::Info(message) => {
+                    if let Some(job) = job {
+                        job.message = message.clone();
+                    }
+                    self.status = message;
+                }
                 OutputLine::Progress {
                     current,
                     total,
                     description,
                 } => {
+                    if let Some(job) = job {
+                        job.progress = Some((current, total));
+                        if !description.is_empty() {
+                            job.message = description.clone();
+                        }
+                    }
                     if !description.is_empty() {
                         self.status = description;
                     }
@@ -757,14 +896,19 @@ impl MosnaApp {
         let Some(success) = finished else { return };
 
         let step = run.step;
+        let job = run.job;
         let elapsed = run.started.elapsed().as_secs_f64();
         self.run = None;
         self.last_run_failed = !success;
 
+        if let Some(id) = job {
+            self.finish_job(id, step, success, elapsed);
+            self.advance_queue();
+            return;
+        }
+
         // A sweep is a queue of these: the run that has just ended fills in its
-        // own row, and the next one starts. It is handled before the status
-        // line below, which speaks about a single run and would otherwise
-        // announce the end of a sweep that is still going.
+        // own row, and the next one starts.
         // The comparison is one more sub-process of the sweep, but it is not
         // one of its runs: it fills no row and advances nothing.
         if self.comparing {
@@ -777,34 +921,39 @@ impl MosnaApp {
             self.refresh_images();
             return;
         }
+        // Nothing but a sweep runs outside the queue.
         if self.sweep.is_some() {
             self.finish_sweep_run(success);
-            return;
         }
+    }
+
+    /// Record how a queued job ended, and say so.
+    fn finish_job(&mut self, id: u64, step: Step, success: bool, elapsed: f64) {
+        let reason = self.failure_reason();
+        self.queue.finish(id, success, elapsed, || reason.clone());
+        let cancelled = self
+            .queue
+            .get(id)
+            .is_some_and(|job| job.state == crate::model::queue::JobState::Cancelled);
 
         let duration = format_duration(elapsed);
-        if success {
+        if cancelled {
+            self.status = format!("⏹ {} cancelled after {duration}", step.label());
+            self.progress = None;
+            self.last_run_failed = false;
+        } else if success {
             self.status = format!("✅ {} completed in {duration}", step.label());
             self.progress = Some((1, 1));
             self.refresh_images();
-            self.viewer_tab = ViewerTab::Images;
+            // Only once the queue has drained: jumping to the figures between
+            // two queued jobs would pull the user off whatever they were
+            // watching.
+            if self.queue.waiting() == 0 && self.viewer_tab != ViewerTab::Queue {
+                self.viewer_tab = ViewerTab::Images;
+            }
         } else {
             self.status = format!("❌ {} failed in {duration}", step.label());
             self.progress = Some((0, 1));
-            // The last line that is neither progress nor routine info is the
-            // one that says what actually went wrong.
-            let reason = self
-                .log
-                .iter()
-                .rev()
-                .map(|(_, line)| line.as_str())
-                .find(|line| {
-                    !line.contains("[QT_PROGRESS]")
-                        && !line.contains("[QT_INFO]")
-                        && !line.trim().is_empty()
-                })
-                .unwrap_or("Unknown error.")
-                .to_string();
             self.notice = Some(format!("{}\n\n{reason}", step.label()));
         }
     }
@@ -932,6 +1081,114 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         app.set_working_dir(dir.path().to_path_buf());
         assert!(!app.needs_working_dir);
+    }
+
+    /// Choosing a directory reads no nodes file: the table stays empty until
+    /// one of the Refresh buttons is pressed.
+    #[test]
+    fn choosing_a_working_directory_does_not_read_the_nodes() {
+        let mut app = app();
+        let nodes = tempfile::tempdir().unwrap();
+        std::fs::write(nodes.path().join("nodes_patient-1.csv"), "X,Y\n0,0\n").unwrap();
+        app.browser.nodes_directory = nodes.path().to_string_lossy().into_owned();
+        app.browser.sample_column.clear();
+        app.browser.extension = "csv".into();
+
+        let dir = tempfile::tempdir().unwrap();
+        app.set_working_dir(dir.path().to_path_buf());
+        assert!(app.rows.is_empty(), "the nodes were listed unasked");
+
+        app.refresh_nodes();
+        assert_eq!(app.rows.len(), 1);
+    }
+
+    /// A process that runs until it is killed, standing in for an analysis.
+    #[cfg(unix)]
+    fn a_running_job(app: &mut MosnaApp) -> u64 {
+        let working_dir = app.working_dir().unwrap().to_path_buf();
+        let id = app
+            .queue
+            .push(Step::Tysserand, Vec::new(), working_dir, None, false);
+        app.queue.get_mut(id).unwrap().state = crate::model::queue::JobState::Running;
+        let (_sender, output) = std::sync::mpsc::channel();
+        app.run = Some(Run {
+            step: Step::Tysserand,
+            job: Some(id),
+            child: std::process::Command::new("sleep")
+                .arg("30")
+                .spawn()
+                .unwrap(),
+            output,
+            started: Instant::now(),
+        });
+        id
+    }
+
+    /// Wait for the run in flight to be reaped.
+    #[cfg(unix)]
+    fn reap(app: &mut MosnaApp) {
+        let deadline = Instant::now() + std::time::Duration::from_secs(10);
+        while app.run.is_some() && Instant::now() < deadline {
+            app.poll_run();
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        assert!(app.run.is_none(), "the run was never reaped");
+    }
+
+    /// A button pressed while an analysis runs queues its own instead of
+    /// being refused.
+    #[cfg(unix)]
+    #[test]
+    fn an_analysis_started_while_one_runs_waits_in_the_queue() {
+        let mut app = app();
+        let running = a_running_job(&mut app);
+
+        app.start(Step::Assortativity);
+        assert_eq!(app.queue.jobs.len(), 2);
+        assert_eq!(app.queue.waiting(), 1);
+        assert_eq!(
+            app.run.as_ref().unwrap().job,
+            Some(running),
+            "the run in flight was replaced"
+        );
+
+        // The waiting job reads a copy of the configuration, not the file the
+        // panels keep writing to.
+        let waiting = app.queue.next_waiting().unwrap();
+        let copy = app.queue.get(waiting).unwrap().config_copy.clone().unwrap();
+        assert!(copy.is_file());
+        assert!(app
+            .queue
+            .get(waiting)
+            .unwrap()
+            .arguments
+            .contains(&copy.to_string_lossy().into_owned()));
+
+        // Its cross takes it out, copy and all.
+        app.cancel_job(waiting);
+        assert_eq!(app.queue.jobs.len(), 1);
+        assert!(!copy.exists());
+
+        app.cancel_job(running);
+        reap(&mut app);
+    }
+
+    /// The cross on a running job kills it, and it ends cancelled — no
+    /// failure dialog for something the user asked for.
+    #[cfg(unix)]
+    #[test]
+    fn cancelling_the_running_job_ends_it_quietly() {
+        let mut app = app();
+        let running = a_running_job(&mut app);
+
+        app.cancel_job(running);
+        reap(&mut app);
+
+        assert_eq!(
+            app.queue.get(running).unwrap().state,
+            crate::model::queue::JobState::Cancelled
+        );
+        assert!(app.notice.is_none(), "{:?}", app.notice);
     }
 
     #[test]
