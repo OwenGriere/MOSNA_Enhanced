@@ -369,7 +369,9 @@ fn actions(app: &mut MosnaApp, ui: &mut egui::Ui) {
     // The rows are decided in `Step::rows`, where the arrangement can be
     // stated as a test rather than discovered by dragging the panel.
     for row in Step::rows() {
-        ui.add_enabled_ui(!running, |ui| match row.as_slice() {
+        // Never greyed out while something runs: a button pressed then adds
+        // its analysis to the queue, to start when the ones before it end.
+        ui.scope(|ui| match row.as_slice() {
             [step] => {
                 if step_button(ui, *step, None).clicked() {
                     app.start(*step);
@@ -446,7 +448,10 @@ fn step_button(ui: &mut egui::Ui, step: Step, width: Option<f32>) -> egui::Respo
         Some(width) => crate::panels::accent_button_sized(ui, step.label(), colour, width),
         None => accent_button(ui, step.label(), colour),
     };
-    response.on_hover_text(step.hint())
+    response.on_hover_text(format!(
+        "{}\n\nAdded to the queue if another analysis is running.",
+        step.hint()
+    ))
 }
 
 fn tab_label(name: &str, selected: bool) -> egui::RichText {

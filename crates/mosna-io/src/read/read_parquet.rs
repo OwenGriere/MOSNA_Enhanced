@@ -30,6 +30,20 @@ pub fn read_parquet_rows(path: impl AsRef<Path>) -> Result<usize> {
     Ok(open(path)?.metadata().file_metadata().num_rows() as usize)
 }
 
+/// The column names of a parquet file, read from its footer.
+///
+/// No column is decoded: a picker that only needs the names pays a seek and a
+/// footer parse, not the read of a sample of a few hundred thousand cells.
+pub fn read_parquet_column_names(path: impl AsRef<Path>) -> Result<Vec<String>> {
+    let path = path.as_ref();
+    Ok(open(path)?
+        .schema()
+        .fields()
+        .iter()
+        .map(|field| field.name().clone())
+        .collect())
+}
+
 /// One key from a parquet file's footer, if it carries that key.
 ///
 /// The companion of

@@ -6,27 +6,29 @@
 //!
 //! # How it stays fast
 //!
-//! A sample is tens to hundreds of thousands of cells, and egui copies every
-//! vertex it is given into the frame's primitives. Two things keep that
-//! bounded. The geometry is *prepared* — cell centres and edge endpoints in
+//! A sample is tens to hundreds of thousands of cells, and every one of them
+//! in view is drawn, with every edge that touches the view: the picture is the
+//! whole network at any zoom, never a subsample of it. Two things keep that
+//! affordable. The geometry is *prepared* — cell centres and edge endpoints in
 //! mesh space, with their colours resolved — for a region half a screen wider
 //! than the view, and re-used until the view leaves it, so panning does not
-//! re-read a column or re-run the colour map. And the prepared set is capped:
-//! past [`crate::model::network::CELL_BUDGET`] cells only every `stride`-th is
-//! kept, which at that
-//! zoom is the same picture because the cells are sub-pixel and overlapping.
+//! re-read a column or re-run the colour map. And the screen mesh built from
+//! it is kept until the camera moves, so a frame that only moves the pointer —
+//! the hover read-out — hands egui the same mesh again instead of rebuilding
+//! it.
 //!
-//! What is rebuilt every frame is the mesh itself, from the prepared centres
-//! and the camera. That is a multiply and an add per vertex, and it is what
-//! lets a cell keep the same size on screen at every zoom without the geometry
-//! depending on the zoom.
+//! The mesh is rebuilt from the prepared centres when the camera changes. That
+//! is a multiply and an add per vertex, and it is what lets a cell's size
+//! follow the zoom without the geometry depending on it.
+
+use std::sync::Arc;
 
 use egui::{Color32, Mesh, Pos2, Rect, Sense, Stroke, Vec2};
 
 use crate::app::MosnaApp;
 use crate::model::network::{
-    circle_segments, covers, flip, fuse, mesh_region, point_radius, stride_for, Attribute, Bounds,
-    Camera, Channel, Legend, NetworkSample, Palette, Point, MAX_LAYERS,
+    circle_segments, covers, flip, fuse, mesh_region, point_radius, Attribute, Bounds, Camera,
+    Channel, Legend, NetworkSample, Palette, Point, MAX_LAYERS,
 };
 use crate::theme;
 
@@ -68,6 +70,10 @@ pub struct NetworkState {
     /// Whether the edges are drawn at all. On by default: the edges are the
     /// network, and a cloud of dots is a scatter plot.
     pub show_edges: bool,
+    /// Whether the network directory has been listed since the last
+    /// [`Self::clear`]. Listing is all that happens on its own: a sample is
+    /// read only once it is chosen.
+    pub listed: bool,
     /// The loaded sample, when one is.
     sample: Option<NetworkSample>,
     camera: Option<Camera>,
@@ -95,6 +101,25 @@ pub struct NetworkState {
     canvas_size: [f32; 2],
 
     prepared: Option<Prepared>,
+    /// Bumped whenever `prepared` is rebuilt, so the screen mesh knows.
+    generation: u64,
+    painted: Option<Painted>,
+}
+
+/// The screen meshes of the last frame, and what they were built for.
+struct Painted {
+    key: PaintKey,
+    edges: Arc<Mesh>,
+    cells: Arc<Mesh>,
+}
+
+/// Everything a screen mesh depends on.
+#[derive(Clone, Copy, PartialEq)]
+struct PaintKey {
+    scale: f32,
+    offset: [f32; 2],
+    origin: Pos2,
+    generation: u64,
 }
 
 /// One column, its palette, and that column read.
@@ -192,6 +217,7 @@ impl Default for NetworkState {
             // The one field that is not its type's default: a network without
             // its edges is a scatter plot.
             show_edges: true,
+            listed: false,
             sample: None,
             camera: None,
             layers: Vec::new(),
@@ -203,6 +229,8 @@ impl Default for NetworkState {
             canvas_centre: [0.0, 0.0],
             canvas_size: [0.0, 0.0],
             prepared: None,
+            generation: 0,
+            painted: None,
         }
     }
 }
@@ -218,6 +246,18 @@ impl NetworkState {
     /// than an empty drop-down.
     pub fn clear(&mut self) {
         *self = Self::default();
+    }
+
+    /// Take a fresh list of samples, as Refresh Networks found it.
+    ///
+    /// The same list keeps what is on screen; a different one starts over,
+    /// since a loaded sample or a chosen patient may no longer be in it.
+    pub fn offer(&mut self, rows: &[crate::model::browser::SampleRow]) {
+        if self.samples != rows {
+            self.clear();
+            self.samples = rows.to_vec();
+        }
+        self.listed = true;
     }
 
     /// The columns of the loaded sample, for the pickers.
@@ -236,11 +276,8 @@ impl NetworkState {
         self.sample.is_some()
     }
 
-    /// How many cells the last frame actually put on the canvas.
-    ///
-    /// Fewer than [`Self::n_cells`] when the view is wide enough for the
-    /// subsample to bite. Worth saying out loud: a reader counting dots should
-    /// know when they are not all there.
+    /// How many cells the prepared region holds — every cell in and around
+    /// the view, none left out.
     pub fn drawn_cells(&self) -> usize {
         self.prepared
             .as_ref()
@@ -407,7 +444,10 @@ impl NetworkState {
 
 /// Draw the tab.
 pub fn show(app: &mut MosnaApp, ui: &mut egui::Ui) {
-    if app.network.samples.is_empty() && app.network.error.is_none() {
+    seed_coordinate_columns(app);
+    // Once, not every frame: an empty directory used to be listed again sixty
+    // times a second.
+    if !app.network.listed {
         discover(app);
     }
 
@@ -449,7 +489,7 @@ pub fn show(app: &mut MosnaApp, ui: &mut egui::Ui) {
 
 /// Find the samples of the network directory.
 fn discover(app: &mut MosnaApp) {
-    seed_coordinate_columns(app);
+    app.network.listed = true;
     match app.browser.discover_networks() {
         Ok(rows) => {
             app.network.samples = rows;
@@ -697,24 +737,6 @@ fn sample_picker(app: &mut MosnaApp, ui: &mut egui::Ui) {
                 .color(theme::TEXT_MUTED)
                 .size(theme::size::SMALL),
         );
-
-        // Say when the view is not showing all of them, and when the edges
-        // have been left out. A reader counting dots is entitled to know.
-        let drawn = app.network.drawn_cells();
-        let mut notes = Vec::new();
-        if drawn > 0 && drawn < cells {
-            notes.push(format!(
-                "{drawn} drawn, with the edges between them — zoom in for all of them"
-            ));
-        }
-        for note in notes {
-            ui.label(
-                egui::RichText::new(note)
-                    .color(theme::TEXT_MUTED)
-                    .size(theme::size::SMALL)
-                    .italics(),
-            );
-        }
     }
 }
 
@@ -1024,10 +1046,8 @@ fn canvas(app: &mut MosnaApp, ui: &mut egui::Ui) {
 
     let camera = *camera;
     let visible = camera.visible([rect.width(), rect.height()]);
-    // The edges are drawn whenever the sample has any and the user wants them.
-    // What keeps that affordable at two hundred thousand cells is not hiding
-    // them but the subsample: an edge is kept only when both its ends are, so
-    // the edge count falls with the cell count instead of independently.
+    // The edges are drawn whenever the sample has any and the user wants them,
+    // at every zoom.
     let with_edges = app.network.show_edges && !sample.edges.is_empty();
 
     prepare_if_stale(app, visible, with_edges);
@@ -1060,13 +1080,9 @@ fn prepare_if_stale(app: &mut MosnaApp, visible: Bounds, with_edges: bool) {
         return;
     };
     let region = mesh_region(visible);
+    // Every cell of the region: nothing is thinned out, whatever the zoom.
     let mut rows = sample.index.in_view(region);
     rows.sort_unstable();
-
-    // Past the budget, every stride-th cell. Sorted first, so the subsample is
-    // spread over the region rather than over whichever buckets came first.
-    let stride = stride_for(rows.len());
-    let rows: Vec<u32> = rows.into_iter().step_by(stride).collect();
 
     let cells: Vec<Point> = rows
         .iter()
@@ -1110,14 +1126,13 @@ fn prepare_if_stale(app: &mut MosnaApp, visible: Bounds, with_edges: bool) {
         for &row in &rows {
             kept[row as usize] = true;
         }
-        // Both ends, not either: when nothing was thinned this is the same
-        // set apart from the edges leaving the region, and when the subsample
-        // is biting it is what keeps the edges from outnumbering the cells
-        // they connect several times over.
+        // Either end, not both: an edge leaving the region still crosses the
+        // view on its way out, and dropping it left the border of the picture
+        // with cells that looked unconnected.
         sample
             .edges
             .iter()
-            .filter(|(a, b)| kept[*a as usize] && kept[*b as usize])
+            .filter(|(a, b)| kept[*a as usize] || kept[*b as usize])
             .map(|(a, b)| {
                 (
                     flip(sample.positions[*a as usize]),
@@ -1129,6 +1144,7 @@ fn prepare_if_stale(app: &mut MosnaApp, visible: Bounds, with_edges: bool) {
         Vec::new()
     };
 
+    app.network.generation = app.network.generation.wrapping_add(1);
     app.network.prepared = Some(Prepared {
         cells,
         colours,
@@ -1140,15 +1156,49 @@ fn prepare_if_stale(app: &mut MosnaApp, visible: Bounds, with_edges: bool) {
 }
 
 /// Draw the prepared geometry through the camera.
-fn paint(app: &MosnaApp, ui: &mut egui::Ui, rect: Rect, camera: Camera) {
-    let Some(prepared) = &app.network.prepared else {
-        return;
+///
+/// The meshes are rebuilt only when the camera, the canvas or the prepared
+/// geometry has changed; otherwise last frame's are handed back to egui, which
+/// shares them rather than copying.
+fn paint(app: &mut MosnaApp, ui: &mut egui::Ui, rect: Rect, camera: Camera) {
+    let key = PaintKey {
+        scale: camera.scale,
+        offset: camera.offset,
+        origin: rect.min,
+        generation: app.network.generation,
     };
-    let Some(sample) = &app.network.sample else {
-        return;
-    };
+    let fresh = app
+        .network
+        .painted
+        .as_ref()
+        .is_some_and(|painted| painted.key == key);
+    if !fresh {
+        let Some((edges, cells)) = build_meshes(app, rect, camera) else {
+            return;
+        };
+        app.network.painted = Some(Painted {
+            key,
+            edges: Arc::new(edges),
+            cells: Arc::new(cells),
+        });
+    }
 
+    let Some(painted) = &app.network.painted else {
+        return;
+    };
     let painter = ui.painter_at(rect);
+    // The edges first, so a cell is never hidden behind one.
+    if !painted.edges.is_empty() {
+        painter.add(egui::Shape::Mesh(painted.edges.clone()));
+    }
+    painter.add(egui::Shape::Mesh(painted.cells.clone()));
+}
+
+/// The edge mesh and the cell mesh, in screen space.
+fn build_meshes(app: &MosnaApp, rect: Rect, camera: Camera) -> Option<(Mesh, Mesh)> {
+    let prepared = app.network.prepared.as_ref()?;
+    let sample = app.network.sample.as_ref()?;
+
     let to_screen = |point: Point| {
         Pos2::new(
             point[0] * camera.scale + camera.offset[0] + rect.left(),
@@ -1156,26 +1206,37 @@ fn paint(app: &MosnaApp, ui: &mut egui::Ui, rect: Rect, camera: Camera) {
         )
     };
 
-    // The edges first, so a cell is never hidden behind one.
+    let radius = point_radius(camera.scale, sample.index.spacing());
+
+    let mut edges = Mesh::default();
     if !prepared.edges.is_empty() {
-        let mut mesh = Mesh::default();
-        let colour = theme::BORDER;
+        // A hair thicker as the cells grow, so the links stay visible beside
+        // dots several pixels wide.
+        let width = (radius * 0.18).clamp(1.0, 2.0);
+        edges.reserve_vertices(prepared.edges.len() * 4);
+        edges.reserve_triangles(prepared.edges.len() * 2);
         for (a, b) in &prepared.edges {
-            add_segment(&mut mesh, to_screen(*a), to_screen(*b), 1.0, colour);
+            add_segment(
+                &mut edges,
+                to_screen(*a),
+                to_screen(*b),
+                width,
+                theme::BORDER,
+            );
         }
-        painter.add(mesh);
     }
 
-    let radius = point_radius(camera.scale, sample.index.spacing());
     // The ring of offsets is the same for every cell, so it is computed once
     // and translated, rather than a sine and a cosine per cell per side.
     let ring = ring_offsets(radius);
-    let mut mesh = Mesh::default();
+    let mut cells = Mesh::default();
+    cells.reserve_vertices(prepared.cells.len() * (ring.len() + 1));
+    cells.reserve_triangles(prepared.cells.len() * ring.len());
     for (index, centre) in prepared.cells.iter().enumerate() {
         let colour = prepared.colours.get(index).copied().unwrap_or(theme::STEEL);
-        add_disc(&mut mesh, to_screen(*centre), &ring, colour);
+        add_disc(&mut cells, to_screen(*centre), &ring, colour);
     }
-    painter.add(mesh);
+    Some((edges, cells))
 }
 
 /// Add a quad covering the segment from `a` to `b`.
@@ -1238,10 +1299,6 @@ fn hover(app: &MosnaApp, ui: &mut egui::Ui, rect: Rect, camera: Camera, response
         return;
     };
 
-    // Every cell answers the pointer, including one the subsample left out of
-    // the mesh. At a zoom where the subsample bites, the cells overlap several
-    // deep and something is painted under the pointer either way; naming the
-    // cell that is really there beats naming the one that happened to be kept.
     let local = pointer - rect.min;
     let at = camera.screen_to_world([local.x, local.y]);
     // The search radius in world units is the drawn radius back through the

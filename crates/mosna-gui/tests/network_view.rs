@@ -242,14 +242,12 @@ fn the_canvas_survives_being_scrolled_and_dragged() {
     );
 }
 
-/// A sample past the drawing budget must still draw — thinned, not dropped,
-/// and without taking the whole frame to decide that.
+/// A large sample is drawn whole — every cell and every edge, at the widest
+/// zoom — and without taking the whole frame to do it.
 #[test]
-fn a_sample_over_the_budget_still_draws() {
+fn a_large_sample_is_drawn_whole() {
     let directory = tempfile::tempdir().unwrap();
-    // 62 500 cells: over CELL_BUDGET, so the subsample is exercised, and over
-    // EDGE_BUDGET at full zoom, so the edges are dropped at first and come
-    // back as the view narrows.
+    // 62 500 cells: more than the interface used to draw before thinning.
     write_network(directory.path(), 250);
 
     let ctx = egui::Context::default();
@@ -264,21 +262,13 @@ fn a_sample_over_the_budget_still_draws() {
     draw(&mut app, &ctx, 3, Some(Pos2::new(600.0, 450.0)));
     assert!(app.network.error.is_none(), "{:?}", app.network.error);
 
-    let drawn = app.network.drawn_cells();
-    assert!(drawn > 0, "nothing was drawn at all");
-    assert!(
-        drawn <= mosna_gui::model::network::CELL_BUDGET,
-        "{drawn} cells went into the mesh, over the budget"
-    );
-
-    // The edges come too, and their count is held down by the same subsample:
-    // an edge is kept only when both its ends were, so the two fall together.
+    // Fitted, the whole sample is in view: nothing is left out.
+    assert_eq!(app.network.drawn_cells(), 62_500, "cells were thinned out");
     assert!(app.network.drawing_edges(), "the edges were dropped");
-    let edges = app.network.drawn_edges();
-    assert!(edges > 0, "the network came out as a cloud of dots");
-    assert!(
-        edges <= drawn * 4,
-        "{edges} edges for {drawn} cells: the subsample is not holding them down"
+    assert_eq!(
+        app.network.drawn_edges(),
+        2 * 250 * 249,
+        "edges were left out"
     );
 
     // And the checkbox turns them off.
@@ -308,6 +298,7 @@ fn the_tab_is_one_of_the_viewers_pages() {
     for tab in [
         ViewerTab::Images,
         ViewerTab::Network,
+        ViewerTab::Queue,
         ViewerTab::Log,
         ViewerTab::Documentation,
     ] {

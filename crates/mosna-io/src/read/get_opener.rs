@@ -56,6 +56,19 @@ pub fn read_table(path: impl AsRef<Path>, extension: Extension) -> Result<Table>
     }
 }
 
+/// The column names of a table, without reading its values.
+///
+/// Parquet answers from its footer and the delimited formats from their header
+/// line, so asking which columns a sample has costs the same whatever its size.
+pub fn table_columns(path: impl AsRef<Path>, extension: Extension) -> Result<Vec<String>> {
+    match extension {
+        Extension::Parquet => read_parquet::read_parquet_column_names(path),
+        Extension::Csv | Extension::Tsv => {
+            read_csv::read_delimited_headers(path, extension.delimiter())
+        }
+    }
+}
+
 /// How many rows a table holds.
 ///
 /// Parquet answers from its footer, without decoding a single value. The
@@ -96,6 +109,29 @@ mod tests {
         assert_eq!(Extension::parse("csv").unwrap(), Extension::Csv);
         assert_eq!(Extension::parse("parquet").unwrap(), Extension::Parquet);
         assert_eq!(Extension::parse(".tsv").unwrap(), Extension::Tsv);
+    }
+
+    #[test]
+    fn column_names_come_without_the_values() {
+        let dir = tempfile::tempdir().unwrap();
+        let csv = dir.path().join("nodes.csv");
+        std::fs::write(&csv, "X,Y,Cluster\n0,1,a\n2,3,b\n").unwrap();
+        assert_eq!(
+            table_columns(&csv, Extension::Csv).unwrap(),
+            ["X", "Y", "Cluster"]
+        );
+
+        let table = Table::from_columns(vec![
+            ("X".into(), Table::f64_array([0.0, 1.0])),
+            ("phenotype".into(), Table::string_array(["a", "b"])),
+        ])
+        .unwrap();
+        let parquet = dir.path().join("nodes.parquet");
+        crate::write::write_parquet::write_parquet(&table, &parquet).unwrap();
+        assert_eq!(
+            table_columns(&parquet, Extension::Parquet).unwrap(),
+            ["X", "phenotype"]
+        );
     }
 
     #[test]

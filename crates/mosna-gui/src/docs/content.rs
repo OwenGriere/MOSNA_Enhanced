@@ -362,9 +362,14 @@ fn getting_started() -> Chapter {
                     },
                     Block::Paragraph(T::new(
                         "Press 'Refresh Nodes' to list your raw files, and 'Refresh Networks' \
-                         to list reconstructed networks.",
+                         to list reconstructed networks. Nothing is read before you do: \
+                         choosing the working directory lists no file, and a network is only \
+                         listed until you choose it in the Network tab.",
                         "Appuyez sur « Refresh Nodes » pour lister vos fichiers bruts, et sur \
-                         « Refresh Networks » pour lister les réseaux reconstruits.",
+                         « Refresh Networks » pour lister les réseaux reconstruits. Rien n'est \
+                         lu avant : choisir le répertoire de travail ne liste aucun fichier, et \
+                         un réseau n'est que listé tant que vous ne le choisissez pas dans \
+                         l'onglet Network.",
                     )),
                 ],
             },
@@ -394,10 +399,11 @@ fn workflow() -> Chapter {
                         ),
                         T::new(
                             "Viewer, in the middle — figures, the network drawn from the files \
-                             themselves, the log of a running analysis, and this manual.",
+                             themselves, the queue of analyses, the log of a running analysis, \
+                             and this manual.",
                             "Viewer, au centre — les figures, le réseau tracé directement \
-                             depuis les fichiers, le journal de l'analyse en cours, et ce \
-                             manuel.",
+                             depuis les fichiers, la file d'attente des analyses, le journal de \
+                             l'analyse en cours, et ce manuel.",
                         ),
                         T::new(
                             "Parameters, on the right — every setting, plus the buttons that \
@@ -445,11 +451,9 @@ fn workflow() -> Chapter {
                          so a cell high in the red column and the blue one is neither red nor \
                          blue. A blend cannot be read back: the bars in the margin describe \
                          each column on its own, and the tooltip carries the values. A cell \
-                         with no value in any of the chosen columns stays grey. Past sixty \
-                         thousand cells in view only a fraction are drawn, with the edges \
-                         between them: at that size a cell is under a pixel and they overlap \
-                         several deep, so the rest would cost frames and show nothing. Zoom \
-                         in and they all come back.",
+                         with no value in any of the chosen columns stays grey. Every cell \
+                         and every edge is drawn at any zoom; a cell shrinks as you zoom out \
+                         and grows back as you zoom in.",
                         "L'onglet Network du Viewer trace un échantillon depuis ses fichiers de \
                          nœuds et d'arêtes plutôt que depuis une figure. Choisissez le patient, \
                          puis l'échantillon ; un jeu de données sans colonne d'échantillon ne \
@@ -464,11 +468,23 @@ fn workflow() -> Chapter {
                          rouge et dans la bleue n'est ni rouge ni bleue. Un mélange ne se \
                          relit pas : les barres en marge décrivent chaque colonne seule, et \
                          l'infobulle porte les valeurs. Une cellule sans valeur dans aucune \
-                         des colonnes choisies reste grise. Au-delà de soixante mille \
-                         cellules à l'écran, seule une fraction est tracée, avec les arêtes qui \
-                         les relient : à cette taille une cellule fait moins d'un pixel et \
-                         elles se recouvrent, le reste coûterait des images par seconde sans \
-                         rien montrer. En zoomant, tout revient.",
+                         des colonnes choisies reste grise. Toutes les cellules et toutes les \
+                         arêtes sont tracées à tout niveau de zoom ; une cellule rétrécit quand \
+                         on dézoome et grossit quand on zoome.",
+                    )),
+                    Block::Paragraph(T::new(
+                        "The analysis buttons never wait for each other. Pressed while an \
+                         analysis runs, a button adds its analysis to the Viewer's Queue tab, \
+                         with the settings the panels show at that moment; the analyses then \
+                         run one after the other, in the order they were added. Each has its \
+                         own progress bar, and the red cross beside it removes a waiting \
+                         analysis from the queue or cancels the one running.",
+                        "Les boutons d'analyse n'attendent jamais. Pressé pendant qu'une \
+                         analyse tourne, un bouton ajoute son analyse à l'onglet Queue du \
+                         Viewer, avec les réglages affichés à ce moment ; les analyses \
+                         s'exécutent ensuite l'une après l'autre, dans l'ordre d'ajout. \
+                         Chacune a sa barre de progression, et la croix rouge à côté retire \
+                         une analyse en attente ou annule celle en cours.",
                     )),
                 ],
             },

@@ -29,10 +29,24 @@ pub fn show(app: &mut MosnaApp, ui: &mut egui::Ui) {
                 )
                 .show(ui, |ui| status_bar(app, ui));
 
+            // The queue says how many jobs it holds, so a job added from the
+            // Parameters panel is seen to have landed somewhere.
+            let pending = app
+                .queue
+                .jobs
+                .iter()
+                .filter(|job| !job.state.is_finished())
+                .count();
+            let queue_name = if pending == 0 {
+                "Queue".to_string()
+            } else {
+                format!("Queue ({pending})")
+            };
             ui.horizontal(|ui| {
                 for (tab, name) in [
                     (ViewerTab::Images, "Images"),
                     (ViewerTab::Network, "Network"),
+                    (ViewerTab::Queue, queue_name.as_str()),
                     (ViewerTab::Log, "Log"),
                     (ViewerTab::Documentation, "Documentation"),
                 ] {
@@ -50,6 +64,7 @@ pub fn show(app: &mut MosnaApp, ui: &mut egui::Ui) {
             match app.viewer_tab {
                 ViewerTab::Images => images(app, ui),
                 ViewerTab::Network => super::network::show(app, ui),
+                ViewerTab::Queue => super::queue::show(app, ui),
                 ViewerTab::Log => log(app, ui),
                 ViewerTab::Documentation => super::documentation::show(app, ui),
             }
