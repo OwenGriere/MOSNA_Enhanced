@@ -9,8 +9,11 @@ use crate::app::MosnaApp;
 use crate::model::queue::{Job, JobState};
 use crate::theme;
 
-/// Width of the red cross beside each bar.
-const CROSS_WIDTH: f32 = 28.0;
+/// How much of a row the bar takes. The rest is the red cross's, so the bar
+/// stops well short of the frame's edge whatever the width of the window.
+const BAR_SHARE: f32 = 0.9;
+/// The narrowest the red cross gets.
+const MIN_CROSS_WIDTH: f32 = 24.0;
 /// Height of a job's bar.
 const BAR_HEIGHT: f32 = 18.0;
 
@@ -91,7 +94,10 @@ fn row(ui: &mut egui::Ui, position: usize, job: &Job) -> bool {
         .corner_radius(egui::CornerRadius::same(4))
         .inner_margin(egui::Margin::symmetric(10, 8))
         .show(ui, |ui| {
-            ui.set_width(ui.available_width());
+            // Measured once, before anything in the row can widen it: every
+            // width below is a share of this one.
+            let inner = ui.available_width();
+            ui.set_width(inner);
 
             ui.horizontal(|ui| {
                 ui.label(
@@ -126,7 +132,13 @@ fn row(ui: &mut egui::Ui, position: usize, job: &Job) -> bool {
 
             ui.horizontal(|ui| {
                 let spacing = ui.spacing().item_spacing.x;
-                let width = (ui.available_width() - CROSS_WIDTH - spacing).max(40.0);
+                // The cross never narrower than its glyph: a button does not
+                // shrink below its caption, and one that would not fit is what
+                // pushed the row past the frame on a narrow window.
+                let width = (inner * BAR_SHARE - spacing)
+                    .min(inner - MIN_CROSS_WIDTH - spacing * 2.0)
+                    .max(0.0);
+                let cross_width = (inner - width - spacing * 2.0).max(0.0);
                 let mut bar = egui::ProgressBar::new(job.fraction().unwrap_or(0.0))
                     .desired_width(width)
                     .desired_height(BAR_HEIGHT)
@@ -155,7 +167,12 @@ fn row(ui: &mut egui::Ui, position: usize, job: &Job) -> bool {
                     _ => "Remove from the list",
                 };
                 let enabled = job.state != JobState::Cancelling;
-                if ui.add_enabled(enabled, cross).on_hover_text(hint).clicked() {
+                if ui
+                    .add_enabled_ui(enabled, |ui| ui.add_sized([cross_width, BAR_HEIGHT], cross))
+                    .inner
+                    .on_hover_text(hint)
+                    .clicked()
+                {
                     pressed = true;
                 }
             });
