@@ -17,7 +17,9 @@ use mosna_core::niches::{
     aggregate_cell_types, find_all_phenotypes, make_niches_composition, merge_niche_pheno,
     Normalize,
 };
-use mosna_core::reduction::umap::{cluster_neighbours, umap, Metric, Scalar, UmapParams};
+use mosna_core::reduction::umap::{
+    cluster_neighbours, umap, Metric, Scalar, UmapParams, LAYOUT_REVISION,
+};
 use mosna_io::read::get_opener::{read_table, Extension};
 use mosna_io::write::write_parquet::write_parquet;
 use mosna_io::{SampleId, Table};
@@ -495,16 +497,29 @@ impl Stems {
         // not its own alone. The directories already keep the stages apart; this
         // is what catches a file whose directory was reused because `runs.json`
         // had been deleted and the numbering started again.
+        //
+        // The layout's revision goes into the provenance and nowhere else: an
+        // embedding computed by an earlier revision of the UMAP layout is not
+        // the one this build would compute, so it — and every partition made
+        // from it — is a miss. The run numbers and the fingerprint do not move,
+        // because the settings the user chose have not.
         let features_source = compact(&json!({ "sample": sample, "features": features }));
+        let computed_reduction = reduction.as_ref().map(|settings| {
+            let mut settings = settings.clone();
+            if let Some(object) = settings.as_object_mut() {
+                object.insert("layout_revision".to_string(), json!(LAYOUT_REVISION));
+            }
+            settings
+        });
         let reduction_source = compact(&json!({
             "sample": sample,
             "features": features,
-            "reduction": reduction,
+            "reduction": computed_reduction,
         }));
         let clustering_source = compact(&json!({
             "sample": sample,
             "features": features,
-            "reduction": reduction,
+            "reduction": computed_reduction,
             "clustering": clustering,
         }));
 

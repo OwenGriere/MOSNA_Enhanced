@@ -47,7 +47,7 @@ pub const IMPLEMENTED_CLUSTERERS: &[&str] = &["leiden", "gmm", "spectral"];
 /// The reducers, on the same terms.
 pub const IMPLEMENTED_REDUCERS: &[&str] = &["umap", "none"];
 
-/// The statistics [`mosna_core::nas::make_features_nas`] computes, in order.
+/// The statistics `mosna_core::nas::make_features_nas` computes, in order.
 ///
 /// The aggregation takes the mean, and then optionally the population standard
 /// deviation. A configuration may ask for a prefix of this list and nothing
@@ -245,7 +245,7 @@ impl NicheParams {
 
     /// `n_clusters` capped by the number of observations, which is what the
     /// clusterers do to it — see
-    /// [`fn@mosna_core::clustering::gaussian_mixture`] and its spectral
+    /// `mosna_core::clustering::gaussian_mixture` and its spectral
     /// counterpart, both of which clamp rather than fail.
     pub fn effective_n_clusters(&self, observations: usize) -> usize {
         self.n_clusters.clamp(1, observations.max(1))
@@ -262,7 +262,7 @@ impl NicheParams {
     /// `np.mean` in the interface and left `stat_names` at its default got the
     /// mean *and* the standard deviation.
     ///
-    /// The result is clamped to what [`fn@mosna_core::nas::make_features_nas`]
+    /// The result is clamped to what `mosna_core::nas::make_features_nas`
     /// implements — the mean, then the population standard deviation — and
     /// never falls below one, because the mean is always computed.
     pub fn n_statistics(&self) -> usize {

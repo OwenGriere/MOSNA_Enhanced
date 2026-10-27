@@ -139,7 +139,7 @@ impl CohortDigest {
 ///
 /// One pass, because the check and the fingerprint want the same bytes: the
 /// values of exactly those columns, in exactly those files. This used to be the
-/// verification loop of [`crate::niche_analysis`] and has absorbed the
+/// verification loop of [`fn@crate::niche_analysis`] and has absorbed the
 /// fingerprint rather than reading the cohort a second time to compute it.
 ///
 /// The per-sample digests are combined in `data_index` order, so a cohort that
@@ -234,7 +234,7 @@ pub fn verify_and_digest(
 /// # Why this is a refusal and not a conversion
 ///
 /// The niche labels are written back into the nodes files, and
-/// [`mosna_core::niches::merge_niche_pheno`] writes parquet whatever it read:
+/// [`fn@mosna_core::niches::merge_niche_pheno`] writes parquet whatever it read:
 /// the network directory the pipelines produce is parquet, and every later step
 /// reads it as such. Pointed at a directory of CSVs — which `Network
 /// directory` and `Extension` together allow — it read `nodes_patient-1.csv`

@@ -9,6 +9,8 @@ use crate::error::{CoreError, Result};
 use crate::linalg::cholesky::{cholesky, Cholesky};
 use crate::linalg::kmeans::kmeans;
 
+use rayon::prelude::*;
+
 /// Settings of a mixture fit.
 #[derive(Debug, Clone, PartialEq)]
 pub struct GmmParams {
@@ -60,6 +62,15 @@ pub struct GmmResult {
 /// Everything is computed in log space through a Cholesky factorisation: a
 /// covariance determinant in twenty dimensions underflows to zero in linear
 /// space, which would turn every responsibility into `NaN`.
+///
+/// # Parallelism without a different answer
+///
+/// The restarts run side by side and are compared in attempt order. The E step
+/// is parallel over points and the M step over components; neither splits a
+/// sum across threads. Each total is still accumulated over the rows in row
+/// order, so the fit is the same bit for bit on one core or on sixty-four —
+/// a sum cut by thread would round differently with the core count, and in an
+/// iterative fit that difference grows until it moves a label.
 pub fn gaussian_mixture(
     data: &[f64],
     n_rows: usize,
@@ -82,16 +93,22 @@ pub fn gaussian_mixture(
     // empty and their covariances undefined.
     let k = params.n_clusters.clamp(1, n_rows);
 
+    let candidates: Vec<GmmResult> = (0..params.n_init.max(1))
+        .into_par_iter()
+        .map(|attempt| {
+            fit_once(
+                data,
+                n_rows,
+                n_features,
+                k,
+                params,
+                params.seed.wrapping_add(attempt as u64),
+            )
+        })
+        .collect::<Result<Vec<_>>>()?;
+
     let mut best: Option<GmmResult> = None;
-    for attempt in 0..params.n_init.max(1) {
-        let candidate = fit_once(
-            data,
-            n_rows,
-            n_features,
-            k,
-            params,
-            params.seed.wrapping_add(attempt as u64),
-        )?;
+    for candidate in candidates {
         if best
             .as_ref()
             .is_none_or(|b| candidate.log_likelihood > b.log_likelihood)
@@ -233,36 +250,48 @@ fn expectation(
         .collect::<Result<Vec<_>>>()?;
 
     let normaliser = -0.5 * n_features as f64 * (2.0 * std::f64::consts::PI).ln();
+
+    // Each point's log-probability, kept so the total below is summed in row
+    // order whatever the thread that computed it.
+    let log_probs: Vec<f64> = responsibilities
+        .par_chunks_mut(k)
+        .enumerate()
+        .map_init(
+            || vec![0.0f64; n_features],
+            |delta, (row, out)| {
+                let point = &data[row * n_features..(row + 1) * n_features];
+
+                // Log of the joint probability of the point and each component.
+                let mut log_joint = vec![f64::NEG_INFINITY; k];
+                for (component, factorisation) in factorisations.iter().enumerate() {
+                    if weights[component] <= 0.0 {
+                        continue;
+                    }
+                    for f in 0..n_features {
+                        delta[f] = point[f] - means[component * n_features + f];
+                    }
+                    log_joint[component] = weights[component].ln() + normaliser
+                        - 0.5 * factorisation.log_det()
+                        - 0.5 * factorisation.mahalanobis_squared(delta);
+                }
+
+                // Log-sum-exp, shifted by the maximum so the exponentials
+                // cannot overflow or all underflow to zero.
+                let max = log_joint.iter().copied().fold(f64::NEG_INFINITY, f64::max);
+                let sum_exp: f64 = log_joint.iter().map(|v| (v - max).exp()).sum();
+                let log_prob = max + sum_exp.ln();
+
+                for component in 0..k {
+                    out[component] = (log_joint[component] - log_prob).exp();
+                }
+                log_prob
+            },
+        )
+        .collect();
+
     let mut total = 0.0;
-    let mut delta = vec![0.0f64; n_features];
-
-    for row in 0..n_rows {
-        let point = &data[row * n_features..(row + 1) * n_features];
-
-        // Log of the joint probability of the point and each component.
-        let mut log_joint = vec![f64::NEG_INFINITY; k];
-        for (component, factorisation) in factorisations.iter().enumerate() {
-            if weights[component] <= 0.0 {
-                continue;
-            }
-            for f in 0..n_features {
-                delta[f] = point[f] - means[component * n_features + f];
-            }
-            log_joint[component] = weights[component].ln() + normaliser
-                - 0.5 * factorisation.log_det()
-                - 0.5 * factorisation.mahalanobis_squared(&delta);
-        }
-
-        // Log-sum-exp, shifted by the maximum so the exponentials cannot
-        // overflow or all underflow to zero.
-        let max = log_joint.iter().copied().fold(f64::NEG_INFINITY, f64::max);
-        let sum_exp: f64 = log_joint.iter().map(|v| (v - max).exp()).sum();
-        let log_prob = max + sum_exp.ln();
+    for log_prob in log_probs {
         total += log_prob;
-
-        for component in 0..k {
-            responsibilities[row * k + component] = (log_joint[component] - log_prob).exp();
-        }
     }
 
     Ok(total / n_rows as f64)
@@ -284,65 +313,72 @@ fn maximisation(
     // Effective count of each component. The floor is scikit-learn's
     // `10 * eps`: a component that has lost every point would otherwise divide
     // by zero here.
+    //
+    // One component per task, each walking every row in order: the same
+    // additions, in the same order, as the row-major loop this replaced.
     let floor = 10.0 * f64::EPSILON;
-    let mut counts = vec![0.0f64; k];
-    for row in 0..n_rows {
-        for (component, count) in counts.iter_mut().enumerate() {
-            *count += responsibilities[row * k + component];
-        }
-    }
-    counts.iter_mut().for_each(|c| *c = c.max(floor));
+    let block_size = n_features * n_features;
+    let fitted: Vec<(f64, Vec<f64>, Vec<f64>)> = (0..k)
+        .into_par_iter()
+        .map(|component| {
+            let mut count = 0.0f64;
+            for row in 0..n_rows {
+                count += responsibilities[row * k + component];
+            }
+            let count = count.max(floor);
 
-    means.iter_mut().for_each(|m| *m = 0.0);
-    for row in 0..n_rows {
-        for component in 0..k {
-            let r = responsibilities[row * k + component];
-            if r == 0.0 {
-                continue;
+            let mut mean = vec![0.0f64; n_features];
+            for row in 0..n_rows {
+                let r = responsibilities[row * k + component];
+                if r == 0.0 {
+                    continue;
+                }
+                for f in 0..n_features {
+                    mean[f] += r * data[row * n_features + f];
+                }
             }
-            for f in 0..n_features {
-                means[component * n_features + f] += r * data[row * n_features + f];
+            for value in mean.iter_mut() {
+                *value /= count;
             }
-        }
-    }
-    for component in 0..k {
-        for f in 0..n_features {
-            means[component * n_features + f] /= counts[component];
-        }
-    }
 
-    covariances.iter_mut().for_each(|c| *c = 0.0);
-    let mut delta = vec![0.0f64; n_features];
-    for row in 0..n_rows {
-        for component in 0..k {
-            let r = responsibilities[row * k + component];
-            if r == 0.0 {
-                continue;
+            let mut covariance = vec![0.0f64; block_size];
+            let mut delta = vec![0.0f64; n_features];
+            for row in 0..n_rows {
+                let r = responsibilities[row * k + component];
+                if r == 0.0 {
+                    continue;
+                }
+                for f in 0..n_features {
+                    delta[f] = data[row * n_features + f] - mean[f];
+                }
+                for i in 0..n_features {
+                    let scaled = r * delta[i];
+                    for j in i..n_features {
+                        covariance[i * n_features + j] += scaled * delta[j];
+                    }
+                }
             }
-            for f in 0..n_features {
-                delta[f] = data[row * n_features + f] - means[component * n_features + f];
-            }
-            let block = component * n_features * n_features;
             for i in 0..n_features {
-                let scaled = r * delta[i];
                 for j in i..n_features {
-                    covariances[block + i * n_features + j] += scaled * delta[j];
+                    let mut value = covariance[i * n_features + j] / count;
+                    if i == j {
+                        value += reg_covar;
+                    }
+                    covariance[i * n_features + j] = value;
+                    covariance[j * n_features + i] = value;
                 }
             }
-        }
-    }
-    for (component, &count) in counts.iter().enumerate().take(k) {
-        let block = component * n_features * n_features;
-        for i in 0..n_features {
-            for j in i..n_features {
-                let mut value = covariances[block + i * n_features + j] / count;
-                if i == j {
-                    value += reg_covar;
-                }
-                covariances[block + i * n_features + j] = value;
-                covariances[block + j * n_features + i] = value;
-            }
-        }
+
+            (count, mean, covariance)
+        })
+        .collect();
+
+    let mut counts = vec![0.0f64; k];
+    for (component, (count, mean, covariance)) in fitted.into_iter().enumerate() {
+        counts[component] = count;
+        means[component * n_features..(component + 1) * n_features].copy_from_slice(&mean);
+        covariances[component * block_size..(component + 1) * block_size]
+            .copy_from_slice(&covariance);
     }
 
     let total: f64 = counts.iter().sum();

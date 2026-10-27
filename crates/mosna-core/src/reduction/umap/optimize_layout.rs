@@ -2,9 +2,7 @@
 
 use crate::reduction::umap::Scalar;
 
-use rand::Rng;
-use rand::SeedableRng;
-use rand_chacha::ChaCha8Rng;
+use rayon::prelude::*;
 
 /// Gradients are clipped to this magnitude before being applied.
 ///
@@ -20,14 +18,35 @@ const GRADIENT_CLIP: Scalar = 4.0;
 /// `(0, 1]`. A heavier edge is visited more often, which is how the weights
 /// enter the objective — there is no per-edge weight in the gradient itself.
 ///
-/// # Determinism
+/// # Parallel, and still deterministic
 ///
-/// The updates are applied sequentially from a seeded generator, so a run is
-/// reproducible. umap-learn parallelises this loop and accepts the resulting
-/// race on the coordinates, which is one of the reasons its output is not
-/// reproducible even with a fixed `random_state`. Sequential updates cost
-/// throughput on very large inputs but make the embedding — and therefore every
-/// niche label derived from it — repeatable.
+/// umap-learn parallelises this loop by letting threads write the coordinates
+/// concurrently and accepting the race, which is one of the reasons its output
+/// is not reproducible even with a fixed `random_state`. Here every epoch is
+/// computed from the layout as it stood when the epoch began:
+///
+/// 1. each point gathers the steps of the edges it is an endpoint of — its own
+///    attractions and repulsions as head, the opposite attraction as tail —
+///    reading only that frozen layout, so points are independent and run in
+///    parallel;
+/// 2. the steps of one point are added in a fixed order, edges as head then
+///    edges as tail, each in edge order — never in the order threads finish;
+/// 3. the negative samples are drawn from a counter-based hash of
+///    `(seed, epoch, edge, draw)` rather than from one shared generator, so a
+///    draw does not depend on which edge another thread reached first.
+///
+/// Same input and seed, same embedding, whatever the core count. The layout is
+/// not the one the former sequential loop produced — a step no longer sees the
+/// steps taken before it in the same epoch — which is why [`LAYOUT_REVISION`]
+/// exists.
+///
+/// # Memory
+///
+/// Beside the three schedule arrays already held per edge, this keeps the
+/// incidence of each point as tail — one `u32` per edge — and a second copy of
+/// the layout. The incidence as head is free: the edges come sorted by head
+/// from [`fn@crate::reduction::umap::fuzzy_simplicial_set`], and are only
+/// indexed when a caller passes them in another order.
 #[allow(clippy::too_many_arguments)]
 pub fn optimize_layout(
     embedding: &mut [Scalar],
@@ -45,6 +64,11 @@ pub fn optimize_layout(
     if edges.is_empty() || n_rows < 2 || n_epochs == 0 {
         return;
     }
+    assert!(
+        edges.len() <= u32::MAX as usize,
+        "the layout indexes edges as u32; {} edges is beyond it",
+        edges.len()
+    );
 
     let epochs_per_sample = make_epochs_per_sample(edges, n_epochs);
     let mut next_sample = epochs_per_sample.clone();
@@ -59,104 +83,263 @@ pub fn optimize_layout(
         .map(|e| e / rate)
         .collect::<Vec<Scalar>>();
 
-    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    let as_head = Incidence::new(n_rows, edges, |&(head, _, _)| head);
+    let as_tail = Incidence::new(n_rows, edges, |&(_, tail, _)| tail);
+    let mut frozen = embedding.to_vec();
 
     for epoch in 0..n_epochs {
         // The step size anneals to zero, which is what lets the layout settle.
         let alpha = learning_rate * (1.0 - epoch as Scalar / n_epochs as Scalar);
+        let now = epoch as Scalar;
+        frozen.copy_from_slice(embedding);
 
-        for (index, &(head, tail, _)) in edges.iter().enumerate() {
-            if next_sample[index] > epoch as Scalar {
-                continue;
-            }
+        let schedule = Schedule {
+            edges,
+            next_sample: &next_sample,
+            next_negative: &next_negative,
+            epochs_per_sample: &epochs_per_sample,
+            rate,
+            now,
+        };
+        let force = Force {
+            a,
+            b,
+            alpha,
+            repulsion_strength,
+        };
 
-            apply_attraction(embedding, n_components, head, tail, a, b, alpha);
-            next_sample[index] += epochs_per_sample[index];
+        embedding
+            .par_chunks_mut(n_components)
+            .enumerate()
+            .for_each(|(point, out)| {
+                for edge in as_head.of(point) {
+                    if !schedule.active(edge) {
+                        continue;
+                    }
+                    let (_, tail, _) = edges[edge];
+                    force.attract(&frozen, n_components, point, tail, out, 1.0);
 
-            // Repulsion against uniformly sampled points, as many as the
-            // schedule has accumulated since the last visit.
-            let epochs_per_negative = epochs_per_sample[index] / rate;
-            let n_negative =
-                ((epoch as Scalar - next_negative[index]) / epochs_per_negative) as usize;
-
-            for _ in 0..n_negative {
-                let other = rng.gen_range(0..n_rows);
-                if other == head {
-                    continue;
+                    for draw in 0..schedule.n_negative(edge) {
+                        let other = negative_sample(seed, epoch, edge, draw, n_rows);
+                        if other == point {
+                            continue;
+                        }
+                        force.repel(&frozen, n_components, point, other, out);
+                    }
                 }
-                apply_repulsion(
-                    embedding,
-                    n_components,
-                    head,
-                    other,
-                    a,
-                    b,
-                    alpha,
-                    repulsion_strength,
-                );
-            }
-            next_negative[index] += n_negative as Scalar * epochs_per_negative;
-        }
+
+                for edge in as_tail.of(point) {
+                    if !schedule.active(edge) {
+                        continue;
+                    }
+                    let (head, _, _) = edges[edge];
+                    // The opposite of the step the head takes, as both
+                    // endpoints of an undirected edge move.
+                    force.attract(&frozen, n_components, head, point, out, -1.0);
+                }
+            });
+
+        // The schedule moves on only once every point has read it.
+        next_sample
+            .par_iter_mut()
+            .zip(next_negative.par_iter_mut())
+            .zip(epochs_per_sample.par_iter())
+            .for_each(|((next, negative), &period)| {
+                if *next > now {
+                    return;
+                }
+                *next += period;
+                let per_negative = period / rate;
+                let n_negative = ((now - *negative) / per_negative) as usize;
+                *negative += n_negative as Scalar * per_negative;
+            });
     }
 }
 
-/// Pull two connected points together.
-fn apply_attraction(
-    embedding: &mut [Scalar],
-    n_components: usize,
-    head: usize,
-    tail: usize,
-    a: Scalar,
-    b: Scalar,
-    alpha: Scalar,
-) {
-    let distance = squared_distance(embedding, n_components, head, tail);
-    let coefficient = if distance > 0.0 {
-        -2.0 * a * b * distance.powf(b - 1.0) / (a * distance.powf(b) + 1.0)
-    } else {
-        0.0
-    };
+/// Bumped whenever [`fn@optimize_layout`] changes what it returns for the same
+/// input, so that a cached embedding from an earlier revision is recomputed
+/// rather than believed.
+///
+/// - 1: sequential stochastic gradient descent from one generator.
+/// - 2: each epoch from a frozen layout, in parallel over points, with negative
+///   samples from a counter-based hash.
+pub const LAYOUT_REVISION: u32 = 2;
 
-    for d in 0..n_components {
-        let delta = embedding[head * n_components + d] - embedding[tail * n_components + d];
-        let step = clip(coefficient * delta) * alpha;
-        embedding[head * n_components + d] += step;
-        // Both endpoints move: the edge is undirected.
-        embedding[tail * n_components + d] -= step;
+/// Where each edge stands in its schedule at the current epoch.
+struct Schedule<'a> {
+    edges: &'a [(usize, usize, Scalar)],
+    next_sample: &'a [Scalar],
+    next_negative: &'a [Scalar],
+    epochs_per_sample: &'a [Scalar],
+    rate: Scalar,
+    now: Scalar,
+}
+
+impl Schedule<'_> {
+    fn active(&self, edge: usize) -> bool {
+        debug_assert!(edge < self.edges.len());
+        self.next_sample[edge] <= self.now
+    }
+
+    /// Repulsions owed to an active edge, as many as the schedule has
+    /// accumulated since its last visit.
+    fn n_negative(&self, edge: usize) -> usize {
+        let per_negative = self.epochs_per_sample[edge] / self.rate;
+        ((self.now - self.next_negative[edge]) / per_negative) as usize
     }
 }
 
-/// Push a point away from a sampled non-neighbour.
-#[allow(clippy::too_many_arguments)]
-fn apply_repulsion(
-    embedding: &mut [Scalar],
-    n_components: usize,
-    head: usize,
-    other: usize,
+/// The constants of the two forces at the current epoch.
+struct Force {
     a: Scalar,
     b: Scalar,
     alpha: Scalar,
     repulsion_strength: Scalar,
-) {
-    let distance = squared_distance(embedding, n_components, head, other);
-    let coefficient = if distance > 0.0 {
-        // The `0.001 +` keeps the force finite for coincident points.
-        2.0 * repulsion_strength * b / ((0.001 + distance) * (a * distance.powf(b) + 1.0))
-    } else {
-        0.0
-    };
+}
 
-    for d in 0..n_components {
-        let step = if coefficient > 0.0 {
-            let delta = embedding[head * n_components + d] - embedding[other * n_components + d];
-            clip(coefficient * delta)
+impl Force {
+    /// Add to `out` the attraction `head` feels towards `tail`, times `sign`.
+    fn attract(
+        &self,
+        frozen: &[Scalar],
+        n_components: usize,
+        head: usize,
+        tail: usize,
+        out: &mut [Scalar],
+        sign: Scalar,
+    ) {
+        let distance = squared_distance(frozen, n_components, head, tail);
+        let coefficient = if distance > 0.0 {
+            -2.0 * self.a * self.b * distance.powf(self.b - 1.0)
+                / (self.a * distance.powf(self.b) + 1.0)
         } else {
-            // Exactly coincident: nudge in a fixed direction so the pair can
-            // separate at all.
-            GRADIENT_CLIP
+            0.0
         };
-        embedding[head * n_components + d] += step * alpha;
+        for (d, value) in out.iter_mut().enumerate() {
+            let delta = frozen[head * n_components + d] - frozen[tail * n_components + d];
+            *value += sign * clip(coefficient * delta) * self.alpha;
+        }
     }
+
+    /// Add to `out` the repulsion `head` feels from `other`.
+    fn repel(
+        &self,
+        frozen: &[Scalar],
+        n_components: usize,
+        head: usize,
+        other: usize,
+        out: &mut [Scalar],
+    ) {
+        let distance = squared_distance(frozen, n_components, head, other);
+        let coefficient = if distance > 0.0 {
+            // The `0.001 +` keeps the force finite for coincident points.
+            2.0 * self.repulsion_strength * self.b
+                / ((0.001 + distance) * (self.a * distance.powf(self.b) + 1.0))
+        } else {
+            0.0
+        };
+        for (d, value) in out.iter_mut().enumerate() {
+            let step = if coefficient > 0.0 {
+                let delta = frozen[head * n_components + d] - frozen[other * n_components + d];
+                clip(coefficient * delta)
+            } else {
+                // Exactly coincident: nudge in a fixed direction so the pair
+                // can separate at all.
+                GRADIENT_CLIP
+            };
+            *value += step * self.alpha;
+        }
+    }
+}
+
+/// The edges each point is an endpoint of, in edge order.
+enum Incidence {
+    /// The edges are sorted by this endpoint: each point's edges are a
+    /// contiguous run, and an index would only cost memory.
+    Sorted(Vec<usize>),
+    /// A counting sort of the edge ids by this endpoint — stable, so each
+    /// point's edges stay in edge order.
+    Indexed {
+        offsets: Vec<usize>,
+        edges: Vec<u32>,
+    },
+}
+
+impl Incidence {
+    fn new(
+        n_rows: usize,
+        edges: &[(usize, usize, Scalar)],
+        endpoint: impl Fn(&(usize, usize, Scalar)) -> usize,
+    ) -> Self {
+        let mut offsets = vec![0usize; n_rows + 1];
+        for edge in edges {
+            offsets[endpoint(edge) + 1] += 1;
+        }
+        for point in 0..n_rows {
+            offsets[point + 1] += offsets[point];
+        }
+
+        if edges.windows(2).all(|w| endpoint(&w[0]) <= endpoint(&w[1])) {
+            return Self::Sorted(offsets);
+        }
+
+        let mut cursor = offsets.clone();
+        let mut indexed = vec![0u32; edges.len()];
+        for (position, edge) in edges.iter().enumerate() {
+            let slot = &mut cursor[endpoint(edge)];
+            indexed[*slot] = position as u32;
+            *slot += 1;
+        }
+        Self::Indexed {
+            offsets,
+            edges: indexed,
+        }
+    }
+
+    /// The ids of the edges `point` is this endpoint of, ascending.
+    fn of(&self, point: usize) -> Incident<'_> {
+        match self {
+            Self::Sorted(offsets) => Incident::Run(offsets[point]..offsets[point + 1]),
+            Self::Indexed { offsets, edges } => {
+                Incident::Listed(edges[offsets[point]..offsets[point + 1]].iter())
+            }
+        }
+    }
+}
+
+/// The iterator [`Incidence::of`] returns — an enum rather than a boxed trait
+/// object, which would be one allocation per point per epoch.
+enum Incident<'a> {
+    Run(std::ops::Range<usize>),
+    Listed(std::slice::Iter<'a, u32>),
+}
+
+impl Iterator for Incident<'_> {
+    type Item = usize;
+
+    fn next(&mut self) -> Option<usize> {
+        match self {
+            Self::Run(range) => range.next(),
+            Self::Listed(ids) => ids.next().map(|&edge| edge as usize),
+        }
+    }
+}
+
+/// A uniform point index from `(seed, epoch, edge, draw)` alone.
+///
+/// SplitMix64's finaliser over a mix of the four, then Lemire's multiply-shift
+/// onto `0..n_rows`. Stateless, so a draw is the same whichever thread makes it
+/// and whatever was drawn before; the bias of the multiply-shift is below
+/// `n_rows / 2^64`, nothing next to the sampling noise it feeds.
+fn negative_sample(seed: u64, epoch: usize, edge: usize, draw: usize, n_rows: usize) -> usize {
+    let mut x = seed
+        ^ (epoch as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15)
+        ^ (edge as u64).wrapping_mul(0xC2B2_AE3D_27D4_EB4F)
+        ^ (draw as u64).wrapping_mul(0x1656_67B1_9E37_79F9);
+    x = (x ^ (x >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+    x = (x ^ (x >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+    x ^= x >> 31;
+    ((x as u128 * n_rows as u128) >> 64) as usize
 }
 
 /// How many epochs pass between two visits of each edge.
@@ -301,6 +484,91 @@ mod tests {
             optimize_layout(embedding, 20, 2, &edges, 50, 1.577, 0.895, 1.0, 5, 1.0, 9);
         }
         assert_eq!(first, second);
+    }
+
+    /// The point of computing each epoch from a frozen layout: the answer may
+    /// not depend on how many threads computed it.
+    #[test]
+    fn the_layout_does_not_depend_on_the_thread_count() {
+        let n = 300;
+        let start: Vec<Scalar> = (0..n * 2)
+            .map(|i| (i as Scalar * 0.37).sin() * 10.0)
+            .collect();
+        let edges: Vec<(usize, usize, Scalar)> = (0..n)
+            .flat_map(|i| {
+                [1, 7, 31]
+                    .into_iter()
+                    .map(move |step| (i, (i + step) % n, 0.2 + (i % 5) as Scalar * 0.2))
+            })
+            .map(|(a, b, w)| (a.min(b), a.max(b), w))
+            .collect();
+        let mut edges = edges;
+        edges.sort_by_key(|&(a, b, _)| (a, b));
+
+        let layout_on = |threads: usize| {
+            let pool = rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap();
+            let mut embedding = start.clone();
+            pool.install(|| {
+                optimize_layout(
+                    &mut embedding,
+                    n,
+                    2,
+                    &edges,
+                    60,
+                    1.577,
+                    0.895,
+                    1.0,
+                    5,
+                    1.0,
+                    3,
+                )
+            });
+            embedding
+        };
+
+        let one = layout_on(1);
+        assert_eq!(one, layout_on(4));
+        assert_eq!(one, layout_on(13));
+    }
+
+    /// Edges in no particular order are indexed rather than assumed sorted.
+    #[test]
+    fn unsorted_edges_are_laid_out_too() {
+        let mut embedding: Vec<Scalar> = vec![-5.0, 0.0, 5.0, 0.0, 0.0, 5.0, 0.0, -5.0];
+        let edges = vec![(2, 3, 1.0), (0, 1, 1.0), (1, 3, 0.5)];
+        let before = distance(&embedding, 2, 2, 3);
+
+        optimize_layout(
+            &mut embedding,
+            4,
+            2,
+            &edges,
+            100,
+            1.577,
+            0.895,
+            1.0,
+            0,
+            1.0,
+            0,
+        );
+
+        assert!(embedding.iter().all(|v| v.is_finite()));
+        assert!(distance(&embedding, 2, 2, 3) < before);
+    }
+
+    #[test]
+    fn negative_samples_cover_the_range_and_nothing_beyond() {
+        let n_rows = 7;
+        let mut seen = [false; 7];
+        for draw in 0..500 {
+            let other = negative_sample(42, 3, 11, draw, n_rows);
+            assert!(other < n_rows);
+            seen[other] = true;
+        }
+        assert!(seen.iter().all(|&s| s));
     }
 
     #[test]
