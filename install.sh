@@ -38,12 +38,10 @@ fi
 # means to the installer is simply not being given a renderer.
 skip_build=false
 figures=true
-installing=true
 arguments=()
 for argument in "$@"; do
     case "$argument" in
-        --uninstall) skip_build=true; installing=false; arguments+=("$argument") ;;
-        --dry-run | --help | -h | --version | -V) installing=false; arguments+=("$argument") ;;
+        --uninstall) skip_build=true; arguments+=("$argument") ;;
         --no-figures) figures=false ;;
         *) arguments+=("$argument") ;;
     esac
@@ -130,20 +128,8 @@ common=(
 )
 
 if [ "$packaged" = true ]; then
-    "$here/mosna-install" "${common[@]}" "${renderer[@]}" "${arguments[@]}"
+    exec "$here/mosna-install" "${common[@]}" "${renderer[@]}" "${arguments[@]}"
 else
-    cargo run --release --quiet --bin mosna-install -- \
+    exec cargo run --release --quiet --bin mosna-install -- \
         "${common[@]}" "${renderer[@]}" "${arguments[@]}"
-fi
-
-# Once MOSNA is installed, the Windows installer and uninstaller are of no use
-# in this folder.
-# INSTALLATION.exe does the same the other way round.
-if [ "$installing" = true ]; then
-    for name in INSTALLATION.exe UNINSTALL.exe; do
-        if [ -f "$here/$name" ]; then
-            rm -f "$here/$name"
-            echo "removed $name (Windows only)"
-        fi
-    done
 fi
