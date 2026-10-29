@@ -15,13 +15,12 @@ jobs:
           fetch-depth: 0
 
       - name: Configurer la clé SSH
-        env:
-          SSH_KEY: ${{ secrets.TARGET_DEPLOY_KEY }}
-        run: |
-          mkdir -p ~/.ssh
-          echo "$SSH_KEY" > ~/.ssh/id_ed25519
-          chmod 600 ~/.ssh/id_ed25519
-          ssh-keyscan github.com >> ~/.ssh/known_hosts
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.TARGET_DEPLOY_KEY }}
+
+      - name: Ajouter github.com aux hôtes connus
+        run: ssh-keyscan github.com >> ~/.ssh/known_hosts
 
       - name: Push to Vera Pancaldi Lab
         run: |
