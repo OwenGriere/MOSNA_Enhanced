@@ -194,7 +194,7 @@ pub enum OutputLine {
     ///
     /// A run's numbers come from the register while it runs, so this is the
     /// only reliable way for a sweep to link what it launched to what it
-    /// produced — see [`mosna_pipeline::progress::Progress::run_directory`].
+    /// produced — see `mosna_pipeline::progress::Progress::run_directory`.
     Run(String),
     /// Anything else: shown in the log, nothing more.
     Plain,

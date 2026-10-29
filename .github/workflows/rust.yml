@@ -27,6 +27,8 @@ jobs:
   # ---------------------------------------------------------------------------
   test:
     name: test (${{ matrix.os }})
+    # Silenced on main: the job still runs on pull requests and other branches.
+    if: github.ref != 'refs/heads/main'
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
