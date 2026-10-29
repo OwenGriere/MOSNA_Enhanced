@@ -22,6 +22,11 @@ jobs:
           else
             echo "Secret présent (${#KEY} caractères)"
           fi
+      - name: Vérifier le secret
+        env:
+          KEY: ${{ secrets.TARGET_DEPLOY_KEY }}
+        run: |
+          if [ -z "$KEY" ]; then echo "Secret VIDE ou introuvable"; else echo "Secret présent (${#KEY} caractères)"; fi
       - name: Configurer la clé SSH
         uses: webfactory/ssh-agent@v0.9.0
         with:
