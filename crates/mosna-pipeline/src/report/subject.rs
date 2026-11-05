@@ -273,11 +273,7 @@ mod tests {
     #[test]
     fn a_run_directory_is_not_a_subject() {
         for run in ["1-1-1", "1-1-10", "2-0-3", "10-2-7", "ps-1", "ps-12"] {
-            assert_eq!(
-                from_directory(run),
-                None,
-                "`{run}` was taken for a patient"
-            );
+            assert_eq!(from_directory(run), None, "`{run}` was taken for a patient");
         }
     }
 

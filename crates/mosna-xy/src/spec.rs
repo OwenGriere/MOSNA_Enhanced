@@ -408,7 +408,9 @@ mod tests {
         let second = Queue::new(dir.path());
 
         first.push(Spec::new("histogram", "a", dir.path())).unwrap();
-        let kept = second.push(Spec::new("histogram", "b", dir.path())).unwrap();
+        let kept = second
+            .push(Spec::new("histogram", "b", dir.path()))
+            .unwrap();
 
         first.discard().unwrap();
         assert!(
@@ -426,7 +428,9 @@ mod tests {
 
         first.push(Spec::new("histogram", "a", dir.path())).unwrap();
         first.push(Spec::new("histogram", "b", dir.path())).unwrap();
-        second.push(Spec::new("histogram", "c", dir.path())).unwrap();
+        second
+            .push(Spec::new("histogram", "c", dir.path()))
+            .unwrap();
 
         assert_eq!(first.len(), 2);
         assert_eq!(second.len(), 1);

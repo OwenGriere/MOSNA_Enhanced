@@ -146,7 +146,12 @@ impl Record {
         let stamped = now();
 
         let mut renderings: Vec<Value> = read(save_dir)
-            .and_then(|existing| existing.get("renderings").and_then(Value::as_array).cloned())
+            .and_then(|existing| {
+                existing
+                    .get("renderings")
+                    .and_then(Value::as_array)
+                    .cloned()
+            })
             .unwrap_or_default()
             .into_iter()
             // A rendering repeated is the same rendering, redrawn; it moves to
@@ -350,7 +355,13 @@ mod tests {
         record("abc", "total").write(dir.path()).unwrap();
         record("abc", "total").write(dir.path()).unwrap();
 
-        assert_eq!(read(dir.path()).unwrap()["renderings"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            read(dir.path()).unwrap()["renderings"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
     }
 
     // -----------------------------------------------------------------------
@@ -405,7 +416,10 @@ mod tests {
         let base = fingerprint(&features, Some(&reduction), &clustering);
 
         assert_eq!(base, fingerprint(&features, Some(&reduction), &clustering));
-        assert_ne!(base, fingerprint(&json!({"order": 2}), Some(&reduction), &clustering));
+        assert_ne!(
+            base,
+            fingerprint(&json!({"order": 2}), Some(&reduction), &clustering)
+        );
         assert_ne!(
             base,
             fingerprint(&features, Some(&json!({"dim_clust": 3})), &clustering)

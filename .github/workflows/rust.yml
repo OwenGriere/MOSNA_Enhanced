@@ -18,27 +18,40 @@ env:
 
 jobs:
   # ---------------------------------------------------------------------------
-  # The suite itself: formatting, lints, and every Rust test.
+  # Formatting does not depend on the platform, so it is checked once, in its
+  # own job: a formatting slip shows up as itself rather than as a red test run.
+  # ---------------------------------------------------------------------------
+  fmt:
+    name: formatting
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  # ---------------------------------------------------------------------------
+  # The suite itself — lints and every Rust test — once per platform the
+  # application ships on.
+  #
+  # Linux and Windows are two separate jobs rather than one matrix, so each has
+  # its own line in the checks list and its own status: a failure says at a
+  # glance which platform it belongs to, and one platform failing never hides
+  # the other's result.
   #
   # Python is installed here too, and the renderer with it. Without them the
   # tests that check a figure was actually drawn say why and stop — which would
   # turn the checks that matter most into silence, on the one machine where
   # nobody is watching them run.
   # ---------------------------------------------------------------------------
-  test:
-    name: test (${{ matrix.os }})
-    # Silenced on main: the job still runs on pull requests and other branches.
-    if: github.ref != 'refs/heads/main'
-    runs-on: ${{ matrix.os }}
-    # Bypassed: the job still runs and its log stays readable, but a failure
-    # on Ubuntu or Windows no longer turns the build red. Remove this line to
-    # make it blocking again.
-    continue-on-error: true
-    strategy:
-      fail-fast: false
-      matrix:
-        # The application ships on Linux and Windows, so both are covered.
-        os: [ubuntu-latest, windows-latest]
+  test-linux:
+    name: tests (Linux)
+    runs-on: ubuntu-latest
+    env:
+      # A failing test prints where it failed, not only that it did.
+      RUST_BACKTRACE: '1'
 
     steps:
       - uses: actions/checkout@v4
@@ -46,7 +59,7 @@ jobs:
       - name: Install Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          components: rustfmt, clippy
+          components: clippy
 
       # `cache: pip` looks for a requirements.txt at the root by default and
       # fails the step when it finds none. The renderer's manifest is in
@@ -67,8 +80,57 @@ jobs:
       - name: Cache cargo registry and build output
         uses: Swatinem/rust-cache@v2
 
-      - name: Check formatting
-        run: cargo fmt --all -- --check
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --all-features
+
+      - name: Build
+        run: cargo build --workspace --all-targets
+
+      # `--no-fail-fast`: every failing test binary is reported, rather than
+      # the run stopping at the first one and hiding the others.
+      - name: Unit and integration tests
+        run: cargo test --workspace --all-features --no-fail-fast
+
+      - name: Documentation tests
+        run: cargo test --workspace --doc --no-fail-fast
+
+  # ---------------------------------------------------------------------------
+  # The same suite on Windows: paths, line endings, process spawning and the
+  # Python interpreter lookup are where the two platforms differ.
+  # ---------------------------------------------------------------------------
+  test-windows:
+    name: tests (Windows)
+    runs-on: windows-latest
+    env:
+      # A failing test prints where it failed, not only that it did.
+      RUST_BACKTRACE: '1'
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      # `cache: pip` looks for a requirements.txt at the root by default and
+      # fails the step when it finds none. The renderer's manifest is in
+      # `python/`, so it has to be named.
+      - name: Install Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: python/pyproject.toml
+
+      # Into the interpreter on PATH rather than a virtual environment: that is
+      # the last of the four places MOSNA looks, so this also exercises the
+      # fallback the tests cannot reach on a developer's machine.
+      - name: Install the figure renderer
+        run: python -m pip install --quiet -e "./python[test]"
+
+      - name: Cache cargo registry and build output
+        uses: Swatinem/rust-cache@v2
 
       - name: Clippy
         run: cargo clippy --workspace --all-targets --all-features
@@ -76,11 +138,13 @@ jobs:
       - name: Build
         run: cargo build --workspace --all-targets
 
+      # `--no-fail-fast`: every failing test binary is reported, rather than
+      # the run stopping at the first one and hiding the others.
       - name: Unit and integration tests
-        run: cargo test --workspace --all-features
+        run: cargo test --workspace --all-features --no-fail-fast
 
       - name: Documentation tests
-        run: cargo test --workspace --doc
+        run: cargo test --workspace --doc --no-fail-fast
 
   # ---------------------------------------------------------------------------
   # The renderer's own suite. Its own job, and no Rust toolchain in it: what

@@ -60,10 +60,7 @@ pub fn write_parquet_atomic_with_metadata(
     // several — from sharing a scratch file and truncating each other's.
     static SCRATCH: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     let ticket = SCRATCH.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let scratch = path.with_extension(format!(
-        "parquet.{}-{ticket}.tmp",
-        std::process::id()
-    ));
+    let scratch = path.with_extension(format!("parquet.{}-{ticket}.tmp", std::process::id()));
 
     write_parquet_with_metadata(table, &scratch, metadata)?;
     match std::fs::rename(&scratch, path) {

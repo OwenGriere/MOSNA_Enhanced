@@ -459,12 +459,7 @@ impl Catalogue {
     /// is taken over the settings and the cohort and not over the sample. So
     /// re-running the same per-sample settings lands on the same run — one
     /// directory, one label column — and changing any of them opens the next.
-    pub fn per_sample_run(
-        &mut self,
-        fingerprint: &str,
-        parameters: &Value,
-        cohort: &str,
-    ) -> u32 {
+    pub fn per_sample_run(&mut self, fingerprint: &str, parameters: &Value, cohort: &str) -> u32 {
         let stamped = now();
         let existing = self
             .per_sample_runs
@@ -473,15 +468,18 @@ impl Catalogue {
             .map(|run| run.id);
 
         let id = existing.unwrap_or_else(|| next(&self.per_sample_runs));
-        let run = self.per_sample_runs.entry(id).or_insert_with(|| PerSampleRun {
-            id,
-            fingerprint: fingerprint.to_string(),
-            parameters: parameters.clone(),
-            cohort: cohort.to_string(),
-            samples: BTreeMap::new(),
-            status: Status::Running,
-            updated: stamped.clone(),
-        });
+        let run = self
+            .per_sample_runs
+            .entry(id)
+            .or_insert_with(|| PerSampleRun {
+                id,
+                fingerprint: fingerprint.to_string(),
+                parameters: parameters.clone(),
+                cohort: cohort.to_string(),
+                samples: BTreeMap::new(),
+                status: Status::Running,
+                updated: stamped.clone(),
+            });
         run.status = Status::Running;
         run.updated = stamped;
         id

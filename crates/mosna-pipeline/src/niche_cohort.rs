@@ -192,11 +192,8 @@ pub fn verify_and_digest(
             // And the graph the values will be aggregated over. By stamp
             // rather than by content — see the module note.
             hash.field(b"edges");
-            let edges = net_dir.join(id.edges_file_name(
-                patient_column,
-                sample_column,
-                extension.as_str(),
-            ));
+            let edges =
+                net_dir.join(id.edges_file_name(patient_column, sample_column, extension.as_str()));
             match std::fs::metadata(&edges) {
                 Ok(metadata) => {
                     hash.u64(metadata.len());
@@ -382,7 +379,8 @@ mod tests {
         let edges = Table::from_edges(&[(0, 1), (1, 2), (0, 2)]).unwrap();
         mosna_io::write::write_parquet::write_parquet(
             &edges,
-            dir.path().join(index[0].edges_file_name("patient", None, "parquet")),
+            dir.path()
+                .join(index[0].edges_file_name("patient", None, "parquet")),
         )
         .unwrap();
 
@@ -398,7 +396,9 @@ mod tests {
         let index = cohort(dir.path(), &[&["A", "B"]]);
         let before = digest(dir.path(), &index, &["Cluster"]);
 
-        let path = dir.path().join(index[0].nodes_file_name("patient", None, "parquet"));
+        let path = dir
+            .path()
+            .join(index[0].nodes_file_name("patient", None, "parquet"));
         let mut table = mosna_io::read::get_opener::read_table(&path, Extension::Parquet).unwrap();
         table
             .set_column("niches_1-1-1", Table::u32_array([0u32, 1]))
@@ -456,8 +456,7 @@ mod tests {
     #[test]
     fn a_delimited_network_directory_is_refused_by_name() {
         for extension in [Extension::Csv, Extension::Tsv] {
-            let error =
-                require_writable_network(extension, Path::new("/net")).unwrap_err();
+            let error = require_writable_network(extension, Path::new("/net")).unwrap_err();
             let message = error.to_string();
             assert!(message.contains("/net"), "{message}");
             assert!(message.contains(extension.as_str()), "{message}");

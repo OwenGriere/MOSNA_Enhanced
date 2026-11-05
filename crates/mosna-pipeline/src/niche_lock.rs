@@ -152,8 +152,7 @@ mod tests {
 
         let handles: Vec<_> = (0..8)
             .map(|_| {
-                let (path, inside, overlaps) =
-                    (path.clone(), inside.clone(), overlaps.clone());
+                let (path, inside, overlaps) = (path.clone(), inside.clone(), overlaps.clone());
                 std::thread::spawn(move || {
                     for _ in 0..20 {
                         let _guard = RegisterLock::acquire(&path).unwrap();

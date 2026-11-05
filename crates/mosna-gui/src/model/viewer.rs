@@ -94,7 +94,9 @@ fn chunks(name: &str) -> Vec<Chunk> {
     let mut chunks = Vec::new();
     let mut rest = name;
     while !rest.is_empty() {
-        let digits = rest.find(|c: char| !c.is_ascii_digit()).unwrap_or(rest.len());
+        let digits = rest
+            .find(|c: char| !c.is_ascii_digit())
+            .unwrap_or(rest.len());
         if digits > 0 {
             // A number too long to hold is text: it is not a run number, and
             // saturating would make two different names compare equal.
@@ -438,7 +440,14 @@ mod tests {
 
         let order: Vec<String> = paths
             .iter()
-            .map(|p| p.parent().unwrap().file_name().unwrap().to_string_lossy().into_owned())
+            .map(|p| {
+                p.parent()
+                    .unwrap()
+                    .file_name()
+                    .unwrap()
+                    .to_string_lossy()
+                    .into_owned()
+            })
             .collect();
         assert_eq!(order, vec!["1-1-1", "1-1-2", "1-1-10", "1-2-1", "2-1-1"]);
     }

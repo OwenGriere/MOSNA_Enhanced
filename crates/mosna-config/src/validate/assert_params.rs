@@ -529,7 +529,8 @@ normalize: all
     /// the cohort — so the validation may not demand an integer.
     #[test]
     fn min_cluster_size_accepts_a_fraction() {
-        let yaml = niche_subsection_yaml().replace("min_cluster_size: 100", "min_cluster_size: 0.001");
+        let yaml =
+            niche_subsection_yaml().replace("min_cluster_size: 100", "min_cluster_size: 0.001");
         assert_niche_subsection(&value(&yaml)).unwrap();
     }
 
@@ -550,11 +551,14 @@ normalize: all
     #[test]
     fn a_clusterer_without_an_implementation_is_refused_up_front() {
         for absent in ["ecg", "hdbscan"] {
-            let yaml =
-                niche_subsection_yaml().replace("clusterer_type: gmm", &format!("clusterer_type: {absent}"));
+            let yaml = niche_subsection_yaml()
+                .replace("clusterer_type: gmm", &format!("clusterer_type: {absent}"));
             let err = assert_niche_subsection(&value(&yaml))
                 .expect_err(&format!("`{absent}` was accepted"));
-            assert!(err.to_string().contains("clusterer_type must be one of"), "{err}");
+            assert!(
+                err.to_string().contains("clusterer_type must be one of"),
+                "{err}"
+            );
         }
     }
 
@@ -579,8 +583,10 @@ normalize: all
     #[test]
     fn stat_funcs_refuses_a_statistic_nothing_computes() {
         for absent in ["np.median", "np.std", "np.mean,np.median"] {
-            let yaml = niche_subsection_yaml()
-                .replace("stat_funcs: np.mean,np.std", &format!("stat_funcs: {absent}"));
+            let yaml = niche_subsection_yaml().replace(
+                "stat_funcs: np.mean,np.std",
+                &format!("stat_funcs: {absent}"),
+            );
             assert!(
                 assert_niche_subsection(&value(&yaml)).is_err(),
                 "`{absent}` was accepted"
@@ -591,8 +597,10 @@ normalize: all
     #[test]
     fn stat_funcs_accepts_the_two_shapes_the_interface_offers() {
         for offered in ["np.mean,np.std", "np.mean"] {
-            let yaml = niche_subsection_yaml()
-                .replace("stat_funcs: np.mean,np.std", &format!("stat_funcs: {offered}"));
+            let yaml = niche_subsection_yaml().replace(
+                "stat_funcs: np.mean,np.std",
+                &format!("stat_funcs: {offered}"),
+            );
             assert_niche_subsection(&value(&yaml))
                 .unwrap_or_else(|e| panic!("`{offered}` was refused: {e}"));
         }

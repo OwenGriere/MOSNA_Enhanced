@@ -161,7 +161,11 @@ pub fn read_matrix(path: &Path, source: &str, expected_rows: usize) -> Option<(V
 /// directly: its file is now called `var_aggreg_1`, which says nothing about
 /// what it holds, so the footer has to.
 pub fn write_table(path: &Path, source: &str, table: &Table) -> Result<()> {
-    write_parquet_atomic_with_metadata(table, path, &[(SOURCE_KEY.to_string(), source.to_string())])?;
+    write_parquet_atomic_with_metadata(
+        table,
+        path,
+        &[(SOURCE_KEY.to_string(), source.to_string())],
+    )?;
     Ok(())
 }
 

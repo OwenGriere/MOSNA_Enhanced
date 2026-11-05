@@ -240,7 +240,9 @@ impl NicheParams {
     /// projection, so recording the raw one made a sweep whose upper bound
     /// overshoots compute the same answer twice under two different numbers.
     pub fn effective_n_neighbors(&self, observations: usize) -> usize {
-        self.n_neighbors.max(2).min(observations.saturating_sub(1).max(2))
+        self.n_neighbors
+            .max(2)
+            .min(observations.saturating_sub(1).max(2))
     }
 
     /// `n_clusters` capped by the number of observations, which is what the
@@ -285,7 +287,11 @@ impl NicheParams {
         // way of the defaults, but the aggregation must never be handed an
         // empty list: it would produce a table with no columns at all.
         while names.len() < wanted {
-            names.push(IMPLEMENTED_STAT_FUNCS[names.len()].trim_start_matches("np.").to_string());
+            names.push(
+                IMPLEMENTED_STAT_FUNCS[names.len()]
+                    .trim_start_matches("np.")
+                    .to_string(),
+            );
         }
         names
     }
@@ -653,7 +659,10 @@ mod tests {
             "stat_funcs: ''\nstat_names: ''\n",
             "",
         ] {
-            assert!(params(yaml).n_statistics() >= 1, "`{yaml}` computes nothing");
+            assert!(
+                params(yaml).n_statistics() >= 1,
+                "`{yaml}` computes nothing"
+            );
         }
         assert_eq!(
             params("stat_funcs: []\nstat_names: []\n").n_statistics(),
@@ -712,7 +721,11 @@ mod tests {
     /// And it never comes back empty, whatever the configuration holds.
     #[test]
     fn the_effective_names_are_never_empty() {
-        for yaml in ["", "stat_names: []\n", "stat_funcs: np.mean\nstat_names: []\n"] {
+        for yaml in [
+            "",
+            "stat_names: []\n",
+            "stat_funcs: np.mean\nstat_names: []\n",
+        ] {
             assert!(!params(yaml).effective_stat_names().is_empty(), "`{yaml}`");
         }
     }
@@ -764,7 +777,11 @@ mod tests {
     fn the_neighbourhood_is_capped_by_the_cohort() {
         let p = params("reducer_type: umap\nn_neighbors: 50000\n");
         assert_eq!(p.effective_n_neighbors(72), 71);
-        assert_eq!(p.effective_n_neighbors(90000), 50000, "below the cap it stands");
+        assert_eq!(
+            p.effective_n_neighbors(90000),
+            50000,
+            "below the cap it stands"
+        );
 
         let far = params("reducer_type: umap\nn_neighbors: 90000\n");
         assert_eq!(
