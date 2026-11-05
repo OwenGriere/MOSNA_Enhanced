@@ -277,51 +277,22 @@ fn the_windows_installers_run_as_the_user() {
     }
 }
 
-/// install.sh deletes the Windows programs once it has installed; a name that
-/// no longer exists means the list has drifted.
+/// Neither installer deletes the other platform's files: a folder installed on
+/// one system stays installable on the other.
 #[test]
-fn install_sh_deletes_exactly_the_windows_programs() {
+fn no_installer_deletes_the_other_platforms_files() {
     let text = script("install.sh");
-    let line = text
-        .lines()
-        .find(|line| {
-            line.trim_start()
-                .starts_with("for name in INSTALLATION.exe")
-        })
-        .expect("install.sh no longer deletes the Windows files");
-    let names: Vec<&str> = line.trim_start()["for name in ".len()..]
-        .trim_end_matches("; do")
-        .split_whitespace()
-        .collect();
-    assert_eq!(names, ["INSTALLATION.exe", "UNINSTALL.exe"]);
-    for name in names {
+    for name in ["INSTALLATION.exe", "UNINSTALL.exe"] {
         assert!(
-            root().join(name).is_file(),
-            "install.sh deletes {name}, which does not exist"
+            !text
+                .lines()
+                .any(|line| line.contains("rm ") && line.contains(name)),
+            "install.sh deletes {name}"
         );
     }
-}
-
-/// A dry run, an uninstall or a request for help installs nothing, so it must
-/// not delete anything either.
-#[test]
-fn install_sh_only_cleans_up_after_a_real_install() {
-    let text = script("install.sh");
-    for flag in ["--uninstall", "--dry-run", "--help"] {
-        let line = text
-            .lines()
-            .find(|line| line.contains(flag) && line.contains(")"))
-            .unwrap_or_else(|| panic!("install.sh does not recognise {flag}"));
-        assert!(
-            line.contains("installing=false"),
-            "{flag} still cleans up: {line}"
-        );
-    }
-    let cleanup = text.find("for name in INSTALLATION.exe").unwrap();
-    let guard = text[..cleanup].rfind(r#"if [ "$installing" = true ]"#);
-    assert!(guard.is_some(), "the cleanup is not guarded");
+    let setup = std::fs::read_to_string(root().join("crates/mosna-setup/src/install.rs")).unwrap();
     assert!(
-        !text.contains("exec cargo run"),
-        "an exec would end the script before the cleanup"
+        !setup.contains("\"install.sh\""),
+        "INSTALLATION.exe deletes install.sh"
     );
 }

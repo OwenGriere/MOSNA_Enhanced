@@ -3,6 +3,7 @@
 use rand::Rng;
 use rand::SeedableRng;
 use rand_chacha::ChaCha8Rng;
+use rayon::prelude::*;
 
 /// Cluster assignment and centroids.
 #[derive(Debug, Clone)]
@@ -25,6 +26,16 @@ pub struct KMeansResult {
 ///
 /// This backs the final step of spectral clustering and the initialisation of
 /// the Gaussian mixture.
+///
+/// # Parallelism without a different answer
+///
+/// The restarts are independent — each has its own seed — so they run side by
+/// side and are then compared in attempt order, the earlier one keeping a tie,
+/// exactly as the sequential loop did. Inside a restart the assignment of each
+/// row is parallel, but every sum (the inertia, the centroid totals) is still
+/// taken in row order: floating-point addition is not associative, and a sum
+/// split by thread would let the core count move the inertia, and with it which
+/// restart wins.
 pub fn kmeans(
     data: &[f64],
     n_rows: usize,
@@ -36,16 +47,22 @@ pub fn kmeans(
 ) -> KMeansResult {
     let k = k.max(1).min(n_rows.max(1));
 
+    let candidates: Vec<KMeansResult> = (0..n_init.max(1))
+        .into_par_iter()
+        .map(|attempt| {
+            run_once(
+                data,
+                n_rows,
+                n_features,
+                k,
+                max_iter,
+                seed.wrapping_add(attempt as u64),
+            )
+        })
+        .collect();
+
     let mut best: Option<KMeansResult> = None;
-    for attempt in 0..n_init.max(1) {
-        let candidate = run_once(
-            data,
-            n_rows,
-            n_features,
-            k,
-            max_iter,
-            seed.wrapping_add(attempt as u64),
-        );
+    for candidate in candidates {
         if best.as_ref().is_none_or(|b| candidate.inertia < b.inertia) {
             best = Some(candidate);
         }
@@ -65,20 +82,25 @@ fn run_once(
     let mut centroids = kmeans_plus_plus(data, n_rows, n_features, k, &mut rng);
     let mut labels = vec![0u32; n_rows];
     let mut inertia = f64::INFINITY;
+    let mut distances = vec![0.0f64; n_rows];
 
     for _ in 0..max_iter.max(1) {
-        // Assignment step.
-        let mut changed = false;
-        let mut new_inertia = 0.0;
-        for row in 0..n_rows {
-            let point = &data[row * n_features..(row + 1) * n_features];
-            let (best, best_dist) = nearest(point, &centroids, k, n_features);
-            new_inertia += best_dist;
-            if labels[row] != best {
-                labels[row] = best;
-                changed = true;
-            }
-        }
+        // Assignment step: each row on its own, the inertia summed afterwards
+        // in row order.
+        let changed = labels
+            .par_iter_mut()
+            .zip(distances.par_iter_mut())
+            .enumerate()
+            .map(|(row, (label, distance))| {
+                let point = &data[row * n_features..(row + 1) * n_features];
+                let (best, best_dist) = nearest(point, &centroids, k, n_features);
+                *distance = best_dist;
+                let moved = *label != best;
+                *label = best;
+                moved
+            })
+            .reduce(|| false, |a, b| a || b);
+        let new_inertia: f64 = distances.iter().sum();
 
         // Update step.
         let mut sums = vec![0.0f64; k * n_features];

@@ -70,8 +70,11 @@ pub fn tooltip(key: &str) -> Option<&'static str> {
         "resolution" => "Leiden granularity. Lower → fewer clusters, higher → more clusters.",
         "min_cluster_size" => "HDBSCAN minimum cluster size. Below 1.0 it is a fraction of the cohort.\nUnused: HDBSCAN has no CPU implementation.",
         "Number of shuffle" => "Number of randomizations to build the null distribution for assortativity.",
-        "Edges method" => "Delaunay: triangulation-based. KNN: k nearest neighbours.",
-        "Min neighbors" => "Minimum number of neighbors for KNN edge generation.",
+        "Edges method" => "How cells left with too few neighbours are reconnected.\nThe network itself is always a Delaunay triangulation.\ndelaunay: shortest edges of the untrimmed triangulation, and shows the trimming settings.\nknn: nearest neighbours.",
+        "Min neighbors" => "Minimum number of neighbours a cell must keep.\nCells below it after trimming are reconnected, by delaunay or knn.",
+        "Trim distance ratio" => "Per-cell cut-off, as a multiple of the cell's reference edge.\nAn edge longer than ratio × reference edge is removed. Default 2.\nLower removes more edges; below 1 even the reference edge is cut.",
+        "Trim number of edges" => "Which of the cell's shortest edges is its reference length (the n-th).\nA cell with no more edges than this is never trimmed. Default 3, at least 1.",
+        "Trim min distance" => "Edges shorter than this are never removed, whatever the ratio.\nIn the unit of the coordinates (µm or pixels). Default 0: no floor.",
         "CPU" => "Number of CPU cores for parallel processing.",
         _ => return None,
     })

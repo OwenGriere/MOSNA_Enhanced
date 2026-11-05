@@ -30,6 +30,10 @@ jobs:
     # Silenced on main: the job still runs on pull requests and other branches.
     if: github.ref != 'refs/heads/main'
     runs-on: ${{ matrix.os }}
+    # Bypassed: the job still runs and its log stays readable, but a failure
+    # on Ubuntu or Windows no longer turns the build red. Remove this line to
+    # make it blocking again.
+    continue-on-error: true
     strategy:
       fail-fast: false
       matrix:

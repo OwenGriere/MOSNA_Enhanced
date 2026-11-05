@@ -4,8 +4,8 @@
 //! It asks where to put MOSNA, whether to add a desktop shortcut and whether to
 //! install the figures; then moves the folder there, installs what a fresh
 //! Windows lacks, builds MOSNA and installs it with `mosna-install` — the same
-//! result as `install.sh` on Linux — and finally deletes the files that only
-//! serve Linux.
+//! result as `install.sh` on Linux. The files that only serve Linux are left
+//! in place, as `install.sh` leaves the Windows programs.
 //!
 //! Beside it, `UNINSTALL.exe` (the `mosna-uninstall` binary) removes MOSNA
 //! again and, if asked, what was installed to build it.

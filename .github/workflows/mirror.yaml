@@ -1,0 +1,29 @@
+name: Push main to Vera Pancaldi Lab
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (historique complet)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Configurer la clé SSH
+        env:
+          SSH_KEY: ${{ secrets.TARGET_DEPLOY_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+
+      - name: Push to Vera Pancaldi Lab
+        run: |
+          git remote add target git@github.com:VeraPancaldiLab/MOSNA_GUI_Enhanced.git
+          git push target main:main --force

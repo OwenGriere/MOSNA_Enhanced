@@ -14,9 +14,6 @@ use std::sync::mpsc::Sender;
 use crate::place::{self, Placement};
 use crate::prerequisites::{self, Prerequisite};
 
-/// Deleted from the installed folder at the end: they only serve Linux.
-pub const LINUX_FILES: &[&str] = &["install.sh"];
-
 /// The oldest Python the figure renderer supports.
 const MINIMUM_PYTHON: &str = "(3, 11)";
 
@@ -183,14 +180,6 @@ fn install(choices: &Choices, report: &mut Reporter) -> Result<PathBuf, String> 
         return Err(
             "L'installation de MOSNA a échoué. Le détail est dans le journal ci-dessus.".into(),
         );
-    }
-
-    report.step("Suppression des fichiers propres à Linux");
-    for name in LINUX_FILES {
-        let file = root.join(name);
-        if file.is_file() && std::fs::remove_file(&file).is_ok() {
-            report.line(format!("supprimé : {name}"));
-        }
     }
     Ok(root)
 }

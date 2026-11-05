@@ -36,7 +36,7 @@ pub use init_layout::init_layout;
 pub use knn_graph::{knn_graph, KnnGraph};
 pub use metric::Metric;
 pub use nn_descent::{cluster_neighbours, nn_descent, umap_neighbours};
-pub use optimize_layout::optimize_layout;
+pub use optimize_layout::{optimize_layout, LAYOUT_REVISION};
 pub use smooth_knn_dist::smooth_knn_dist;
 
 use crate::error::{CoreError, Result};
