@@ -131,8 +131,8 @@ fn sections(app: &mut MosnaApp, ui: &mut egui::Ui) {
     ui.data_mut(|d| d.insert_temp(tab_id, tab_index));
     ui.add_space(4.0);
 
-    // The clusterer and the reducer both decide which other fields are of any
-    // use, so the whole tab is re-evaluated after the pass rather than during
+    // The clusterer, the reducer and the edges method all decide which other
+    // fields are of any use, so the whole tab is re-evaluated after the pass rather than during
     // it — a field cannot be disabled while it is being drawn.
     let mut choice_changed = false;
 
@@ -143,6 +143,11 @@ fn sections(app: &mut MosnaApp, ui: &mut egui::Ui) {
                 .groups
                 .len();
             for group_index in 0..groups {
+                // A box the current choices make irrelevant — the Delaunay
+                // trimming with knn — is not drawn at all.
+                if !app.form.sections[section_index].tabs[tab_index].groups[group_index].visible {
+                    continue;
+                }
                 let title = app.form.sections[section_index].tabs[tab_index].groups[group_index]
                     .title
                     .clone();
@@ -181,7 +186,12 @@ fn sections(app: &mut MosnaApp, ui: &mut egui::Ui) {
                             });
                             changed
                         });
-                        if changed && matches!(key.as_str(), "clusterer_type" | "reducer_type") {
+                        if changed
+                            && matches!(
+                                key.as_str(),
+                                "clusterer_type" | "reducer_type" | "Edges method"
+                            )
+                        {
                             choice_changed = true;
                         }
                         ui.add_space(4.0);

@@ -1,6 +1,10 @@
 //! The Parameters panel's layout — port of `ParametersPanel._add_section_tab`,
 //! `_add_niche_general_tab` and `_add_niche_subsection_tab`.
 
+use mosna_config::model::tysserand::{
+    DEFAULT_TRIM_DISTANCE_RATIO, DEFAULT_TRIM_MIN_DISTANCE, DEFAULT_TRIM_NUMBER_OF_EDGES,
+    TRIM_DISTANCE_RATIO, TRIM_KEYS, TRIM_MIN_DISTANCE, TRIM_NUMBER_OF_EDGES,
+};
 use mosna_config::RawConfig;
 use serde_yaml::Value;
 
@@ -41,6 +45,11 @@ const NICHE_CLUSTERING_KEYS: &[&str] = &[
 ];
 const NICHE_NORM_KEYS: &[&str] = &["normalize"];
 
+/// Title of the Tysserand box holding the Delaunay trimming settings.
+pub const DELAUNAY_TRIMMING_GROUP: &str = "Delaunay trimming";
+/// Title of the Tysserand box below it: the reconnection and the resources.
+const TYSSERAND_AFTER_TRIMMING_GROUP: &str = "Reconnection and resources";
+
 /// Sections shown first, in workflow order.
 const PREFERRED_ORDER: &[&str] = &["Tysserand", "Assortativity", "Niche Analysis"];
 
@@ -49,6 +58,20 @@ const PREFERRED_ORDER: &[&str] = &["Tysserand", "Assortativity", "Niche Analysis
 pub struct Group {
     pub title: String,
     pub fields: Vec<Field>,
+    /// Cleared when the choice that governs the whole box makes it irrelevant;
+    /// the panel then does not draw it. Its fields are still written back, so
+    /// hiding a box never loses what was typed in it.
+    pub visible: bool,
+}
+
+impl Group {
+    fn new(title: impl Into<String>, fields: Vec<Field>) -> Self {
+        Self {
+            title: title.into(),
+            fields,
+            visible: true,
+        }
+    }
 }
 
 /// An inner tab of a section.
@@ -158,6 +181,17 @@ impl Form {
         self.refresh_enablement();
     }
 
+    /// Whether a box of fields is currently shown.
+    pub fn is_group_visible(&self, section: &str, tab: &str, title: &str) -> bool {
+        self.sections
+            .iter()
+            .find(|s| s.name == section)
+            .and_then(|s| s.tabs.iter().find(|t| t.name == tab))
+            .and_then(|t| t.groups.iter().find(|g| g.title == title))
+            .map(|g| g.visible)
+            .unwrap_or(false)
+    }
+
     /// Whether a field is currently editable.
     pub fn is_enabled(&self, section: &str, tab: &str, key: &str) -> bool {
         self.field(section, tab, key)
@@ -243,6 +277,9 @@ impl Form {
     ///
     /// Each rule is neutral when its own picker is absent, so a tab carrying
     /// only one of the two keeps everything the other governs.
+    ///
+    /// `Edges method` governs a whole box rather than single fields: the
+    /// Delaunay trimming settings are shown only while `delaunay` is chosen.
     fn refresh_enablement(&mut self) {
         for section in &mut self.sections {
             for tab in &mut section.tabs {
@@ -256,6 +293,17 @@ impl Form {
                 };
                 let algorithm = chosen("clusterer_type");
                 let reducer = chosen("reducer_type");
+
+                // The trimming box belongs to Delaunay: shown with it, hidden
+                // with knn. Neutral, like the rules below, when there is no
+                // picker to follow.
+                let edges = chosen("Edges method");
+                for group in &mut tab.groups {
+                    if group.title == DELAUNAY_TRIMMING_GROUP {
+                        group.visible = edges.as_deref().is_none_or(|m| m == "delaunay");
+                    }
+                }
+
                 if algorithm.is_none() && reducer.is_none() {
                     continue;
                 }
@@ -332,11 +380,13 @@ fn build_section(name: &str, body: &Value) -> Section {
                         ("Replot Network with Niche Labels", NICHE_REPLOT_KEYS),
                     ],
                 )
+            } else if name == "Tysserand" {
+                tysserand_groups(&general)
             } else {
-                vec![Group {
-                    title: "General".to_string(),
-                    fields: general.iter().map(|(k, v)| Field::for_key(k, v)).collect(),
-                }]
+                vec![Group::new(
+                    "General",
+                    general.iter().map(|(k, v)| Field::for_key(k, v)).collect(),
+                )]
             },
         });
     }
@@ -360,10 +410,10 @@ fn build_section(name: &str, body: &Value) -> Section {
                 ],
             )
         } else {
-            vec![Group {
-                title: sub_name.clone(),
-                fields: entries.iter().map(|(k, v)| Field::for_key(k, v)).collect(),
-            }]
+            vec![Group::new(
+                sub_name.clone(),
+                entries.iter().map(|(k, v)| Field::for_key(k, v)).collect(),
+            )]
         };
 
         tabs.push(Tab {
@@ -376,6 +426,68 @@ fn build_section(name: &str, body: &Value) -> Section {
         name: name.to_string(),
         tabs,
     }
+}
+
+/// The Tysserand General tab: everything up to `Edges method`, then the
+/// Delaunay trimming box right below it, then the rest.
+///
+/// The three trimming keys are optional in the configuration. When one is
+/// missing or null its box still shows it, filled with the tysserand 0.6.0
+/// default — the value the run would use anyway — so the user starts from the
+/// defaults rather than from an empty box, and saving writes them out.
+///
+/// A section with no `Edges method` is not a network reconstruction the user
+/// can drive from here, and gets a single box as before.
+fn tysserand_groups(general: &[(String, Value)]) -> Vec<Group> {
+    let Some(split) = general.iter().position(|(key, _)| key == "Edges method") else {
+        return vec![Group::new(
+            "General",
+            general.iter().map(|(k, v)| Field::for_key(k, v)).collect(),
+        )];
+    };
+
+    let is_trim = |key: &str| TRIM_KEYS.contains(&key);
+    let before: Vec<Field> = general[..=split]
+        .iter()
+        .filter(|(key, _)| !is_trim(key))
+        .map(|(k, v)| Field::for_key(k, v))
+        .collect();
+    let after: Vec<Field> = general[split + 1..]
+        .iter()
+        .filter(|(key, _)| !is_trim(key))
+        .map(|(k, v)| Field::for_key(k, v))
+        .collect();
+
+    let configured = |key: &str| {
+        general
+            .iter()
+            .find(|(k, v)| k == key && !v.is_null())
+            .map(|(_, v)| v.clone())
+    };
+    let defaults = [
+        (
+            TRIM_DISTANCE_RATIO,
+            Value::from(DEFAULT_TRIM_DISTANCE_RATIO),
+        ),
+        (
+            TRIM_NUMBER_OF_EDGES,
+            Value::from(DEFAULT_TRIM_NUMBER_OF_EDGES as u64),
+        ),
+        (TRIM_MIN_DISTANCE, Value::from(DEFAULT_TRIM_MIN_DISTANCE)),
+    ];
+    let trimming: Vec<Field> = defaults
+        .into_iter()
+        .map(|(key, default)| Field::for_key(key, &configured(key).unwrap_or(default)))
+        .collect();
+
+    let mut groups = vec![
+        Group::new("General", before),
+        Group::new(DELAUNAY_TRIMMING_GROUP, trimming),
+    ];
+    if !after.is_empty() {
+        groups.push(Group::new(TYSSERAND_AFTER_TRIMMING_GROUP, after));
+    }
+    groups
 }
 
 /// Split entries into the named boxes, with anything left over under "Other".
@@ -391,10 +503,7 @@ fn grouped(entries: &[(String, Value)], layout: &[(&str, &[&str])]) -> Vec<Group
             .collect();
         if !fields.is_empty() {
             claimed.extend(keys.iter().copied());
-            groups.push(Group {
-                title: (*title).to_string(),
-                fields,
-            });
+            groups.push(Group::new(*title, fields));
         }
     }
 
@@ -404,10 +513,7 @@ fn grouped(entries: &[(String, Value)], layout: &[(&str, &[&str])]) -> Vec<Group
         .map(|(key, value)| Field::for_key(key, value))
         .collect();
     if !leftover.is_empty() {
-        groups.push(Group {
-            title: "Other".to_string(),
-            fields: leftover,
-        });
+        groups.push(Group::new("Other", leftover));
     }
 
     groups
@@ -452,6 +558,110 @@ Niche Analysis:
         assert_eq!(tysserand.name, "Tysserand");
         assert_eq!(tysserand.tabs[0].name, "General");
         assert!(form.field("Tysserand", "General", "Edges method").is_some());
+    }
+
+    fn text_of(form: &Form, key: &str) -> String {
+        match &form.field("Tysserand", "General", key).unwrap().kind {
+            crate::model::field::FieldKind::Text { text } => text.clone(),
+            other => panic!("`{key}` should be a text box, got {other:?}"),
+        }
+    }
+
+    /// The trimming box sits right below `Edges method`, and starts on the
+    /// tysserand 0.6.0 defaults when the configuration does not set them.
+    #[test]
+    fn the_trimming_box_follows_edges_method_with_the_defaults() {
+        let form = form();
+        let titles: Vec<&str> = form.sections[0].tabs[0]
+            .groups
+            .iter()
+            .map(|g| g.title.as_str())
+            .collect();
+        assert_eq!(
+            titles,
+            vec![
+                "General",
+                DELAUNAY_TRIMMING_GROUP,
+                "Reconnection and resources"
+            ]
+        );
+        let general = &form.sections[0].tabs[0].groups[0];
+        assert_eq!(general.fields.last().unwrap().key, "Edges method");
+
+        let keys: Vec<&str> = form.sections[0].tabs[0].groups[1]
+            .fields
+            .iter()
+            .map(|f| f.key.as_str())
+            .collect();
+        assert_eq!(keys, TRIM_KEYS.to_vec());
+        assert_eq!(text_of(&form, TRIM_DISTANCE_RATIO), "2.0");
+        assert_eq!(text_of(&form, TRIM_NUMBER_OF_EDGES), "3");
+        assert_eq!(text_of(&form, TRIM_MIN_DISTANCE), "0.0");
+    }
+
+    #[test]
+    fn configured_trimming_values_are_shown_instead_of_the_defaults() {
+        let yaml = SAMPLE.replace(
+            "  Min neighbors: 3\n",
+            "  Min neighbors: 3\n  Trim distance ratio: 3.5\n  Trim number of edges: 4\n  Trim min distance: null\n",
+        );
+        let form = Form::from_config(&RawConfig::from_yaml_str(&yaml).unwrap());
+        assert_eq!(text_of(&form, TRIM_DISTANCE_RATIO), "3.5");
+        assert_eq!(text_of(&form, TRIM_NUMBER_OF_EDGES), "4");
+        // A null falls back to the default, like an absent key.
+        assert_eq!(text_of(&form, TRIM_MIN_DISTANCE), "0.0");
+        // And the keys are not repeated in the box below.
+        let after = &form.sections[0].tabs[0].groups[2];
+        assert!(after
+            .fields
+            .iter()
+            .all(|f| !TRIM_KEYS.contains(&f.key.as_str())));
+    }
+
+    #[test]
+    fn the_trimming_box_is_shown_only_for_delaunay() {
+        let mut form = form();
+        assert!(form.is_group_visible("Tysserand", "General", DELAUNAY_TRIMMING_GROUP));
+
+        form.set_text("Tysserand", "General", "Edges method", "knn");
+        assert!(!form.is_group_visible("Tysserand", "General", DELAUNAY_TRIMMING_GROUP));
+        // The rest of the tab stays.
+        assert!(form.is_group_visible("Tysserand", "General", "General"));
+        assert!(form.is_group_visible("Tysserand", "General", "Reconnection and resources"));
+
+        form.set_text("Tysserand", "General", "Edges method", "delaunay");
+        assert!(form.is_group_visible("Tysserand", "General", DELAUNAY_TRIMMING_GROUP));
+    }
+
+    /// The defaults reach the file as numbers the validation accepts, and a
+    /// hidden box still writes its values.
+    #[test]
+    fn the_trimming_values_are_written_back() {
+        let original = RawConfig::from_yaml_str(SAMPLE).unwrap();
+        let mut form = Form::from_config(&original);
+        form.set_text("Tysserand", "General", TRIM_DISTANCE_RATIO, "2.5");
+        form.set_text("Tysserand", "General", "Edges method", "knn");
+
+        let mut updated = original.clone();
+        form.apply_to(&mut updated);
+        assert_eq!(
+            updated
+                .get("Tysserand", TRIM_DISTANCE_RATIO)
+                .and_then(Value::as_f64),
+            Some(2.5)
+        );
+        assert_eq!(
+            updated
+                .get("Tysserand", TRIM_NUMBER_OF_EDGES)
+                .and_then(Value::as_i64),
+            Some(3)
+        );
+        assert_eq!(
+            updated
+                .get("Tysserand", TRIM_MIN_DISTANCE)
+                .and_then(Value::as_f64),
+            Some(0.0)
+        );
     }
 
     #[test]

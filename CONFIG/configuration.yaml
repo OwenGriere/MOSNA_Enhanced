@@ -7,6 +7,9 @@ Tysserand:
   Y coordinates column: Y_position
   Phenotype column: Cluster
   Edges method: delaunay
+  Trim distance ratio: 2.0
+  Trim number of edges: 3
+  Trim min distance: 0.0
   Min neighbors: 3
   CPU: 20
 Assortativity:

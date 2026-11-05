@@ -7,7 +7,9 @@ use rayon::prelude::*;
 use mosna_config::model::tysserand::EdgesMethod;
 use mosna_config::validate::assert_params::{assert_params, Analysis};
 use mosna_config::{section, RawConfig, TysserandConfig};
-use mosna_core::geometry::{build_delaunay, link_solitaries, DelaunayTrim, LinkMethod};
+use mosna_core::geometry::{
+    build_delaunay, link_solitaries, DelaunayTrim, LinkMethod, NodeAdaptive, TrimDist,
+};
 use mosna_io::read::get_opener::{read_table, Extension};
 use mosna_io::write::write_parquet::write_parquet;
 use mosna_io::{find_sample, find_sample_from_file, Table};
@@ -78,6 +80,18 @@ pub fn tysserand_network(
         .build()
         .map_err(|e| PipelineError::invalid(format!("cannot start the worker pool: {e}")))?;
 
+    // The per-node rule of tysserand 0.6.0, with the three settings the
+    // configuration may override; the global threshold stays off, as it is in
+    // `ty.build_delaunay(coords)`.
+    let trim = DelaunayTrim {
+        node_adaptive: Some(NodeAdaptive {
+            n_edges: settings.trim_number_of_edges,
+            trim_dist_ratio: settings.trim_distance_ratio,
+            min_dist: settings.trim_min_distance,
+        }),
+        distance: TrimDist::None,
+    };
+
     let done = std::sync::atomic::AtomicUsize::new(0);
     progress.step(0, total, "[MULTI PROCESS] Processing file");
 
@@ -87,7 +101,7 @@ pub fn tysserand_network(
             let nodes = read_table(file, extension)?;
 
             let coords = nodes.coords(&settings.x_column, &settings.y_column)?;
-            let pairs = build_delaunay(&coords, DelaunayTrim::default())?;
+            let pairs = build_delaunay(&coords, trim)?;
             let method = match settings.edges_method {
                 EdgesMethod::Delaunay => LinkMethod::Delaunay,
                 EdgesMethod::Knn => LinkMethod::Knn,
@@ -125,4 +139,27 @@ pub fn tysserand_network(
     })?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use mosna_config::model::tysserand::{
+        DEFAULT_TRIM_DISTANCE_RATIO, DEFAULT_TRIM_MIN_DISTANCE, DEFAULT_TRIM_NUMBER_OF_EDGES,
+    };
+    use mosna_core::geometry::NodeAdaptive;
+
+    /// The configuration's fallbacks and the geometry's defaults are written in
+    /// two crates; a configuration without the trimming keys must still build
+    /// exactly the tysserand 0.6.0 network.
+    #[test]
+    fn the_configuration_defaults_are_the_geometry_defaults() {
+        assert_eq!(
+            NodeAdaptive {
+                n_edges: DEFAULT_TRIM_NUMBER_OF_EDGES,
+                trim_dist_ratio: DEFAULT_TRIM_DISTANCE_RATIO,
+                min_dist: DEFAULT_TRIM_MIN_DISTANCE,
+            },
+            NodeAdaptive::default()
+        );
+    }
 }

@@ -3,7 +3,7 @@
 use crate::error::Result;
 use crate::model::raw::RawConfig;
 use crate::section;
-use crate::value::{get_int, get_opt_str, get_str};
+use crate::value::{get_float_or, get_int, get_int_or, get_opt_str, get_str};
 
 /// Method used to draw the edges of a spatial network.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,6 +30,22 @@ impl EdgesMethod {
     }
 }
 
+/// Key of the per-node trimming ratio (`trim_dist_ratio` in tysserand).
+pub const TRIM_DISTANCE_RATIO: &str = "Trim distance ratio";
+/// Key of the reference edge rank (`n_edges` in tysserand).
+pub const TRIM_NUMBER_OF_EDGES: &str = "Trim number of edges";
+/// Key of the length below which no edge is trimmed (`min_dist` in tysserand).
+pub const TRIM_MIN_DISTANCE: &str = "Trim min distance";
+
+/// The three Delaunay trimming keys, in the order the interface shows them.
+pub const TRIM_KEYS: [&str; 3] = [TRIM_DISTANCE_RATIO, TRIM_NUMBER_OF_EDGES, TRIM_MIN_DISTANCE];
+
+/// tysserand 0.6.0's `build_delaunay` defaults, which an absent key falls back
+/// to: `trim_dist_ratio=2`, `n_edges=3`, `min_dist=0`.
+pub const DEFAULT_TRIM_DISTANCE_RATIO: f64 = 2.0;
+pub const DEFAULT_TRIM_NUMBER_OF_EDGES: usize = 3;
+pub const DEFAULT_TRIM_MIN_DISTANCE: f64 = 0.0;
+
 /// Parameters driving step 1, the spatial network reconstruction.
 #[derive(Debug, Clone)]
 pub struct TysserandConfig {
@@ -43,6 +59,15 @@ pub struct TysserandConfig {
     pub phenotype_column: String,
     pub edges_method: EdgesMethod,
     pub min_neighbors: usize,
+    /// Per-node trimming of the Delaunay edges: an edge longer than
+    /// `trim_distance_ratio` times its node's `trim_number_of_edges`-th
+    /// shortest edge, and longer than `trim_min_distance`, is dropped.
+    ///
+    /// The three keys are optional, so a configuration written before they
+    /// existed builds the network it always did.
+    pub trim_distance_ratio: f64,
+    pub trim_number_of_edges: usize,
+    pub trim_min_distance: f64,
     pub cpu: usize,
 }
 
@@ -61,7 +86,55 @@ impl TysserandConfig {
             phenotype_column: get_str(s, name, "Phenotype column")?,
             edges_method: EdgesMethod::parse(&get_str(s, name, "Edges method")?),
             min_neighbors: get_int(s, name, "Min neighbors")?.max(0) as usize,
+            trim_distance_ratio: get_float_or(s, TRIM_DISTANCE_RATIO, DEFAULT_TRIM_DISTANCE_RATIO),
+            trim_number_of_edges: get_int_or(
+                s,
+                TRIM_NUMBER_OF_EDGES,
+                DEFAULT_TRIM_NUMBER_OF_EDGES as i64,
+            )
+            .max(1) as usize,
+            trim_min_distance: get_float_or(s, TRIM_MIN_DISTANCE, DEFAULT_TRIM_MIN_DISTANCE),
             cpu: get_int(s, name, "CPU")?.max(1) as usize,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const BASE: &str = "\
+Tysserand:
+  Nodes directory: /data
+  Patient column name: patient
+  Sample column name: null
+  Extension: parquet
+  X coordinates column: x
+  Y coordinates column: y
+  Phenotype column: Cluster
+  Edges method: delaunay
+  Min neighbors: 3
+  CPU: 4
+";
+
+    /// A configuration without the trimming keys builds the tysserand 0.6.0
+    /// network, as it did before the keys existed.
+    #[test]
+    fn absent_trimming_keys_fall_back_to_the_tysserand_defaults() {
+        let config = TysserandConfig::from_raw(&RawConfig::from_yaml_str(BASE).unwrap()).unwrap();
+        assert_eq!(config.trim_distance_ratio, 2.0);
+        assert_eq!(config.trim_number_of_edges, 3);
+        assert_eq!(config.trim_min_distance, 0.0);
+    }
+
+    #[test]
+    fn the_trimming_keys_are_read() {
+        let yaml = format!(
+            "{BASE}  Trim distance ratio: 3\n  Trim number of edges: 4\n  Trim min distance: 12.5\n"
+        );
+        let config = TysserandConfig::from_raw(&RawConfig::from_yaml_str(&yaml).unwrap()).unwrap();
+        assert_eq!(config.trim_distance_ratio, 3.0);
+        assert_eq!(config.trim_number_of_edges, 4);
+        assert_eq!(config.trim_min_distance, 12.5);
     }
 }

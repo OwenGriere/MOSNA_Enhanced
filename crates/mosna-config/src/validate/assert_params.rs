@@ -83,6 +83,50 @@ fn assert_tysserand(c: &Value) -> Result<()> {
     require_str(c, "Extension", "Extension parameter must be str")?;
     require_int(c, "CPU", "CPU parameter must be int")?;
     require_int(c, "Min neighbors", "CPU parameter must be int")?;
+    assert_delaunay_trimming(c)
+}
+
+/// The three optional Delaunay trimming keys: absent or null means the
+/// tysserand default, anything else must be a number in range.
+///
+/// The ranges are the ones where the rule means something. `n_edges` must be
+/// at least 1: at 0, tysserand indexes `sorted[-1]`, the *longest* edge, which
+/// is a different rule entirely. A ratio of zero or less cuts every edge above
+/// the floor, and a negative floor is the same as none.
+fn assert_delaunay_trimming(c: &Value) -> Result<()> {
+    use crate::model::tysserand::{TRIM_DISTANCE_RATIO, TRIM_MIN_DISTANCE, TRIM_NUMBER_OF_EDGES};
+
+    let number = |key: &str| -> Result<Option<f64>> {
+        match c.get(key) {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::Number(n)) => Ok(n.as_f64()),
+            Some(_) => Err(ConfigError::assertion(format!("{key} must be a number"))),
+        }
+    };
+
+    if let Some(ratio) = number(TRIM_DISTANCE_RATIO)? {
+        if !(ratio > 0.0 && ratio.is_finite()) {
+            return Err(ConfigError::assertion(format!(
+                "{TRIM_DISTANCE_RATIO} must be greater than 0, got {ratio}"
+            )));
+        }
+    }
+    match c.get(TRIM_NUMBER_OF_EDGES) {
+        None | Some(Value::Null) => {}
+        Some(Value::Number(n)) if n.as_i64().is_some_and(|k| k >= 1) => {}
+        Some(_) => {
+            return Err(ConfigError::assertion(format!(
+                "{TRIM_NUMBER_OF_EDGES} must be an integer of at least 1"
+            )))
+        }
+    }
+    if let Some(floor) = number(TRIM_MIN_DISTANCE)? {
+        if !(floor >= 0.0 && floor.is_finite()) {
+            return Err(ConfigError::assertion(format!(
+                "{TRIM_MIN_DISTANCE} must be 0 or more, got {floor}"
+            )));
+        }
+    }
     Ok(())
 }
 
@@ -330,6 +374,50 @@ Min neighbors: 3
         let yaml = TYSSERAND_OK.replace("CPU: 20", "CPU: many");
         let err = assert_params(Analysis::Tysserand, &value(&yaml)).unwrap_err();
         assert_eq!(err.to_string(), "CPU parameter must be int");
+    }
+
+    /// The trimming keys are optional: a configuration written before they
+    /// existed must still be accepted.
+    #[test]
+    fn tysserand_accepts_the_trimming_keys_or_their_absence() {
+        assert_params(Analysis::Tysserand, &value(TYSSERAND_OK)).unwrap();
+        let yaml = format!(
+            "{TYSSERAND_OK}Trim distance ratio: 2.0\nTrim number of edges: 3\nTrim min distance: 0\n"
+        );
+        assert_params(Analysis::Tysserand, &value(&yaml)).unwrap();
+        // An integer ratio is a number like any other.
+        let yaml = format!("{TYSSERAND_OK}Trim distance ratio: 3\n");
+        assert_params(Analysis::Tysserand, &value(&yaml)).unwrap();
+    }
+
+    #[test]
+    fn tysserand_rejects_trimming_values_out_of_range() {
+        for (line, message) in [
+            (
+                "Trim distance ratio: 0",
+                "Trim distance ratio must be greater than 0, got 0",
+            ),
+            (
+                "Trim distance ratio: wide",
+                "Trim distance ratio must be a number",
+            ),
+            (
+                "Trim number of edges: 0",
+                "Trim number of edges must be an integer of at least 1",
+            ),
+            (
+                "Trim number of edges: 2.5",
+                "Trim number of edges must be an integer of at least 1",
+            ),
+            (
+                "Trim min distance: -1",
+                "Trim min distance must be 0 or more, got -1",
+            ),
+        ] {
+            let yaml = format!("{TYSSERAND_OK}{line}\n");
+            let err = assert_params(Analysis::Tysserand, &value(&yaml)).unwrap_err();
+            assert_eq!(err.to_string(), message, "for `{line}`");
+        }
     }
 
     #[test]

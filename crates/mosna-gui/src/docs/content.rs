@@ -671,65 +671,212 @@ fn parameters() -> Chapter {
             Section {
                 id: "parameters-tysserand",
                 title: T::new("Step 1 — Tysserand", "Étape 1 — Tysserand"),
-                blocks: vec![Block::Table {
-                    headers,
-                    rows: vec![
-                        Row::new(
-                            "X coordinates column",
-                            "string",
-                            T::new(
-                                "Column holding the X spatial coordinate.",
-                                "Colonne contenant la coordonnée spatiale X.",
+                blocks: vec![
+                    Block::Paragraph(T::new(
+                        "Each sample's network is built in three moves. The cells are joined \
+                         by a Delaunay triangulation; the edges that are long for the cells \
+                         they join are trimmed; then any cell left with fewer than Min \
+                         neighbors edges is reconnected. The triangulation is always the \
+                         starting point: Edges method only chooses how that last \
+                         reconnection is done.",
+                        "Le réseau de chaque échantillon se construit en trois temps. Les \
+                         cellules sont reliées par une triangulation de Delaunay ; les arêtes \
+                         trop longues pour les cellules qu'elles relient sont coupées ; puis \
+                         toute cellule qui garde moins de Min neighbors arêtes est \
+                         reconnectée. La triangulation est toujours le point de départ : Edges \
+                         method ne choisit que la façon de faire cette dernière reconnexion.",
+                    )),
+                    Block::Table {
+                        headers,
+                        rows: vec![
+                            Row::new(
+                                "X coordinates column",
+                                "string",
+                                T::new(
+                                    "Column holding the X spatial coordinate.",
+                                    "Colonne contenant la coordonnée spatiale X.",
+                                ),
                             ),
-                        ),
-                        Row::new(
-                            "Y coordinates column",
-                            "string",
-                            T::new(
-                                "Column holding the Y spatial coordinate.",
-                                "Colonne contenant la coordonnée spatiale Y.",
+                            Row::new(
+                                "Y coordinates column",
+                                "string",
+                                T::new(
+                                    "Column holding the Y spatial coordinate.",
+                                    "Colonne contenant la coordonnée spatiale Y.",
+                                ),
                             ),
-                        ),
-                        Row::new(
-                            "Phenotype column",
-                            "string",
-                            T::new(
-                                "Column giving the phenotype of each cell.",
-                                "Colonne donnant le phénotype de chaque cellule.",
+                            Row::new(
+                                "Phenotype column",
+                                "string",
+                                T::new(
+                                    "Column giving the phenotype of each cell.",
+                                    "Colonne donnant le phénotype de chaque cellule.",
+                                ),
                             ),
-                        ),
-                        Row::new(
-                            "Edges method",
-                            "string",
-                            T::new(
-                                "How edges are drawn: delaunay triangulates, knn joins each cell \
-                             to its nearest neighbours.",
-                                "Comment les arêtes sont tracées : delaunay triangule, knn relie \
-                             chaque cellule à ses plus proches voisines.",
+                            Row::new(
+                                "Edges method",
+                                "string",
+                                T::new(
+                                    "How cells left with too few neighbours after trimming are \
+                                 reconnected. delaunay gives them back their shortest edges of \
+                                 the untrimmed triangulation, and shows the Delaunay trimming \
+                                 box below; knn joins them to their nearest neighbours.",
+                                    "Comment sont reconnectées les cellules qui gardent trop peu \
+                                 de voisins après la coupe. delaunay leur rend leurs arêtes les \
+                                 plus courtes de la triangulation non coupée, et affiche le bloc \
+                                 Delaunay trimming en dessous ; knn les relie à leurs plus \
+                                 proches voisines.",
+                                ),
                             ),
-                        ),
-                        Row::new(
-                            "Min neighbors",
-                            "int",
-                            T::new(
-                                "Minimum number of neighbours each cell must keep. Cells left \
-                             below it are reconnected.",
-                                "Nombre minimal de voisins que chaque cellule doit conserver. Les \
-                             cellules en dessous sont reconnectées.",
+                            Row::new(
+                                "Min neighbors",
+                                "int",
+                                T::new(
+                                    "Minimum number of neighbours each cell must keep. Cells left \
+                                 below it after trimming are reconnected, whichever Edges method \
+                                 is chosen. A cell the triangulation cannot give that many \
+                                 neighbours — a corner of the tissue — is left as it is.",
+                                    "Nombre minimal de voisins que chaque cellule doit conserver. \
+                                 Les cellules en dessous après la coupe sont reconnectées, quelle \
+                                 que soit la méthode choisie dans Edges method. Une cellule à qui \
+                                 la triangulation ne peut pas donner autant de voisins (un coin \
+                                 du tissu) est laissée telle quelle.",
+                                ),
                             ),
-                        ),
-                        Row::new(
-                            "CPU",
-                            "int",
-                            T::new(
-                                "How many cores to use. Capped by the machine and by the number \
-                             of samples.",
-                                "Nombre de coeurs à utiliser. Plafonné par la machine et par le \
-                             nombre d'échantillons.",
+                            Row::new(
+                                "CPU",
+                                "int",
+                                T::new(
+                                    "How many cores to use. Capped by the machine and by the \
+                                 number of samples.",
+                                    "Nombre de coeurs à utiliser. Plafonné par la machine et par \
+                                 le nombre d'échantillons.",
+                                ),
                             ),
+                        ],
+                    },
+                    Block::Heading(T::new("Delaunay trimming", "Coupe des arêtes de Delaunay")),
+                    Block::Paragraph(T::new(
+                        "A triangulation joins every cell to something, including across \
+                         empty space and along the edge of the tissue, where it draws long \
+                         edges between cells that are not neighbours. The trimming removes \
+                         them cell by cell. For each cell, its reference length is its n-th \
+                         shortest edge (Trim number of edges); every edge of that cell longer \
+                         than Trim distance ratio × that length, and longer than Trim min \
+                         distance, is removed. Because the threshold is measured on each \
+                         cell's own neighbourhood, an edge that is too long in a dense region \
+                         can be kept at the same length in a sparse one.",
+                        "Une triangulation relie chaque cellule à quelque chose, y compris à \
+                         travers les zones vides et le long du bord du tissu, où elle trace de \
+                         longues arêtes entre des cellules qui ne sont pas voisines. La coupe \
+                         les retire cellule par cellule. Pour chaque cellule, la longueur de \
+                         référence est sa n-ième arête la plus courte (Trim number of edges) ; \
+                         toute arête de cette cellule plus longue que Trim distance ratio × \
+                         cette longueur, et plus longue que Trim min distance, est retirée. \
+                         Comme le seuil est mesuré sur le voisinage propre de chaque cellule, \
+                         une arête trop longue dans une région dense peut être conservée à la \
+                         même longueur dans une région clairsemée.",
+                    )),
+                    Block::Paragraph(T::new(
+                        "Example: a cell whose edges measure 8, 10, 11, 14, 25 and 40, with \
+                         the defaults. Its third shortest edge is 11, so the threshold is 2 × \
+                         11 = 22: the edges of 25 and 40 are removed and the other four are \
+                         kept.",
+                        "Exemple : une cellule dont les arêtes mesurent 8, 10, 11, 14, 25 et \
+                         40, avec les valeurs par défaut. Sa troisième arête la plus courte \
+                         mesure 11, le seuil vaut donc 2 × 11 = 22 : les arêtes de 25 et 40 \
+                         sont retirées, les quatre autres sont conservées.",
+                    )),
+                    Block::Table {
+                        headers,
+                        rows: vec![
+                            Row::new(
+                                "Trim distance ratio",
+                                "float",
+                                T::new(
+                                    "How much longer than the cell's reference edge an edge may \
+                                 be before it is removed. Default 2. The most influential of the \
+                                 three: lower removes more edges, higher keeps more, and from \
+                                 about 5 almost nothing is removed. Below 1 even the reference \
+                                 edge is cut. Must be greater than 0.",
+                                    "De combien une arête peut dépasser l'arête de référence de la \
+                                 cellule avant d'être retirée. Défaut 2. C'est le plus influent \
+                                 des trois : plus bas retire plus d'arêtes, plus haut en garde \
+                                 davantage, et à partir de 5 environ presque rien n'est retiré. \
+                                 En dessous de 1, même l'arête de référence est coupée. Doit être \
+                                 supérieur à 0.",
+                                ),
+                            ),
+                            Row::new(
+                                "Trim number of edges",
+                                "int",
+                                T::new(
+                                    "Which of the cell's shortest edges sets its reference \
+                                 length: 3 means the third shortest. Default 3, at least 1. A \
+                                 cell with this many edges or fewer is never trimmed. 1 measures \
+                                 against the closest neighbour alone and cuts hard; 2 is already \
+                                 much stricter than 3. Keeping it equal to Min neighbors avoids \
+                                 cutting edges only to reconnect them afterwards.",
+                                    "Laquelle des arêtes les plus courtes de la cellule fixe sa \
+                                 longueur de référence : 3 signifie la troisième plus courte. \
+                                 Défaut 3, au moins 1. Une cellule qui a ce nombre d'arêtes ou \
+                                 moins n'est jamais coupée. 1 mesure par rapport au seul voisin \
+                                 le plus proche et coupe fort ; 2 est déjà bien plus strict que \
+                                 3. Le garder égal à Min neighbors évite de couper des arêtes \
+                                 pour les reconnecter ensuite.",
+                                ),
+                            ),
+                            Row::new(
+                                "Trim min distance",
+                                "float",
+                                T::new(
+                                    "Edges shorter than this are never removed, whatever the \
+                                 ratio says. In the unit of your coordinates — micrometres or \
+                                 pixels — so the same value means different things from one \
+                                 dataset to another; compare it with a typical distance between \
+                                 neighbouring cells. Default 0: no floor. Must be 0 or more.",
+                                    "Les arêtes plus courtes que cette valeur ne sont jamais \
+                                 retirées, quel que soit le ratio. Elle s'exprime dans l'unité de \
+                                 vos coordonnées (micromètres ou pixels) : une même valeur n'a \
+                                 donc pas le même sens d'un jeu de données à l'autre ; \
+                                 comparez-la à la distance habituelle entre deux cellules \
+                                 voisines. Défaut 0 : pas de plancher. Doit être positive ou \
+                                 nulle.",
+                                ),
+                            ),
+                        ],
+                    },
+                    Block::Callout {
+                        kind: CalloutKind::Note,
+                        text: T::new(
+                            "The defaults — 2, 3 and 0 — are those of tysserand 0.6.0, so they \
+                             build the same networks as MOSNA in Python. A configuration that \
+                             does not mention these three settings uses them too. The box is \
+                             only shown while Edges method is delaunay; with knn it is hidden, \
+                             but the triangulation is still trimmed with the values it holds.",
+                            "Les valeurs par défaut (2, 3 et 0) sont celles de tysserand 0.6.0 : \
+                             elles construisent les mêmes réseaux que MOSNA en Python. Une \
+                             configuration qui ne mentionne pas ces trois réglages les utilise \
+                             aussi. Le bloc n'est affiché que lorsque Edges method vaut \
+                             delaunay ; avec knn il est masqué, mais la triangulation est \
+                             toujours coupée avec les valeurs qu'il contient.",
                         ),
-                    ],
-                }],
+                    },
+                    Block::Callout {
+                        kind: CalloutKind::Tip,
+                        text: T::new(
+                            "Trimming harder leaves more cells isolated, and Min neighbors then \
+                             reconnects them: the two pull in opposite directions. When \
+                             tuning, change one setting at a time and look at the network \
+                             drawn for a sample before running the whole cohort.",
+                            "Couper plus fort laisse davantage de cellules isolées, que Min \
+                             neighbors reconnecte ensuite : les deux réglages tirent en sens \
+                             contraire. Pour les ajuster, changez un réglage à la fois et \
+                             regardez le réseau tracé pour un échantillon avant de lancer toute \
+                             la cohorte.",
+                        ),
+                    },
+                ],
             },
             Section {
                 id: "parameters-assortativity",
@@ -1217,6 +1364,14 @@ fn credits() -> Chapter {
                              spatial network — the first step of every analysis.",
                             "La triangulation de Delaunay qui transforme un nuage de cellules en \
                              réseau spatial : la première étape de toute analyse.")),
+                        C::new("robust", T::new(
+                            "Exact geometric predicates. They tell when four cells lie exactly \
+                             on one circle, where the triangulation is ambiguous, so that the \
+                             network matches the one tysserand builds in Python.",
+                            "Prédicats géométriques exacts. Ils détectent quand quatre cellules \
+                             sont exactement sur un même cercle, là où la triangulation est \
+                             ambiguë, pour que le réseau soit celui que tysserand construit en \
+                             Python.")),
                         C::new("kiddo", T::new(
                             "The k-d tree behind nearest-neighbour queries, which is what makes \
                              the knn edge method and the relinking of isolated cells fast enough \
