@@ -106,7 +106,9 @@ impl DelaunayTrim {
 /// The Python original takes the Delaunay edges from
 /// `scipy.spatial.Voronoi(coords).ridge_points` — the pairs of input points
 /// whose Voronoi cells share a ridge, which is exactly the Delaunay edge set.
-/// This computes the triangulation directly, which is the same set.
+/// This computes the triangulation directly, which is the same set — once the
+/// arbitrary diagonals between cocircular points are removed, since Qhull does
+/// not emit them (see `is_cocircular_diagonal`).
 ///
 /// # Ordering
 ///
@@ -265,18 +267,57 @@ pub fn build_delaunay_untrimmed(coords: &[Point2]) -> Result<Vec<Pair>> {
         return Ok(collinear_path(coords));
     }
 
-    let mut pairs = Vec::with_capacity(triangulation.triangles.len());
-    for e in 0..triangulation.triangles.len() {
+    let triangles = &triangulation.triangles;
+    let mut pairs = Vec::with_capacity(triangles.len());
+    for e in 0..triangles.len() {
         // Emit each undirected edge once: on a boundary half-edge, or on the
         // lower-indexed side of an interior pair.
         let opposite = triangulation.halfedges[e];
-        if opposite == delaunator::EMPTY || e < opposite {
-            let a = triangulation.triangles[e] as u32;
-            let b = triangulation.triangles[next_halfedge(e)] as u32;
-            pairs.push((a, b));
+        if opposite == delaunator::EMPTY {
+            pairs.push((triangles[e] as u32, triangles[next_halfedge(e)] as u32));
+        } else if e < opposite {
+            if is_cocircular_diagonal(coords, triangles, e, opposite) {
+                continue;
+            }
+            pairs.push((triangles[e] as u32, triangles[next_halfedge(e)] as u32));
         }
     }
     Ok(remove_duplicate_pairs(pairs))
+}
+
+/// Whether the interior edge shared by half-edges `e` and `opposite` is an
+/// arbitrary diagonal of cocircular points, which Qhull does not emit.
+///
+/// When four or more points lie on one circle, the Delaunay triangulation is
+/// not unique: any diagonal of the polygon they form is valid. `delaunator`
+/// picks one. Qhull — behind `scipy.spatial.Voronoi(coords).ridge_points`,
+/// which is what tysserand reads — picks none: it merges the cocircular
+/// triangles into a single non-simplicial facet, and only the polygon's sides
+/// separate two Voronoi cells with a ridge. Four cells on a perfect square
+/// therefore get four edges in tysserand, not five.
+///
+/// This happens all the time with integer coordinates (centroids in pixels),
+/// and never in practice with floating-point ones. The edge is dropped exactly
+/// when the vertex across it lies *on* the circumcircle of the triangle on this
+/// side, decided by an exact predicate: a tolerance would start removing edges
+/// tysserand keeps.
+fn is_cocircular_diagonal(
+    coords: &[Point2],
+    triangles: &[usize],
+    e: usize,
+    opposite: usize,
+) -> bool {
+    let coord = |vertex: usize| robust::Coord {
+        x: coords[vertex][0],
+        y: coords[vertex][1],
+    };
+    // The triangle on this side, in delaunator's winding order, and the vertex
+    // of the neighbouring triangle that is not on the shared edge.
+    let a = coord(triangles[e]);
+    let b = coord(triangles[next_halfedge(e)]);
+    let c = coord(triangles[prev_halfedge(e)]);
+    let d = coord(triangles[prev_halfedge(opposite)]);
+    robust::incircle(a, b, c, d) == 0.0
 }
 
 /// Index of the next half-edge within the same triangle.
@@ -285,6 +326,15 @@ fn next_halfedge(e: usize) -> usize {
         e - 2
     } else {
         e + 1
+    }
+}
+
+/// Index of the previous half-edge within the same triangle.
+fn prev_halfedge(e: usize) -> usize {
+    if e % 3 == 0 {
+        e + 2
+    } else {
+        e - 1
     }
 }
 
@@ -315,21 +365,53 @@ fn collinear_path(coords: &[Point2]) -> Vec<Pair> {
 mod tests {
     use super::*;
 
-    /// A unit square: the Delaunay triangulation is the four sides plus one
-    /// diagonal, so five edges.
+    /// A unit square: its four corners are cocircular, so Qhull emits the four
+    /// sides and no diagonal — `Voronoi([[0,0],[1,0],[1,1],[0,1]]).ridge_points`
+    /// has four rows.
     #[test]
-    fn triangulates_a_square() {
+    fn a_square_has_no_diagonal() {
         let coords = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]];
         let pairs = build_delaunay(&coords, DelaunayTrim::none()).unwrap();
-        assert_eq!(pairs.len(), 5, "got {pairs:?}");
+        assert_eq!(pairs, vec![(0, 1), (0, 3), (1, 2), (2, 3)]);
+    }
 
-        // Every node must be reachable.
-        let mut degree = [0usize; 4];
-        for &(a, b) in &pairs {
-            degree[a as usize] += 1;
-            degree[b as usize] += 1;
-        }
-        assert!(degree.iter().all(|&d| d >= 2));
+    /// A slightly squashed square is not cocircular: the triangulation is
+    /// unique and its diagonal is a genuine Delaunay edge.
+    #[test]
+    fn a_non_cocircular_quadrilateral_keeps_its_diagonal() {
+        let coords = vec![[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.1]];
+        let pairs = build_delaunay(&coords, DelaunayTrim::none()).unwrap();
+        assert_eq!(pairs.len(), 5, "got {pairs:?}");
+    }
+
+    /// A 4 × 4 integer grid: Qhull gives the 24 axis-aligned edges and none of
+    /// the 9 diagonals a triangulation would add.
+    #[test]
+    fn an_integer_grid_matches_qhull() {
+        let coords: Vec<Point2> = (0..4)
+            .flat_map(|i| (0..4).map(move |j| [i as f64, j as f64]))
+            .collect();
+        let pairs = build_delaunay(&coords, DelaunayTrim::none()).unwrap();
+        assert_eq!(pairs.len(), 24, "got {pairs:?}");
+        let dist = distance_neighbors(&coords, &pairs);
+        assert!(dist.iter().all(|&d| d == 1.0));
+    }
+
+    /// Six points on one circle form a single Qhull facet: only the hexagon's
+    /// sides remain, whatever diagonals `delaunator` chose inside it.
+    #[test]
+    fn cocircular_polygon_keeps_only_its_sides() {
+        // Exactly cocircular in floating point: the 3-4-5 points of radius 5.
+        let coords = vec![
+            [5.0, 0.0],
+            [3.0, 4.0],
+            [-3.0, 4.0],
+            [-5.0, 0.0],
+            [-3.0, -4.0],
+            [3.0, -4.0],
+        ];
+        let pairs = build_delaunay(&coords, DelaunayTrim::none()).unwrap();
+        assert_eq!(pairs, vec![(0, 1), (0, 5), (1, 2), (2, 3), (3, 4), (4, 5)]);
     }
 
     #[test]
@@ -351,10 +433,10 @@ mod tests {
     /// loose one that are *longer* than the edges it cuts in the tight one. No
     /// global threshold can satisfy both at once.
     ///
-    /// The coordinates are jittered on purpose. On a perfect lattice the
-    /// Delaunay triangulation is ambiguous — every four points of a square are
-    /// cocircular — and `delaunator` and Qhull break those ties differently, so
-    /// a lattice would test the tie-breaking rather than the trimming.
+    /// The coordinates are jittered on purpose. On a perfect lattice every four
+    /// points of a square are cocircular and their diagonal is dropped (see
+    /// `a_square_has_no_diagonal`), so a lattice would test that rule rather
+    /// than the trimming.
     #[test]
     fn the_node_rule_adapts_its_threshold_to_the_local_density() {
         let jitter = |i: usize, j: usize| ((i * 7 + j * 13) % 5) as f64 * 0.011;
