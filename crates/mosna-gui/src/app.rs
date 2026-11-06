@@ -542,6 +542,65 @@ impl MosnaApp {
         self.advance_sweep();
     }
 
+    /// Write the plan of the grid the sensitivity screen holds, without running
+    /// anything.
+    ///
+    /// The file explains, run by run, what the analysis will do — and it is
+    /// also what `mosna sensitivity-analysis --log` runs, so a grid can be
+    /// checked here and then started from a terminal, on this machine or on a
+    /// cluster. Its text is put in the Log tab, so it is read without looking
+    /// for the file.
+    ///
+    /// Returns where it was written.
+    pub fn write_sweep_plan(&mut self) -> Option<PathBuf> {
+        let plan = self.sweep_form.plan();
+        if plan.is_empty() {
+            return None;
+        }
+        let Some(working_dir) = self.working_dir().map(Path::to_path_buf) else {
+            self.notice = Some("Choose a working directory first.".to_string());
+            return None;
+        };
+        // The same configuration Start would vary, saved the same way.
+        if let Err(error) = self.sweep_base_config() {
+            self.notice = Some(format!("Failed to save config:\n{error}"));
+            return None;
+        }
+
+        let file = crate::model::sweep::to_plan_file(
+            &plan,
+            &self.config,
+            &working_dir,
+            &self.sweep_form.normalize,
+            &mosna_config::clock::now(),
+        );
+        let path = working_dir
+            .join("Niche_Analysis")
+            .join(SENSITIVITY_DIR)
+            .join(mosna_config::model::sweep_plan::PLAN_FILE);
+
+        if let Err(error) = file.write(&path) {
+            self.notice = Some(format!("Could not write the plan:\n{error}"));
+            return None;
+        }
+
+        self.log.clear();
+        if let Ok(text) = std::fs::read_to_string(&path) {
+            // The explanation, not the YAML under it: the log is for reading.
+            for line in text.lines().take_while(|line| line.starts_with('#')) {
+                let line = line.trim_start_matches('#');
+                let line = line.strip_prefix(' ').unwrap_or(line);
+                self.log.push((LogKind::Plain, line.to_string()));
+            }
+        }
+        self.viewer_tab = ViewerTab::Log;
+        self.status = format!(
+            "Plan written — run it with: {}",
+            mosna_config::model::sweep_plan::SweepPlan::command(&path)
+        );
+        Some(path)
+    }
+
     /// The configuration a sweep varies: the one the panels are showing.
     ///
     /// The Browser and the Parameters panels edit their own state and write it
@@ -1324,6 +1383,47 @@ mod tests {
         assert!(lines[0].ends_with(",niches,largest_niche,graph_components"));
         assert_eq!(lines.len(), total + 1, "one line per run, plus the header");
         assert!(lines[1].starts_with("1-1-1,done,"), "{}", lines[1]);
+    }
+
+    /// "Write the plan (log)" writes a plan the command line can run, puts its
+    /// explanation in the Log tab, and starts nothing.
+    #[test]
+    fn writing_the_plan_runs_nothing_and_explains_the_grid() {
+        let mut app = app();
+        arm(&mut app);
+
+        let path = app.write_sweep_plan().expect("the plan was not written");
+        assert!(
+            app.run.is_none() && app.sweep.is_none(),
+            "something was started"
+        );
+        assert!(path.ends_with(
+            std::path::Path::new("Niche_Analysis")
+                .join(SENSITIVITY_DIR)
+                .join(mosna_config::model::sweep_plan::PLAN_FILE)
+        ));
+
+        let plan = mosna_config::model::sweep_plan::SweepPlan::read(&path).unwrap();
+        assert_eq!(plan.runs.len(), app.sweep_form.plan().len());
+        assert_eq!(plan.results_in, SENSITIVITY_DIR);
+        assert_eq!(plan.working_dir, app.working_dir().unwrap());
+
+        assert_eq!(app.viewer_tab, ViewerTab::Log);
+        let log: Vec<&str> = app.log.iter().map(|(_, line)| line.as_str()).collect();
+        assert!(
+            log.iter()
+                .any(|line| line.contains("mosna sensitivity-analysis --log")),
+            "{log:?}"
+        );
+        assert!(
+            log.iter().all(|line| !line.starts_with("runs:")),
+            "the YAML leaked into the log"
+        );
+        assert!(
+            app.status.contains("sensitivity-analysis"),
+            "{}",
+            app.status
+        );
     }
 
     /// A grid ready to run: two cluster counts under gmm.

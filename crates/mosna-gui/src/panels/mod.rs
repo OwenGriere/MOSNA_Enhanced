@@ -312,7 +312,32 @@ pub fn accent_button(ui: &mut egui::Ui, text: &str, colour: egui::Color32) -> eg
     )
 }
 
-/// The same, at a chosen width, for the two buttons that share a row.
+/// A smaller accent button, for the operations on a finished directory.
+///
+/// The height is the minimum clickable one rather than the step height, and the
+/// caption is at the label size and not bold: they must still be easy to hit,
+/// but they should not compete with the analyses for attention.
+pub fn small_accent_button_sized(
+    ui: &mut egui::Ui,
+    text: &str,
+    colour: egui::Color32,
+    width: f32,
+) -> egui::Response {
+    let foreground = theme::text_on(colour);
+    ui.add_sized(
+        [width, theme::UTILITY_BUTTON_HEIGHT],
+        egui::Button::new(
+            egui::RichText::new(text)
+                .color(foreground)
+                .size(theme::size::LABEL),
+        )
+        .fill(colour)
+        .truncate()
+        .corner_radius(egui::CornerRadius::same(4)),
+    )
+}
+
+/// The same, at a chosen width, for the buttons that share a row.
 pub fn accent_button_sized(
     ui: &mut egui::Ui,
     text: &str,

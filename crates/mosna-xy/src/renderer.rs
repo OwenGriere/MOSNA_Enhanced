@@ -55,6 +55,45 @@ impl Run for Subprocess {
     }
 }
 
+/// Runs a real sub-process, keeping its output to itself.
+///
+/// For a terminal that shows its own progress bars: the renderer's
+/// `[QT_PROGRESS]` lines are meant for the interface, and let through they
+/// would be printed across the bars. Both streams are captured, so a failure
+/// still says why.
+#[derive(Debug, Default, Clone, Copy)]
+pub struct Captured;
+
+impl Run for Captured {
+    fn run(&self, program: &Path, arguments: &[String]) -> std::io::Result<Outcome> {
+        let output = std::process::Command::new(program)
+            .args(arguments)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .output()?;
+
+        let mut message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        if message.is_empty() {
+            message = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        }
+        Ok(Outcome {
+            success: output.status.success(),
+            message,
+        })
+    }
+}
+
+impl Renderer<Captured> {
+    /// The interpreter this machine is set up to use, run without letting its
+    /// output through.
+    pub fn detect_captured() -> Self {
+        Self::with(
+            mosna_paths::python::resolve(&mosna_paths::Environment::detect()),
+            Captured,
+        )
+    }
+}
+
 /// The renderer: an interpreter, and what to ask it for.
 pub struct Renderer<R: Run = Subprocess> {
     interpreter: PathBuf,

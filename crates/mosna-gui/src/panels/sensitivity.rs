@@ -530,6 +530,42 @@ fn summary(app: &mut MosnaApp, ui: &mut egui::Ui) {
             }
         }
     });
+
+    // Under Start, and smaller: it starts nothing. It writes what Start would
+    // do — every run, what each recomputes, where the results go — into a file
+    // that is also what `mosna sensitivity-analysis --log` runs.
+    if !running {
+        ui.add_space(4.0);
+        let ready = app.sweep_form.is_runnable() && app.working_dir().is_some();
+        if ui
+            .add_enabled(
+                ready,
+                egui::Button::new(
+                    egui::RichText::new("Write the plan (log)").size(theme::size::LABEL),
+                )
+                .min_size(egui::vec2(
+                    ui.available_width(),
+                    theme::UTILITY_BUTTON_HEIGHT,
+                )),
+            )
+            .on_hover_text(format!(
+                "Explain everything this sensitivity analysis will do, run by run, \
+                 without running it.\nWritten to Niche_Analysis/{}/{}, and shown in \
+                 the Log tab.\nThe same file runs the analysis from a terminal:\n    \
+                 mosna sensitivity-analysis --log <file>",
+                crate::app::SENSITIVITY_DIR,
+                mosna_config::model::sweep_plan::PLAN_FILE,
+            ))
+            .on_disabled_hover_text(if app.working_dir().is_none() {
+                "Choose a working directory first"
+            } else {
+                "Choose a clusterer and at least one parameter to vary"
+            })
+            .clicked()
+        {
+            app.write_sweep_plan();
+        }
+    }
 }
 
 /// How far the sweep has got, across the whole window.

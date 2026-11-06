@@ -34,13 +34,13 @@ impl Step {
     /// The action bar, row by row.
     ///
     /// An analysis takes the full width: it is the thing the user came to do,
-    /// and its caption is long. The report has a row of its own: it is read
-    /// last, once the figures exist. Drawing the figures set aside and clearing
-    /// share the last row because they are the same kind of act — neither
-    /// computes anything, both operate on a directory that is already full —
-    /// and because putting the destructive one beside a harmless one, rather
-    /// than alone under buttons that all start work, is what stops it being
-    /// pressed by reflex.
+    /// and its caption is long. The three operations on a directory that is
+    /// already full — describe it, draw the figures its runs set aside, take
+    /// the intermediates back out of it — share the last row, drawn smaller
+    /// (see [`Step::is_utility`]): none of them computes anything, and they
+    /// should not look like the analyses. The destructive one sits beside two
+    /// harmless ones rather than alone under buttons that all start work, which
+    /// is what stops it being pressed by reflex.
     ///
     /// Written here rather than in the panel so the arrangement can be stated
     /// as a test instead of discovered by looking.
@@ -49,9 +49,21 @@ impl Step {
             vec![Step::Tysserand],
             vec![Step::Assortativity],
             vec![Step::NicheAnalysis],
-            vec![Step::GenerateReport],
-            vec![Step::PlotFigures, Step::ClearTemporary],
+            vec![
+                Step::GenerateReport,
+                Step::PlotFigures,
+                Step::ClearTemporary,
+            ],
         ]
+    }
+
+    /// Whether the button is one of the operations on a finished directory,
+    /// drawn smaller than the analyses and the sensitivity analysis.
+    pub fn is_utility(self) -> bool {
+        matches!(
+            self,
+            Step::GenerateReport | Step::PlotFigures | Step::ClearTemporary
+        )
     }
 
     /// The button's caption.
@@ -76,14 +88,16 @@ impl Step {
             Step::Assortativity => "Measure which cell types sit next to which.",
             Step::NicheAnalysis => "Group neighbourhoods into spatial niches.",
             Step::GenerateReport => {
-                "Collect every figure in the working directory into report.html,                  next to the results."
+                "Collect every figure in the working directory into report.html, \
+                 next to the results."
             }
             Step::PlotFigures => {
                 "Draw every figure the analyses run \"without plotting figures\" set \
                  aside, from the start. Nothing is computed again."
             }
             Step::ClearTemporary => {
-                "Delete the temp folder and the intermediate networks in it.                  The figures and the tables are kept."
+                "Delete the temp folder and the intermediate networks in it. \
+                 The figures and the tables are kept."
             }
         }
     }
@@ -284,22 +298,36 @@ mod tests {
         assert_eq!(arguments, vec!["generate-report", "--working_dir", "/work"]);
     }
 
-    /// The action bar: the three analyses each on their own line, the report
-    /// on its own, and drawing the figures set aside beside the clear.
+    /// The action bar: the three analyses each on their own line, then the
+    /// three operations on a finished directory together, drawn smaller.
     #[test]
-    fn the_last_row_holds_the_two_operations_on_a_finished_directory() {
+    fn the_last_row_holds_the_three_operations_on_a_finished_directory() {
         let rows = Step::rows();
 
-        assert_eq!(rows.len(), 5, "the bar is not five rows: {rows:?}");
-        for row in &rows[..4] {
-            assert_eq!(row.len(), 1, "an analysis or the report shares its row");
+        assert_eq!(rows.len(), 4, "the bar is not four rows: {rows:?}");
+        for row in &rows[..3] {
+            assert_eq!(row.len(), 1, "an analysis shares its row");
+            assert!(!row[0].is_utility(), "{:?} is drawn small", row[0]);
         }
-        assert_eq!(rows[3], vec![Step::GenerateReport]);
         assert_eq!(
-            rows[4],
-            vec![Step::PlotFigures, Step::ClearTemporary],
-            "plotting is not on the left of the clear"
+            rows[3],
+            vec![
+                Step::GenerateReport,
+                Step::PlotFigures,
+                Step::ClearTemporary
+            ],
+            "the clear is not last, beside the two harmless operations"
         );
+        assert!(rows[3].iter().all(|step| step.is_utility()));
+    }
+
+    /// No hint carries the run of spaces a string continued without its
+    /// backslash leaves behind.
+    #[test]
+    fn the_hints_read_as_sentences() {
+        for step in Step::all() {
+            assert!(!step.hint().contains("  "), "{step:?}: {:?}", step.hint());
+        }
     }
 
     /// Drawing what was set aside acts on a directory, like the report.

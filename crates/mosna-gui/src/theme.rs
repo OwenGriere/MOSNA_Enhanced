@@ -71,6 +71,9 @@ pub const LOG_PLAIN: Color32 = TEXT_MUTED;
 pub const STEP_TYSSERAND: Color32 = Color32::from_rgb(0x6B, 0x52, 0x0C);
 pub const STEP_ASSORTATIVITY: Color32 = Color32::from_rgb(0xA8, 0x86, 0x2A);
 pub const STEP_NICHES: Color32 = Color32::from_rgb(0xDC, 0xC2, 0x72);
+/// The sensitivity analysis: the niche step's colour, a shade deeper, because it
+/// is a grid of that step and sits right under it.
+pub const STEP_SENSITIVITY: Color32 = Color32::from_rgb(0xC7, 0xA5, 0x4A);
 pub const STEP_CLEAR: Color32 = Color32::from_rgb(0x4E, 0x55, 0x5C);
 /// The report button, beside the clear.
 ///
@@ -153,6 +156,10 @@ pub const ITEM_SPACING: Vec2 = Vec2::new(9.0, 7.0);
 /// Taller than an ordinary control: these are the four things the interface
 /// exists to do, and they should look like it.
 pub const STEP_BUTTON_HEIGHT: f32 = 42.0;
+/// Height of the three operations on a finished directory — report, figures,
+/// clear — and the smallest a button may be: they are drawn below the analyses
+/// and should read as secondary to them.
+pub const UTILITY_BUTTON_HEIGHT: f32 = MIN_INTERACT_HEIGHT;
 
 /// Margin inside a panel, between its edge and its contents.
 ///
@@ -405,6 +412,7 @@ mod tests {
             STEP_TYSSERAND,
             STEP_ASSORTATIVITY,
             STEP_NICHES,
+            STEP_SENSITIVITY,
             STEP_REPORT,
             STEP_FIGURES,
             STEP_CLEAR,

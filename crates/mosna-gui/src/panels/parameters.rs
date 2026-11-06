@@ -428,12 +428,11 @@ fn actions(app: &mut MosnaApp, ui: &mut egui::Ui) {
         // outside the disabled scope above, because it starts no work: it opens
         // a screen, and a user who stepped back to look at a figure has to be
         // able to return to the sweep they left running.
+        //
+        // As tall as a step: it is an analysis in its own right — a whole grid
+        // of step 3 — not one of the small operations on a finished directory.
         if row.as_slice() == [Step::NicheAnalysis]
-            && ui
-                .add_sized(
-                    [ui.available_width(), 0.0],
-                    egui::Button::new("Sensitivity analysis…"),
-                )
+            && accent_button(ui, "Sensitivity analysis…", theme::STEP_SENSITIVITY)
                 .on_hover_text(
                     "Run step 3 over a grid of parameters and compare what each \
                      combination finds.\nEvery point of the grid is an ordinary \
@@ -454,9 +453,16 @@ fn actions(app: &mut MosnaApp, ui: &mut egui::Ui) {
 /// cannot say that one of them deletes a directory, and the tooltip can.
 fn step_button(ui: &mut egui::Ui, step: Step, width: Option<f32>) -> egui::Response {
     let colour = theme::step_colour(step);
-    let response = match width {
-        Some(width) => crate::panels::accent_button_sized(ui, step.label(), colour, width),
-        None => accent_button(ui, step.label(), colour),
+    let response = if step.is_utility() {
+        // Smaller than the analyses: these compute nothing.
+        let width =
+            width.unwrap_or_else(|| crate::panels::layout::content_width(ui.available_width()));
+        crate::panels::small_accent_button_sized(ui, step.label(), colour, width)
+    } else {
+        match width {
+            Some(width) => crate::panels::accent_button_sized(ui, step.label(), colour, width),
+            None => accent_button(ui, step.label(), colour),
+        }
     };
     response.on_hover_text(format!(
         "{}\n\nAdded to the queue if another analysis is running.",

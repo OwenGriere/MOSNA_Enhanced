@@ -1665,9 +1665,128 @@ pub fn available_clusterers() -> &'static [&'static str] {
     IMPLEMENTED_CLUSTERERS
 }
 
+/// The plan file a grid becomes: what a sensitivity analysis will do, written
+/// out for a person to check and for `mosna sensitivity-analysis --log` to run.
+///
+/// Built from exactly what [`App::start_sweep`](crate::app::MosnaApp::start_sweep)
+/// would run — the same combinations in the same order, the same sub-section,
+/// the same normalisation, PNG figures only, the same results directory — so
+/// running the plan from a terminal and pressing Start do the same thing.
+pub fn to_plan_file(
+    plan: &Plan,
+    config: &RawConfig,
+    working_dir: &std::path::Path,
+    normalize: &str,
+    created: &str,
+) -> mosna_config::model::sweep_plan::SweepPlan {
+    use mosna_config::model::sweep_plan::{PlannedRun, SweepPlan};
+    SweepPlan {
+        created: created.to_string(),
+        working_dir: working_dir.to_path_buf(),
+        results_in: crate::app::SENSITIVITY_DIR.to_string(),
+        sub_section: swept_subsection(config).to_string(),
+        normalize: Some(normalize.to_string()),
+        figure_formats: vec!["png".to_string()],
+        columns: plan.columns(),
+        requested: plan.requested,
+        runs: plan
+            .combinations
+            .iter()
+            .map(|combination| PlannedRun {
+                settings: combination
+                    .settings
+                    .iter()
+                    .map(|(key, point)| (key.clone(), point.to_yaml()))
+                    .collect(),
+            })
+            .collect(),
+        base: config.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The plan file and the interface agree on which stage each key belongs
+    /// to: the cost the plan announces is the cost the grid's order pays.
+    #[test]
+    fn the_plan_file_and_the_grid_agree_on_the_stages() {
+        for stage in Stage::all() {
+            for (key, _) in sweepable(stage) {
+                let rank = mosna_config::model::sweep_plan::stage_rank(key);
+                assert_eq!(
+                    rank,
+                    stage_of(key) as u8,
+                    "`{key}` is in {:?} here and at rank {rank} in the plan",
+                    stage_of(key)
+                );
+            }
+        }
+        assert_eq!(
+            mosna_config::model::sweep_plan::stage_rank("clusterer_type"),
+            2
+        );
+    }
+
+    /// The plan file holds the runs Start would launch, in the same order, and
+    /// its own count of what each recomputes matches the screen's.
+    #[test]
+    fn the_plan_file_holds_the_runs_start_would_launch() {
+        let config = RawConfig::from_yaml_str(
+            "Niche Analysis:\n  Processing method: Per sample\n  Per sample:\n    order: '1'\n",
+        )
+        .unwrap();
+        let shared = vec![Axis {
+            key: "n_neighbors".to_string(),
+            stage: Stage::Reduction,
+            values: Values::Integers {
+                chosen: vec![10, 30],
+            },
+        }];
+        let mut leiden = ClustererSweep::new("leiden");
+        leiden.axes = vec![Axis {
+            key: "resolution".to_string(),
+            stage: Stage::Clustering,
+            values: Values::Interval {
+                from: 0.01,
+                to: 0.1,
+                count: 2,
+                scale: Scale::Linear,
+                integer: false,
+            },
+        }];
+        let plan = plan(&shared, &[leiden]);
+
+        let file = to_plan_file(
+            &plan,
+            &config,
+            std::path::Path::new("/work"),
+            "total",
+            "now",
+        );
+        assert_eq!(file.runs.len(), plan.len());
+        assert_eq!(file.sub_section, PER_SAMPLE);
+        for (run, combination) in file.runs.iter().zip(&plan.combinations) {
+            let keys: Vec<&str> = run.settings.iter().map(|(k, _)| k.as_str()).collect();
+            let expected: Vec<&str> = combination
+                .settings
+                .iter()
+                .map(|(k, _)| k.as_str())
+                .collect();
+            assert_eq!(keys, expected);
+        }
+        let (aggregations, projections, _) = file.costs();
+        assert_eq!(aggregations, plan.aggregations());
+        assert_eq!(projections, plan.reductions());
+
+        // And what Start would write for a run is what the plan writes.
+        let combination = &plan.combinations[1];
+        assert_eq!(
+            file.configuration(1),
+            apply_with(&config, combination, PER_SAMPLE, Some("total"))
+        );
+    }
 
     fn interval(key: &str, from: f64, to: f64, count: usize, scale: Scale, integer: bool) -> Axis {
         Axis {

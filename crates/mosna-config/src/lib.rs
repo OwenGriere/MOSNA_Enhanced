@@ -15,6 +15,7 @@
 //!   [`NicheAnalysisConfig`]) are extracted from the raw tree by the pipelines,
 //!   which need strongly-typed access.
 
+pub mod clock;
 pub mod error;
 pub mod io;
 pub mod model;

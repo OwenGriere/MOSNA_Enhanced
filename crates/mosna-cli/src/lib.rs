@@ -33,6 +33,8 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+pub mod sensitivity;
+
 use mosna_pipeline::{
     assortativity, clear_temporary, compare_sweep, generate_report, niche_analysis_in,
     tysserand_network, StdoutProgress,
@@ -171,6 +173,29 @@ pub enum Command {
         figure_formats: String,
     },
 
+    /// Run a sensitivity analysis from the plan the interface wrote.
+    ///
+    /// The plan — `sensitivity_plan.log`, written by "Write the plan (log)" on
+    /// the sensitivity screen — says what will be done and holds everything
+    /// needed to do it: the runs, in order, and the configuration they all
+    /// start from. Each run is an ordinary niche analysis into the same results
+    /// directory as the interface's Start button, followed by the comparison
+    /// table and figures. Progress is shown as two bars: the grid, and the run
+    /// in progress.
+    #[command(name = "sensitivity-analysis")]
+    SensitivityAnalysis {
+        /// The plan file to run.
+        #[arg(long = "log")]
+        log: PathBuf,
+        /// Run in this working directory instead of the one the plan names —
+        /// for a plan written on one machine and run on another.
+        #[arg(long = "working_dir")]
+        working_dir: Option<PathBuf>,
+        /// Print what the plan will do, and stop.
+        #[arg(long = "plan-only")]
+        plan_only: bool,
+    },
+
     /// Draw every figure set aside by a run started with `--no-figures`.
     ///
     /// Computes nothing: it reads the descriptions those runs left in the
@@ -209,6 +234,7 @@ impl Command {
             Command::Assortativity { .. } => "assortativity",
             Command::NicheAnalysis { .. } => "niche-analysis",
             Command::CompareSweep { .. } => "compare-sweep",
+            Command::SensitivityAnalysis { .. } => "sensitivity-analysis",
             Command::RenderFigures { .. } => "render-figures",
             Command::ClearTemporary { .. } => "clear-temporary",
             Command::GenerateReport { .. } => "generate-report",
@@ -235,7 +261,10 @@ impl Command {
             | Command::NicheAnalysis { figure_formats, .. }
             | Command::CompareSweep { figure_formats, .. }
             | Command::RenderFigures { figure_formats, .. } => figure_formats.as_str(),
-            Command::ClearTemporary { .. } | Command::GenerateReport { .. } => "",
+            // The plan carries its own formats.
+            Command::ClearTemporary { .. }
+            | Command::GenerateReport { .. }
+            | Command::SensitivityAnalysis { .. } => "",
         };
         spelled
             .split(',')
@@ -346,6 +375,13 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
             let renderer = mosna_xy::renderer::Renderer::detect().formats(&borrowed);
             mosna_xy::render_deferred(working_dir, &renderer)?;
         }
+        Command::SensitivityAnalysis {
+            ref log,
+            ref working_dir,
+            plan_only,
+        } => {
+            sensitivity::run_plan(log, working_dir.as_deref(), plan_only)?;
+        }
         Command::ClearTemporary { ref working_dir } => {
             clear_temporary(working_dir, &progress)?;
         }
@@ -403,6 +439,25 @@ mod tests {
             "/w"
         ])
         .is_err());
+    }
+
+    /// The sensitivity analysis is started from its plan alone: the plan holds
+    /// the configuration, and names the working directory.
+    #[test]
+    fn the_sensitivity_analysis_needs_only_its_plan() {
+        let cli = Cli::parse_from(["mosna", "sensitivity-analysis", "--log", "plan.log"]).unwrap();
+        assert_eq!(cli.command.name(), "sensitivity-analysis");
+        assert!(Cli::parse_from([
+            "mosna",
+            "sensitivity-analysis",
+            "--log",
+            "plan.log",
+            "--working_dir",
+            "/w",
+            "--plan-only"
+        ])
+        .is_ok());
+        assert!(Cli::parse_from(["mosna", "sensitivity-analysis"]).is_err());
     }
 
     #[test]
