@@ -2590,6 +2590,7 @@ dependencies = [
  "egui",
  "egui_extras",
  "image",
+ "mosna-cli",
  "mosna-config",
  "mosna-core",
  "mosna-io",

@@ -121,6 +121,18 @@ fn row(ui: &mut egui::Ui, position: usize, job: &Job) -> bool {
                             .italics(),
                     );
                 }
+                if job
+                    .arguments
+                    .iter()
+                    .any(|argument| argument == "--benchmark")
+                {
+                    ui.label(
+                        egui::RichText::new("benchmark")
+                            .color(theme::TEXT_MUTED)
+                            .size(theme::size::SMALL)
+                            .italics(),
+                    );
+                }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(
                         egui::RichText::new(state_caption(job))
