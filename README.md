@@ -249,6 +249,17 @@ reading or writing files, nor drawing figures — which is what a benchmark
 compares. The interface shows the same numbers under each analysis in its
 Queue tab.
 
+Add `--benchmark` to any command to also get those times as a CSV in
+`<working_dir>/benchmark/<command>_<date>.csv`: one row per patient/sample
+(one per network), one column per stage in seconds, plus each sample's total
+with its I/O. A last `cohort` row holds the stages run once over the whole
+cohort and the whole command's wall-clock time; an empty cell is a stage not
+computed for that row (read from the cache, for instance).
+
+`--working_dir` only receives results. `Nodes directory` and a custom
+`Network directory` are read where the configuration says; a relative one is
+taken relative to the configuration file, not to the working directory.
+
 ```text
 Compute time — the algorithms alone, without checking, reading or writing files, nor drawing figures; summed over the samples where they run in parallel:
   Delaunay triangulation               0.029 s

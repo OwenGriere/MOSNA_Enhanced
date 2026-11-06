@@ -68,7 +68,10 @@ fn workspace() -> (tempfile::TempDir, PathBuf, RawConfig) {
         .unwrap();
     }
 
-    let config = RawConfig::from_yaml_str(include_str!("sweep_e2e_config.yaml")).unwrap();
+    let mut config = RawConfig::from_yaml_str(include_str!("sweep_e2e_config.yaml")).unwrap();
+    // `Nodes directory: raw` is read beside the configuration, as the command
+    // line reads it — never under the working directory.
+    config.resolve_input_paths(&root);
     (dir, root, config)
 }
 

@@ -33,6 +33,7 @@ use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
 
+pub mod benchmark;
 pub mod sensitivity;
 pub mod timings;
 
@@ -48,6 +49,17 @@ use mosna_xy::Figures;
 pub struct Cli {
     #[command(subcommand)]
     pub command: Command,
+
+    /// Also write the execution time as a CSV, in `<working_dir>/benchmark/`.
+    ///
+    /// One row per patient/sample — per network — and one column per
+    /// important stage, in seconds: the algorithms alone, plus each sample from
+    /// start to finish with its I/O. A last `cohort` row holds the stages run
+    /// once over the whole cohort and the whole command's time. An empty cell
+    /// is a stage not computed for that row, read from the cache for instance.
+    /// Accepted by every command, before or after its name.
+    #[arg(long = "benchmark", global = true)]
+    pub benchmark: bool,
 }
 
 impl Cli {
@@ -242,6 +254,20 @@ impl Command {
         }
     }
 
+    /// The working directory the command was given, if it was.
+    pub fn working_dir(&self) -> Option<&std::path::Path> {
+        match self {
+            Command::TysserandNetwork { working_dir, .. }
+            | Command::Assortativity { working_dir, .. }
+            | Command::NicheAnalysis { working_dir, .. }
+            | Command::CompareSweep { working_dir, .. }
+            | Command::RenderFigures { working_dir, .. }
+            | Command::ClearTemporary { working_dir }
+            | Command::GenerateReport { working_dir } => Some(working_dir),
+            Command::SensitivityAnalysis { working_dir, .. } => working_dir.as_deref(),
+        }
+    }
+
     /// Whether the figures are to be set aside rather than drawn.
     pub fn no_figures(&self) -> bool {
         match self {
@@ -276,6 +302,22 @@ impl Command {
     }
 }
 
+/// Read a configuration file, with its input directories made absolute.
+///
+/// `--working_dir` is where results go and nothing else: the nodes and the
+/// network directories are read where the configuration says, as in the
+/// interface. A relative one is taken relative to the configuration file
+/// itself — not to the working directory, which merged the two, and not to
+/// the shell's current directory, which would make the same command read
+/// different data depending on where it was typed.
+pub fn load_config(file: &std::path::Path) -> anyhow::Result<mosna_config::RawConfig> {
+    let mut config = mosna_config::get_config(file)?;
+    let file = std::path::absolute(file)?;
+    let base = file.parent().unwrap_or(std::path::Path::new("/"));
+    config.resolve_input_paths(base);
+    Ok(config)
+}
+
 /// Execute a parsed command.
 ///
 /// Progress goes to stdout in the `[QT_INFO]` / `[QT_PROGRESS]` form the
@@ -292,7 +334,15 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
     // The same lines on stdout as ever, for the interface; the computing time
     // of each stage is also kept, and given back as a table at the end.
     let timings = timings::Timings::new();
-    let progress = timings::TimedProgress { timings: &timings };
+    let benchmark = cli.benchmark.then(benchmark::Benchmark::new);
+    let progress = timings::TimedProgress {
+        timings: &timings,
+        benchmark: benchmark.as_ref(),
+    };
+    let started = std::time::Instant::now();
+    // The directory the results went to: the sensitivity analysis may only
+    // know it once it has read its plan.
+    let mut results_dir = cli.command.working_dir().map(std::path::Path::to_path_buf);
     let formats = cli.command.figure_formats();
     let no_figures = cli.command.no_figures();
     // Drawn now, or set aside for `render-figures`.
@@ -317,7 +367,7 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
             ref working_dir,
             ..
         } => {
-            let config = mosna_config::get_config(file)?;
+            let config = load_config(file)?;
             let figures = sink(working_dir);
             tysserand_network(&config, working_dir, &progress, &figures)?;
             finish(&figures)?;
@@ -327,7 +377,7 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
             ref working_dir,
             ..
         } => {
-            let config = mosna_config::get_config(file)?;
+            let config = load_config(file)?;
             let figures = sink(working_dir);
             assortativity(&config, working_dir, &progress, &figures)?;
             finish(&figures)?;
@@ -338,7 +388,7 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
             ref results_in,
             ..
         } => {
-            let config = mosna_config::get_config(file)?;
+            let config = load_config(file)?;
             let figures = sink(working_dir);
             niche_analysis_in(
                 &config,
@@ -358,7 +408,7 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
             // Through the typed view rather than by reading the YAML here: the
             // two columns mean what `NicheAnalysisConfig` says they mean, and a
             // second reading of the same keys is a second thing to keep in step.
-            let config = mosna_config::get_config(file)?;
+            let config = load_config(file)?;
             let settings = mosna_config::NicheAnalysisConfig::from_raw(&config)?;
 
             let figures = sink(working_dir);
@@ -384,7 +434,8 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
             ref working_dir,
             plan_only,
         } => {
-            sensitivity::run_plan(log, working_dir.as_deref(), plan_only)?;
+            results_dir =
+                sensitivity::run_plan(log, working_dir.as_deref(), plan_only, benchmark.as_ref())?;
         }
         Command::ClearTemporary { ref working_dir } => {
             clear_temporary(working_dir, &progress)?;
@@ -399,6 +450,12 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
     if let Some(summary) = timings.summary() {
         println!();
         print!("{summary}");
+    }
+    if let (Some(benchmark), Some(directory)) = (&benchmark, &results_dir) {
+        benchmark.command_total(started.elapsed().as_secs_f64());
+        if let Some(path) = benchmark.write(directory, cli.command.name())? {
+            println!("Benchmark written to {}", path.display());
+        }
     }
     Ok(())
 }
@@ -477,6 +534,38 @@ mod tests {
         // existing script or launcher passes that.
         assert!(Cli::parse_from(["mosna", "clear-temporary", "--working_dir", "/w"]).is_ok());
         assert!(Cli::parse_from(["mosna", "clear-temporary", "--working-dir", "/w"]).is_err());
+    }
+
+    /// `--benchmark` is accepted by every command, after its name or before.
+    #[test]
+    fn every_command_takes_the_benchmark_flag() {
+        for name in [
+            "tysserand-network",
+            "assortativity",
+            "niche-analysis",
+            "compare-sweep",
+            "clear-temporary",
+            "generate-report",
+            "render-figures",
+        ] {
+            let mut argv: Vec<&str> = if WITHOUT_CONFIG.contains(&name) {
+                vec!["mosna", name, "--working_dir", "/w"]
+            } else {
+                vec!["mosna", name, "--file", "c.yaml", "--working_dir", "/w"]
+            };
+            assert!(!Cli::parse_from(argv.clone()).unwrap().benchmark);
+            argv.push("--benchmark");
+            assert!(Cli::parse_from(argv).unwrap().benchmark, "`{name}`");
+        }
+        let before = Cli::parse_from([
+            "mosna",
+            "--benchmark",
+            "sensitivity-analysis",
+            "--log",
+            "plan.yaml",
+        ])
+        .unwrap();
+        assert!(before.benchmark);
     }
 
     #[test]

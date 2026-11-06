@@ -33,7 +33,7 @@ use crate::niche_cohort;
 use crate::niche_lock::RegisterLock;
 use crate::niche_record::{self, Outcome, PerSampleRecord, Record, Rendering};
 use crate::niche_runs::{Catalogue, PerSampleRun, RunNumbers, Status};
-use crate::progress::Progress;
+use crate::progress::{Progress, Subject};
 
 /// How the two processing methods are spelled in the run register.
 const MODE_AGGREGATED: &str = "aggregated";
@@ -694,12 +694,27 @@ fn run_aggregated(
     )?;
     stages.end(progress);
 
-    let input = cached_reduce(&var_aggreg, params, caches, stems, progress)?;
+    // Both run once over the pooled cohort: their times belong to no sample.
+    let input = cached_reduce(
+        &var_aggreg,
+        params,
+        caches,
+        stems,
+        Subject::Cohort,
+        progress,
+    )?;
     if stems.reduces {
         stages.end(progress);
     }
-    let (labels, components) =
-        cached_cluster(&input, var_aggreg.n_rows, params, caches, stems, progress)?;
+    let (labels, components) = cached_cluster(
+        &input,
+        var_aggreg.n_rows,
+        params,
+        caches,
+        stems,
+        Subject::Cohort,
+        progress,
+    )?;
     stages.end(progress);
 
     draw_clusters(&input, &labels, save_dir, progress, figures)?;
@@ -975,6 +990,7 @@ fn run_every_sample(
             Some(&sample),
         )?;
         let save_dir = run_dir.join(&sample);
+        let started = std::time::Instant::now();
         let outcome = run_one_sample(
             settings,
             config,
@@ -995,6 +1011,11 @@ fn run_every_sample(
         // `finish` records the sample's own outcome and propagates a failure,
         // so anything past this point is a sample that completed.
         finish(register_root, &save_dir, sample_stems, outcome)?;
+        progress.sample_timing(
+            Subject::Sample(id),
+            crate::stage::SAMPLE_TOTAL,
+            Some(started.elapsed().as_secs_f64()),
+        );
         done.push(sample.clone());
         {
             let _guard = RegisterLock::acquire(register_root)?;
@@ -1076,13 +1097,21 @@ fn run_one_sample(
             expected_rows,
             progress,
         )?;
-        let input = cached_reduce(&var_aggreg, params, caches, sample_stems, progress)?;
+        let input = cached_reduce(
+            &var_aggreg,
+            params,
+            caches,
+            sample_stems,
+            Subject::Sample(id),
+            progress,
+        )?;
         let (labels, components) = cached_cluster(
             &input,
             var_aggreg.n_rows,
             params,
             caches,
             sample_stems,
+            Subject::Sample(id),
             progress,
         )?;
 
@@ -1201,6 +1230,9 @@ fn load_or_compute_features(
         if cached.n_columns() == expected_columns && cached.n_rows == expected_rows {
             progress.info("[INFO] Reusing the cached aggregated features");
             progress.timing(crate::stage::AGGREGATION, None);
+            for id in data_index {
+                progress.sample_timing(Subject::Sample(id), crate::stage::AGGREGATION, None);
+            }
             return Ok(cached);
         }
         progress.info("[INFO] Cached features do not match the cohort, recomputing");
@@ -1219,6 +1251,7 @@ fn load_or_compute_features(
         &clock,
     )?;
     progress.timing(crate::stage::AGGREGATION, Some(clock.seconds()));
+    crate::progress::report_samples(progress, crate::stage::AGGREGATION, &clock);
     let table = var_aggreg.to_table(&settings.patient_column, sample_column)?;
     niche_cache::write_table(&cache, &stems.features_source, &table)?;
     Ok(var_aggreg)
@@ -1235,6 +1268,7 @@ fn cached_reduce(
     params: &NicheParams,
     caches: &Caches,
     stems: &Stems,
+    subject: Subject<'_>,
     progress: &dyn Progress,
 ) -> Result<ClusterInput> {
     let n_rows = var_aggreg.n_rows;
@@ -1250,6 +1284,7 @@ fn cached_reduce(
         Some((values, width)) => {
             progress.info("[INFO] Reusing the cached projection");
             progress.timing(crate::stage::REDUCTION, None);
+            progress.sample_timing(subject, crate::stage::REDUCTION, None);
             Ok(ClusterInput {
                 values,
                 width,
@@ -1265,7 +1300,9 @@ fn cached_reduce(
             // Without a reducer there is nothing to time: the features go to
             // the clusterer as they are.
             if stems.reduces {
-                progress.timing(crate::stage::REDUCTION, Some(start.elapsed().as_secs_f64()));
+                let seconds = start.elapsed().as_secs_f64();
+                progress.timing(crate::stage::REDUCTION, Some(seconds));
+                progress.sample_timing(subject, crate::stage::REDUCTION, Some(seconds));
             }
             if stems.reduces {
                 niche_cache::write_matrix(
@@ -1287,6 +1324,7 @@ fn cached_cluster(
     params: &NicheParams,
     caches: &Caches,
     stems: &Stems,
+    subject: Subject<'_>,
     progress: &dyn Progress,
 ) -> Result<(Vec<u32>, Option<usize>)> {
     let clustering_path = caches.clustering_path(&stems.numbers);
@@ -1296,6 +1334,7 @@ fn cached_cluster(
         Some(labels) => {
             progress.info("[INFO] Reusing the cached partition");
             progress.timing(crate::stage::CLUSTERING, None);
+            progress.sample_timing(subject, crate::stage::CLUSTERING, None);
             // The graph's shape travels with the partition, so a run reading it
             // back reports the same floor as the run that computed it.
             Ok((labels, niche_cache::recorded_components(&clustering_path)))
@@ -1304,10 +1343,9 @@ fn cached_cluster(
             progress.info("[PROCESS] Clustering of Spatial Niches");
             let start = std::time::Instant::now();
             let (labels, components) = cluster(input, n_rows, params, progress)?;
-            progress.timing(
-                crate::stage::CLUSTERING,
-                Some(start.elapsed().as_secs_f64()),
-            );
+            let seconds = start.elapsed().as_secs_f64();
+            progress.timing(crate::stage::CLUSTERING, Some(seconds));
+            progress.sample_timing(subject, crate::stage::CLUSTERING, Some(seconds));
             niche_cache::write_labels_with_components(
                 &clustering_path,
                 source,

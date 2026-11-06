@@ -69,17 +69,20 @@ impl Outcome {
 
 /// Feeds a run's progress reports to the lower bar, and keeps the name of the
 /// run directory the analysis claims.
-struct RunBar {
+struct RunBar<'a> {
     bar: ProgressBar,
+    /// Where the per-sample times go, under `--benchmark`.
+    benchmark: Option<&'a crate::benchmark::Benchmark>,
     run: Mutex<Option<String>>,
     /// The computing time of each stage, as the run reported it.
     timings: Mutex<Vec<(String, Option<f64>)>>,
 }
 
-impl RunBar {
-    fn new(bar: &ProgressBar) -> Self {
+impl<'a> RunBar<'a> {
+    fn new(bar: &ProgressBar, benchmark: Option<&'a crate::benchmark::Benchmark>) -> Self {
         Self {
             bar: bar.clone(),
+            benchmark,
             run: Mutex::new(None),
             timings: Mutex::new(Vec::new()),
         }
@@ -101,7 +104,7 @@ impl RunBar {
     }
 }
 
-impl Progress for RunBar {
+impl Progress for RunBar<'_> {
     fn info(&self, message: &str) {
         self.bar.set_message(clean(message));
     }
@@ -115,6 +118,20 @@ impl Progress for RunBar {
     fn run_directory(&self, name: &str) {
         if let Ok(mut run) = self.run.lock() {
             *run = Some(name.to_string());
+        }
+        if let Some(benchmark) = self.benchmark {
+            benchmark.run_directory(name);
+        }
+    }
+
+    fn sample_timing(
+        &self,
+        subject: mosna_pipeline::Subject<'_>,
+        stage: &str,
+        seconds: Option<f64>,
+    ) {
+        if let Some(benchmark) = self.benchmark {
+            benchmark.record(subject, stage, seconds);
         }
     }
 
@@ -236,15 +253,29 @@ fn style(template: &str) -> ProgressStyle {
 ///
 /// `working_dir` replaces the one the plan names — for a plan written on one
 /// machine and run on another. `plan_only` prints what would be done and stops.
-pub fn run_plan(log: &Path, working_dir: Option<&Path>, plan_only: bool) -> anyhow::Result<()> {
+/// `benchmark` collects each run's per-sample times.
+///
+/// Gives back the working directory the runs wrote into, `None` for a plan
+/// only printed.
+pub fn run_plan(
+    log: &Path,
+    working_dir: Option<&Path>,
+    plan_only: bool,
+    benchmark: Option<&crate::benchmark::Benchmark>,
+) -> anyhow::Result<Option<PathBuf>> {
     let text = std::fs::read_to_string(log)
         .with_context(|| format!("cannot read the plan {}", log.display()))?;
     let plan = SweepPlan::parse(&text)?;
 
     if plan_only {
         println!("{}", explanation(&text));
-        return Ok(());
+        return Ok(None);
     }
+
+    let plan_dir = std::path::absolute(log)?
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_default();
 
     let working_dir: PathBuf = working_dir
         .map(Path::to_path_buf)
@@ -305,8 +336,11 @@ pub fn run_plan(log: &Path, working_dir: Option<&Path>, plan_only: bool) -> anyh
         current.set_length(1);
         current.set_message("starting");
 
-        let reporter = RunBar::new(&current);
-        let config = plan.configuration(index);
+        let reporter = RunBar::new(&current, benchmark);
+        let mut config = plan.configuration(index);
+        // The input directories are read where the plan says, relative to
+        // the plan itself; the working directory only receives the results.
+        config.resolve_input_paths(&plan_dir);
         let figures =
             Figures::with_renderer(&working_dir, Renderer::detect_captured().formats(&formats));
         let result = niche_analysis_in(
@@ -379,7 +413,7 @@ pub fn run_plan(log: &Path, working_dir: Option<&Path>, plan_only: bool) -> anyh
         grid.set_message("comparing the runs");
         current.reset();
         current.set_message("comparing the runs");
-        let reporter = RunBar::new(&current);
+        let reporter = RunBar::new(&current, None);
         let settings = mosna_config::NicheAnalysisConfig::from_raw(&plan.base)?;
         // Interactive copies too, as the interface asks for: the three
         // comparison figures are the answer the sweep was run for.
@@ -427,7 +461,7 @@ pub fn run_plan(log: &Path, working_dir: Option<&Path>, plan_only: bool) -> anyh
             .unwrap_or_default();
         bail!("{failed} of {total} run(s) failed; the first: {first}");
     }
-    Ok(())
+    Ok(Some(working_dir))
 }
 
 #[cfg(test)]

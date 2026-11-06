@@ -16,7 +16,7 @@ use mosna_io::{find_sample, find_sample_from_file, Table};
 
 use crate::error::{create_dir_all, PipelineError, Result};
 use crate::figures::FigureSink;
-use crate::progress::Progress;
+use crate::progress::{report_samples, Progress};
 use crate::verif_cpu::verif_cpu;
 
 /// Reconstruct a spatial network for every sample.
@@ -41,9 +41,11 @@ pub fn tysserand_network(
     create_dir_all(&temp_folder)?;
     create_dir_all(&saving_folder)?;
 
-    // An absolute `Nodes directory` replaces the working directory, which is
-    // what `pathlib`'s `/` does on the Python side too.
-    let nodes_dir = working_dir.join(&settings.nodes_directory);
+    // The nodes are read from where the configuration says, independently of
+    // the working directory, which only receives results. A relative path is
+    // the caller's to resolve: the command line does it against the
+    // configuration file (`RawConfig::resolve_input_paths`).
+    let nodes_dir = std::path::PathBuf::from(&settings.nodes_directory);
     let sample_column = settings.sample_column.as_deref();
     let files = find_sample(
         &nodes_dir,
@@ -96,6 +98,8 @@ pub fn tysserand_network(
     // the figures and the writing around them.
     let delaunay_clock = mosna_core::timing::ComputeClock::new();
     let reconnection_clock = mosna_core::timing::ComputeClock::new();
+    // And each sample from start to finish, I/O included.
+    let sample_clock = mosna_core::timing::ComputeClock::new();
 
     let done = std::sync::atomic::AtomicUsize::new(0);
     progress.step(0, total, "[MULTI PROCESS] Processing file");
@@ -103,44 +107,48 @@ pub fn tysserand_network(
     pool.install(|| {
         files.par_iter().try_for_each(|file| -> Result<()> {
             let sample = find_sample_from_file(file, &settings.patient_column, sample_column)?;
-            let nodes = read_table(file, extension)?;
+            sample_clock.measure_for(&sample, || -> Result<()> {
+                let nodes = read_table(file, extension)?;
 
-            let coords = nodes.coords(&settings.x_column, &settings.y_column)?;
-            let pairs = delaunay_clock.measure(|| build_delaunay(&coords, trim))?;
-            let method = match settings.edges_method {
-                EdgesMethod::Delaunay => LinkMethod::Delaunay,
-                EdgesMethod::Knn => LinkMethod::Knn,
-            };
-            let pairs = reconnection_clock
-                .measure(|| link_solitaries(&coords, &pairs, method, settings.min_neighbors))?;
+                let coords = nodes.coords(&settings.x_column, &settings.y_column)?;
+                let pairs =
+                    delaunay_clock.measure_for(&sample, || build_delaunay(&coords, trim))?;
+                let method = match settings.edges_method {
+                    EdgesMethod::Delaunay => LinkMethod::Delaunay,
+                    EdgesMethod::Knn => LinkMethod::Knn,
+                };
+                let pairs = reconnection_clock.measure_for(&sample, || {
+                    link_solitaries(&coords, &pairs, method, settings.min_neighbors)
+                })?;
 
-            let labels = nodes.string_column(&settings.phenotype_column)?;
-            figures.network(
-                &sample,
-                &settings.patient_column,
-                sample_column,
-                &coords,
-                &pairs,
-                &labels,
-                &saving_folder,
-            )?;
+                let labels = nodes.string_column(&settings.phenotype_column)?;
+                figures.network(
+                    &sample,
+                    &settings.patient_column,
+                    sample_column,
+                    &coords,
+                    &pairs,
+                    &labels,
+                    &saving_folder,
+                )?;
 
-            // The network files are always parquet: that is what the later
-            // steps read from `temp/net_dir_mosna`, whatever the input format.
-            let stem = sample.str_group(&settings.patient_column, sample_column);
-            write_parquet(&nodes, temp_folder.join(format!("nodes_{stem}.parquet")))?;
-            write_parquet(
-                &Table::from_edges(&pairs)?,
-                temp_folder.join(format!("edges_{stem}.parquet")),
-            )?;
+                // The network files are always parquet: that is what the later
+                // steps read from `temp/net_dir_mosna`, whatever the input format.
+                let stem = sample.str_group(&settings.patient_column, sample_column);
+                write_parquet(&nodes, temp_folder.join(format!("nodes_{stem}.parquet")))?;
+                write_parquet(
+                    &Table::from_edges(&pairs)?,
+                    temp_folder.join(format!("edges_{stem}.parquet")),
+                )?;
 
-            let finished = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-            progress.step(
-                finished,
-                total,
-                &format!("[MULTI PROCESS] Processing file - {stem} DONE"),
-            );
-            Ok(())
+                let finished = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                progress.step(
+                    finished,
+                    total,
+                    &format!("[MULTI PROCESS] Processing file - {stem} DONE"),
+                );
+                Ok(())
+            })
         })
     })?;
 
@@ -149,6 +157,9 @@ pub fn tysserand_network(
         crate::stage::RECONNECTION,
         Some(reconnection_clock.seconds()),
     );
+    report_samples(progress, crate::stage::DELAUNAY, &delaunay_clock);
+    report_samples(progress, crate::stage::RECONNECTION, &reconnection_clock);
+    report_samples(progress, crate::stage::SAMPLE_TOTAL, &sample_clock);
     Ok(())
 }
 

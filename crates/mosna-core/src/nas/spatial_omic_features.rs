@@ -213,7 +213,7 @@ pub fn compute_spatial_omic_features_single_network(
         ))
     };
     let features = match &options.compute_clock {
-        Some(clock) => clock.measure(compute)?,
+        Some(clock) => clock.measure_for(sample, compute)?,
         None => compute()?,
     };
 

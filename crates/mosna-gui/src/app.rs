@@ -376,7 +376,7 @@ impl MosnaApp {
         let directory = std::env::temp_dir().join("mosna-queue");
         std::fs::create_dir_all(&directory)?;
         let path = directory.join(format!("job-{}-{id}.yaml", std::process::id()));
-        mosna_config::write_config(&self.config, &path)?;
+        mosna_config::write_config(&for_a_run(&self.config), &path)?;
         Ok(path)
     }
 
@@ -569,7 +569,7 @@ impl MosnaApp {
 
         let file = crate::model::sweep::to_plan_file(
             &plan,
-            &self.config,
+            &for_a_run(&self.config),
             &working_dir,
             &self.sweep_form.normalize,
             &mosna_config::clock::now(),
@@ -754,7 +754,7 @@ impl MosnaApp {
             std::fs::create_dir_all(parent)
                 .map_err(|e| format!("Could not create {}:\n{e}", parent.display()))?;
         }
-        let text = configuration
+        let text = for_a_run(configuration)
             .to_yaml_string()
             .map_err(|e| format!("Could not build the configuration:\n{e}"))?;
         std::fs::write(&path, text)
@@ -1093,6 +1093,20 @@ impl eframe::App for MosnaApp {
     }
 }
 
+/// The configuration as a run must read it, wherever the copy is written.
+///
+/// A run reads a copy — in the system's temporary directory, or under the
+/// working directory for a sweep — and the command line resolves relative
+/// input directories against the file it reads. So they are made absolute
+/// here, against the directory the interface runs in: the one the Browser
+/// already lists them from, so what is listed is what is analysed.
+fn for_a_run(config: &RawConfig) -> RawConfig {
+    let mut config = config.clone();
+    if let Ok(base) = std::env::current_dir() {
+        config.resolve_input_paths(&base);
+    }
+    config
+}
 #[cfg(test)]
 mod tests {
     use super::*;
