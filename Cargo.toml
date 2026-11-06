@@ -12,7 +12,6 @@ members = [
     "crates/mosna-cli",
     "crates/mosna-gui",
     "crates/mosna-setup",
-    "crates/mosna-mcp",
     "benchmark",
 ]
 

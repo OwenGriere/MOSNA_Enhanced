@@ -2632,22 +2632,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "mosna-mcp"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "arrow-array",
- "arrow-schema",
- "mosna-config",
- "mosna-io",
- "rayon",
- "regex",
- "serde_json",
- "serde_yaml",
- "tempfile",
-]
-
-[[package]]
 name = "mosna-paths"
 version = "0.1.0"
 dependencies = [
