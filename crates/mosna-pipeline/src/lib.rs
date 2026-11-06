@@ -35,7 +35,7 @@ pub use clear_temporary::clear_temporary;
 pub use error::{PipelineError, Result};
 pub use figures::{FigureSink, NoFigures};
 pub use niche_analysis::{niche_analysis, niche_analysis_in};
-pub use progress::{stage, timing_line, Progress, SilentProgress, StdoutProgress};
+pub use progress::{stage, timing_line, Progress, SilentProgress, StdoutProgress, Subject};
 pub use report::generate_report;
 pub use sweep_compare::compare_sweep;
 pub use tysserand_network::tysserand_network;

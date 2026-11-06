@@ -117,6 +117,8 @@ pub fn summary(stages: &[StageTime]) -> Option<String> {
 /// these same commands and reads the same lines.
 pub struct TimedProgress<'a> {
     pub timings: &'a Timings,
+    /// Where the per-sample times go, under `--benchmark`.
+    pub benchmark: Option<&'a crate::benchmark::Benchmark>,
 }
 
 impl Progress for TimedProgress<'_> {
@@ -130,11 +132,25 @@ impl Progress for TimedProgress<'_> {
 
     fn run_directory(&self, name: &str) {
         StdoutProgress.run_directory(name);
+        if let Some(benchmark) = self.benchmark {
+            benchmark.run_directory(name);
+        }
     }
 
     fn timing(&self, stage: &str, seconds: Option<f64>) {
         StdoutProgress.timing(stage, seconds);
         self.timings.add(stage, seconds);
+    }
+
+    fn sample_timing(
+        &self,
+        subject: mosna_pipeline::Subject<'_>,
+        stage: &str,
+        seconds: Option<f64>,
+    ) {
+        if let Some(benchmark) = self.benchmark {
+            benchmark.record(subject, stage, seconds);
+        }
     }
 }
 
@@ -171,7 +187,10 @@ mod tests {
     #[test]
     fn the_timed_reporter_keeps_what_it_forwards() {
         let timings = Timings::new();
-        let progress = TimedProgress { timings: &timings };
+        let progress = TimedProgress {
+            timings: &timings,
+            benchmark: None,
+        };
         progress.timing("Delaunay triangulation", Some(0.5));
         assert_eq!(timings.stages()[0].seconds, 0.5);
     }

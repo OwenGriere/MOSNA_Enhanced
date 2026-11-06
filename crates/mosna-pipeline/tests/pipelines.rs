@@ -11,9 +11,26 @@ use mosna_config::RawConfig;
 use mosna_io::read::get_opener::{read_table, Extension};
 use mosna_io::{find_sample, Table};
 use mosna_pipeline::{
-    assortativity, clear_temporary, niche_analysis, niche_analysis_in, tysserand_network,
-    NoFigures, SilentProgress,
+    assortativity, clear_temporary, niche_analysis, niche_analysis_in, NoFigures, SilentProgress,
 };
+
+/// Step 1, with the configuration's relative `Nodes directory` resolved
+/// against the workspace, which is where these tests keep it.
+///
+/// The pipeline reads the nodes where the configuration says and never under
+/// the working directory; resolving a relative one is the caller's job — the
+/// command line does it against the configuration file
+/// (`RawConfig::resolve_input_paths`).
+fn tysserand_network(
+    config: &RawConfig,
+    working_dir: &Path,
+    progress: &dyn mosna_pipeline::Progress,
+    figures: &dyn mosna_pipeline::FigureSink,
+) -> mosna_pipeline::Result<()> {
+    let mut config = config.clone();
+    config.resolve_input_paths(working_dir);
+    mosna_pipeline::tysserand_network(&config, working_dir, progress, figures)
+}
 
 /// A working directory holding a `raw` sub-directory of nodes files.
 struct Workspace {

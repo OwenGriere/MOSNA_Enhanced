@@ -40,6 +40,23 @@ pub fn stamp(time: SystemTime) -> String {
     )
 }
 
+/// `20260818-160512`: the same instant, to the second, in a form that can name
+/// a file and sorts in time order. `unknown` for a clock before the epoch.
+pub fn file_stamp(time: SystemTime) -> String {
+    let Ok(elapsed) = time.duration_since(SystemTime::UNIX_EPOCH) else {
+        return "unknown".to_string();
+    };
+    let seconds = elapsed.as_secs() as i64;
+    let rest = seconds.rem_euclid(86_400);
+    let (year, month, day) = civil_from_days(seconds.div_euclid(86_400));
+    format!(
+        "{year:04}{month:02}{day:02}-{:02}{:02}{:02}",
+        rest / 3600,
+        (rest % 3600) / 60,
+        rest % 60
+    )
+}
+
 /// Year, month and day from a count of days since 1970-01-01.
 ///
 /// Howard Hinnant's `civil_from_days`, which is exact over the whole range of
@@ -76,6 +93,12 @@ mod tests {
 
     fn at(seconds: u64) -> String {
         stamp(SystemTime::UNIX_EPOCH + Duration::from_secs(seconds))
+    }
+
+    #[test]
+    fn a_file_stamp_keeps_the_seconds_and_no_space() {
+        let time = SystemTime::UNIX_EPOCH + Duration::from_secs(1_787_069_100 + 7);
+        assert_eq!(file_stamp(time), "20260818-160507");
     }
 
     #[test]

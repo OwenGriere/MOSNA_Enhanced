@@ -38,6 +38,37 @@ pub trait Progress: Sync {
     ///
     /// Defaulted to nothing, like [`Progress::run_directory`].
     fn timing(&self, _stage: &str, _seconds: Option<f64>) {}
+
+    /// How long one stage took for one sample, or for the whole cohort when
+    /// the stage runs once over all of them (the reduction and the clustering
+    /// of a pooled niche analysis). `None` when it was read from the cache.
+    ///
+    /// The detail behind [`Progress::timing`], which keeps reporting the sums:
+    /// the command line's `--benchmark` writes these as one row per network.
+    /// Called from the worker threads, in whatever order the samples finish.
+    ///
+    /// Defaulted to nothing, like [`Progress::run_directory`].
+    fn sample_timing(&self, _subject: Subject<'_>, _stage: &str, _seconds: Option<f64>) {}
+}
+
+/// What a [`Progress::sample_timing`] measurement is about.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Subject<'a> {
+    /// One network.
+    Sample(&'a mosna_io::SampleId),
+    /// The cohort as a whole, for a stage that is not run sample by sample.
+    Cohort,
+}
+
+/// Report every sample's share of `clock` under `stage`.
+pub(crate) fn report_samples(
+    progress: &dyn Progress,
+    stage: &str,
+    clock: &mosna_core::timing::ComputeClock,
+) {
+    for (id, seconds) in clock.by_sample() {
+        progress.sample_timing(Subject::Sample(&id), stage, Some(seconds));
+    }
 }
 
 /// The `[QT_TIME]` line: `[QT_TIME] seconds=1.234567 stage=Delaunay triangulation`,
@@ -59,6 +90,9 @@ pub mod stage {
     pub const AGGREGATION: &str = "Aggregation";
     pub const REDUCTION: &str = "Reduction";
     pub const CLUSTERING: &str = "Clustering";
+    /// One sample from start to finish: reading, computing, queueing its
+    /// figures and writing its files — the wall-clock time, I/O included.
+    pub const SAMPLE_TOTAL: &str = "Sample total (with I/O)";
 }
 
 /// Emits the `[QT_INFO]` and `[QT_PROGRESS]` lines the GUI parses.

@@ -1,5 +1,7 @@
 //! The untyped, order-preserving view of `configuration.yaml`.
 
+use std::path::Path;
+
 use serde_yaml::{Mapping, Value};
 
 use crate::error::{ConfigError, Result};
@@ -90,7 +92,44 @@ impl RawConfig {
     pub fn from_mapping(root: Mapping) -> Self {
         Self { root }
     }
+
+    /// Make every relative input directory absolute, against `base`.
+    ///
+    /// The input directories — `Nodes directory`, and the two `Network
+    /// directory` keys when they are not `Default` — are independent of the
+    /// working directory, which only receives results. They used to be joined
+    /// onto it, so a relative `Nodes directory: IMC` run with `--working_dir
+    /// /out` was looked for in `/out/IMC`. The interface never showed it: its
+    /// folder picker always gives an absolute path.
+    ///
+    /// The command line resolves them against the configuration file's own
+    /// directory, so that a run does not depend on where it was started from.
+    /// `Default` stays as it is: it names step 1's output, which *is* under the
+    /// working directory. Returns whether anything was changed.
+    pub fn resolve_input_paths(&mut self, base: &Path) -> bool {
+        let mut changed = false;
+        for (section, key) in INPUT_DIRECTORIES {
+            let Some(value) = self.get(section, key).and_then(Value::as_str) else {
+                continue;
+            };
+            let trimmed = value.trim();
+            if trimmed.is_empty() || trimmed == "Default" || Path::new(trimmed).is_absolute() {
+                continue;
+            }
+            let absolute = base.join(trimmed).to_string_lossy().into_owned();
+            self.set(section, key, Value::String(absolute));
+            changed = true;
+        }
+        changed
+    }
 }
+
+/// The keys naming a directory the analyses read, rather than write.
+const INPUT_DIRECTORIES: [(&str, &str); 3] = [
+    (crate::section::TYSSERAND, "Nodes directory"),
+    (crate::section::ASSORTATIVITY, "Network directory"),
+    (crate::section::NICHE_ANALYSIS, "Network directory"),
+];
 
 #[cfg(test)]
 mod tests {
@@ -133,5 +172,51 @@ Niche Analysis:
     fn empty_document_loads_as_empty_mapping() {
         let cfg = RawConfig::from_yaml_str("").unwrap();
         assert!(cfg.section_names().is_empty());
+    }
+
+    // -----------------------------------------------------------------------
+    // Input directories are not under the working directory
+    // -----------------------------------------------------------------------
+
+    const INPUTS: &str = "\
+Tysserand:
+  Nodes directory: IMC
+Assortativity:
+  Network directory: Default
+Niche Analysis:
+  Network directory: nets
+";
+
+    fn text(cfg: &RawConfig, section: &str) -> String {
+        let key = if section == "Tysserand" {
+            "Nodes directory"
+        } else {
+            "Network directory"
+        };
+        cfg.get(section, key).unwrap().as_str().unwrap().to_string()
+    }
+
+    #[test]
+    fn relative_input_directories_are_resolved_against_the_base() {
+        let mut cfg = RawConfig::from_yaml_str(INPUTS).unwrap();
+        assert!(cfg.resolve_input_paths(Path::new("/configs")));
+        assert_eq!(text(&cfg, "Tysserand"), "/configs/IMC");
+        assert_eq!(text(&cfg, "Niche Analysis"), "/configs/nets");
+    }
+
+    /// `Default` is step 1's output, which does live under the working
+    /// directory: it is the pipeline's to place, not the configuration's.
+    #[test]
+    fn the_default_network_directory_is_left_alone() {
+        let mut cfg = RawConfig::from_yaml_str(INPUTS).unwrap();
+        cfg.resolve_input_paths(Path::new("/configs"));
+        assert_eq!(text(&cfg, "Assortativity"), "Default");
+    }
+
+    #[test]
+    fn absolute_directories_are_left_alone() {
+        let mut cfg = RawConfig::from_yaml_str(SAMPLE).unwrap();
+        assert!(!cfg.resolve_input_paths(Path::new("/configs")));
+        assert_eq!(text(&cfg, "Tysserand"), "/data/mIF");
     }
 }

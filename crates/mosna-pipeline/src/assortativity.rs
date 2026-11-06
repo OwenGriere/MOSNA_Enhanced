@@ -78,40 +78,46 @@ pub fn assortativity(
     let done = std::sync::atomic::AtomicUsize::new(0);
     // The statistic and its permutations, apart from reading the networks.
     let clock = mosna_core::timing::ComputeClock::new();
+    // And each sample from start to finish, I/O included.
+    let sample_clock = mosna_core::timing::ComputeClock::new();
     progress.step(0, total, "[PROCESS] Compute Assortativity");
 
     let mut rows: Vec<(usize, mosna_core::assortativity::SampleStats)> = data_index
         .par_iter()
         .enumerate()
         .map(|(position, id)| {
-            let stem = id.str_group(&settings.patient_column, sample_column);
-            let nodes = read_table(
-                net_dir.join(format!("nodes_{stem}.{}", extension.as_str())),
-                extension,
-            )?;
-            let edges = read_table(
-                net_dir.join(format!("edges_{stem}.{}", extension.as_str())),
-                extension,
-            )?;
+            sample_clock.measure_for(id, || {
+                let stem = id.str_group(&settings.patient_column, sample_column);
+                let nodes = read_table(
+                    net_dir.join(format!("nodes_{stem}.{}", extension.as_str())),
+                    extension,
+                )?;
+                let edges = read_table(
+                    net_dir.join(format!("edges_{stem}.{}", extension.as_str())),
+                    extension,
+                )?;
 
-            let assignments: Vec<Option<u32>> = nodes
-                .opt_string_column(&settings.phenotype_column)?
-                .into_iter()
-                .map(|label| label.and_then(|l| attribute_index.get(l.as_str()).copied()))
-                .collect();
+                let assignments: Vec<Option<u32>> = nodes
+                    .opt_string_column(&settings.phenotype_column)?
+                    .into_iter()
+                    .map(|label| label.and_then(|l| attribute_index.get(l.as_str()).copied()))
+                    .collect();
 
-            let pairs = edges.edges()?;
-            let stats = clock.measure(|| {
-                sample_assort_mixmat(&assignments, &pairs, &attributes, &stem, n_shuffle)
-            });
+                let pairs = edges.edges()?;
+                let stats = clock.measure_for(id, || {
+                    sample_assort_mixmat(&assignments, &pairs, &attributes, &stem, n_shuffle)
+                });
 
-            let finished = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
-            progress.step(finished, total, "[PROCESS] Compute Assortativity");
-            Ok((position, stats))
+                let finished = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                progress.step(finished, total, "[PROCESS] Compute Assortativity");
+                Ok((position, stats))
+            })
         })
         .collect::<Result<Vec<_>>>()?;
 
     progress.timing(crate::stage::ASSORTATIVITY, Some(clock.seconds()));
+    crate::progress::report_samples(progress, crate::stage::ASSORTATIVITY, &clock);
+    crate::progress::report_samples(progress, crate::stage::SAMPLE_TOTAL, &sample_clock);
 
     // Restore the deterministic sample order, which parallel completion loses.
     rows.sort_by_key(|(position, _)| *position);
@@ -160,10 +166,11 @@ pub(crate) fn resolve_network_directory(
         NetworkDirectory::Default => {
             Ok((working_dir.join("temp/net_dir_mosna"), Extension::Parquet))
         }
-        NetworkDirectory::Custom(path) => Ok((
-            working_dir.join(path),
-            Extension::parse(configured_extension)?,
-        )),
+        // Read where the configuration says: the working directory only
+        // receives results, and holds the networks only when they are step 1's.
+        NetworkDirectory::Custom(path) => {
+            Ok((PathBuf::from(path), Extension::parse(configured_extension)?))
+        }
     }
 }
 
@@ -212,12 +219,26 @@ mod tests {
             Path::new("/work"),
         )
         .unwrap();
-        assert_eq!(path, Path::new("/work/nets"));
+        assert_eq!(path, Path::new("nets"));
         assert_eq!(extension, Extension::Csv);
     }
 
+    /// A relative directory used to be looked for under the working directory,
+    /// which merged the input with the output; it is the configuration's to
+    /// resolve, never the working directory's.
     #[test]
-    fn an_absolute_custom_directory_replaces_the_working_directory() {
+    fn a_custom_directory_is_not_put_under_the_working_directory() {
+        let (path, _) = resolve_network_directory(
+            &NetworkDirectory::Custom("nets".into()),
+            "parquet",
+            Path::new("/work"),
+        )
+        .unwrap();
+        assert!(!path.starts_with("/work"), "{}", path.display());
+    }
+
+    #[test]
+    fn an_absolute_custom_directory_is_kept() {
         let (path, _) = resolve_network_directory(
             &NetworkDirectory::Custom("/data/nets".into()),
             "parquet",
