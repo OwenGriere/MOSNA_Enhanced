@@ -489,6 +489,82 @@ fn workflow() -> Chapter {
                 ],
             },
             Section {
+                id: "sensitivity",
+                title: T::new("Sensitivity analysis", "Analyse de sensibilité"),
+                blocks: vec![
+                    Block::Paragraph(T::new(
+                        "A sensitivity analysis runs step 3 over a grid of parameters — \
+                         resolution from 0.005 to 0.05, two neighbourhood orders, several \
+                         clusterers — and compares what each combination finds. Every point \
+                         of the grid is an ordinary niche analysis, written under \
+                         Niche_Analysis/sensitivity_analysis.",
+                        "Une analyse de sensibilité lance l'étape 3 sur une grille de \
+                         paramètres (une résolution de 0,005 à 0,05, deux ordres de voisinage, \
+                         plusieurs méthodes de regroupement) et compare ce que trouve chaque \
+                         combinaison. Chaque point de la grille est une analyse de niches \
+                         ordinaire, écrite sous Niche_Analysis/sensitivity_analysis.",
+                    )),
+                    Block::List(vec![
+                        T::new(
+                            "Start the sensitivity analysis runs the grid from the interface, \
+                             one run after the other, and fills the table as it goes.",
+                            "Start the sensitivity analysis lance la grille depuis \
+                             l'interface, un run après l'autre, et remplit le tableau au fur et \
+                             à mesure.",
+                        ),
+                        T::new(
+                            "Write the plan (log) runs nothing. It writes \
+                             sensitivity_plan.log, which explains everything the analysis \
+                             will do: the cohort, the values of each parameter, every run in \
+                             order with what it recomputes, how many aggregations and \
+                             projections that costs, and where the results go. The \
+                             explanation is also shown in the Log tab.",
+                            "Write the plan (log) ne lance rien. Il écrit \
+                             sensitivity_plan.log, qui explique tout ce que l'analyse va faire \
+                             : la cohorte, les valeurs de chaque paramètre, chaque run dans \
+                             l'ordre avec ce qu'il recalcule, combien d'agrégations et de \
+                             projections cela coûte, et où vont les résultats. L'explication \
+                             s'affiche aussi dans l'onglet Log.",
+                        ),
+                    ]),
+                    Block::Paragraph(T::new(
+                        "The same file runs the analysis from a terminal, with a progress bar \
+                         for the grid and one for the run in progress. It holds the whole \
+                         configuration the runs start from, so it runs what was reviewed even \
+                         if configuration.yaml has changed since — and it can be copied to a \
+                         cluster and run there.",
+                        "Le même fichier lance l'analyse depuis un terminal, avec une barre de \
+                         progression pour la grille et une pour le run en cours. Il contient \
+                         toute la configuration dont partent les runs : il exécute donc ce \
+                         qui a été relu, même si configuration.yaml a changé depuis, et il \
+                         peut être copié sur un cluster et lancé là-bas.",
+                    )),
+                    Block::Code {
+                        caption: T::new(
+                            "Read the plan, run it, or run it in another directory:",
+                            "Lire le plan, le lancer, ou le lancer dans un autre répertoire :",
+                        ),
+                        lines: vec![
+                            "mosna sensitivity-analysis --log sensitivity_plan.log --plan-only",
+                            "mosna sensitivity-analysis --log sensitivity_plan.log",
+                            "mosna sensitivity-analysis --log sensitivity_plan.log --working_dir /scratch/run",
+                        ],
+                    },
+                    Block::Callout {
+                        kind: CalloutKind::Note,
+                        text: T::new(
+                            "Both ways produce the same runs, the same sensitivity.csv and the \
+                             same comparison figures, in the same directory: a grid run from \
+                             the terminal can be opened in the interface afterwards.",
+                            "Les deux façons produisent les mêmes runs, le même \
+                             sensitivity.csv et les mêmes figures de comparaison, dans le même \
+                             répertoire : une grille lancée depuis le terminal peut ensuite être \
+                             ouverte dans l'interface.",
+                        ),
+                    },
+                ],
+            },
+            Section {
                 id: "architecture",
                 title: T::new("How the analysis is organised", "Organisation de l'analyse"),
                 blocks: vec![
@@ -1462,6 +1538,11 @@ fn credits() -> Chapter {
                          including the underscore in --working_dir that the Python used.",
                         "Analyse la ligne de commande du binaire d'analyse et de l'installeur, y \
                          compris le tiret bas de --working_dir hérité du Python.")),
+                    C::new("indicatif", T::new(
+                        "The progress bars of mosna sensitivity-analysis in a terminal: the \
+                         grid, and the run in progress.",
+                        "Les barres de progression de mosna sensitivity-analysis dans un \
+                         terminal : la grille, et le run en cours.")),
                     C::new("regex", T::new(
                         "Recognises the sample identifiers in file names, and the \
                          [QT_PROGRESS] lines the interface reads from the analysis process.",

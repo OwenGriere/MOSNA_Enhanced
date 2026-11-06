@@ -243,6 +243,20 @@ mosna clear-temporary                                    --working_dir /data/run
 The last two take no configuration: they act on a directory that already
 exists, which is what lets them be run on results copied off a cluster.
 
+A sensitivity analysis is prepared in the interface and can be run from either
+place. **Write the plan (log)**, on the sensitivity screen, writes
+`Niche_Analysis/sensitivity_analysis/sensitivity_plan.log`: it explains every
+run the grid will make, in order, with what each recomputes and what the whole
+grid costs, and it holds the configuration the runs start from. The same file
+then runs the analysis, with a progress bar for the grid and one for the run
+in progress:
+
+```bash
+mosna sensitivity-analysis --log sensitivity_plan.log --plan-only   # read it
+mosna sensitivity-analysis --log sensitivity_plan.log               # run it
+mosna sensitivity-analysis --log sensitivity_plan.log --working_dir /scratch/run
+```
+
 ## Benchmark
 
 *To come.*
