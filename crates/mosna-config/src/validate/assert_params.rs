@@ -86,15 +86,21 @@ fn assert_tysserand(c: &Value) -> Result<()> {
     assert_delaunay_trimming(c)
 }
 
-/// The three optional Delaunay trimming keys: absent or null means the
+/// The four optional Delaunay trimming keys: absent or null means the
 /// tysserand default, anything else must be a number in range.
 ///
 /// The ranges are the ones where the rule means something. `n_edges` must be
 /// at least 1: at 0, tysserand indexes `sorted[-1]`, the *longest* edge, which
 /// is a different rule entirely. A ratio of zero or less cuts every edge above
 /// the floor, and a negative floor is the same as none.
+///
+/// `Trim distance` also accepts `false`, tysserand's own spelling of "no global
+/// cut-off"; a number must be greater than 0, since a cut-off of 0 or less
+/// drops every edge.
 fn assert_delaunay_trimming(c: &Value) -> Result<()> {
-    use crate::model::tysserand::{TRIM_DISTANCE_RATIO, TRIM_MIN_DISTANCE, TRIM_NUMBER_OF_EDGES};
+    use crate::model::tysserand::{
+        TRIM_DISTANCE, TRIM_DISTANCE_RATIO, TRIM_MIN_DISTANCE, TRIM_NUMBER_OF_EDGES,
+    };
 
     let number = |key: &str| -> Result<Option<f64>> {
         match c.get(key) {
@@ -125,6 +131,15 @@ fn assert_delaunay_trimming(c: &Value) -> Result<()> {
             return Err(ConfigError::assertion(format!(
                 "{TRIM_MIN_DISTANCE} must be 0 or more, got {floor}"
             )));
+        }
+    }
+    if !matches!(c.get(TRIM_DISTANCE), Some(Value::Bool(false))) {
+        if let Some(cut) = number(TRIM_DISTANCE)? {
+            if !(cut > 0.0 && cut.is_finite()) {
+                return Err(ConfigError::assertion(format!(
+                    "{TRIM_DISTANCE} must be greater than 0, got {cut}"
+                )));
+            }
         }
     }
     Ok(())
@@ -388,6 +403,16 @@ Min neighbors: 3
         // An integer ratio is a number like any other.
         let yaml = format!("{TYSSERAND_OK}Trim distance ratio: 3\n");
         assert_params(Analysis::Tysserand, &value(&yaml)).unwrap();
+        // The global cut-off: a length, null, or tysserand's `false`.
+        for line in [
+            "Trim distance: 200",
+            "Trim distance: 150.5",
+            "Trim distance: null",
+            "Trim distance: false",
+        ] {
+            let yaml = format!("{TYSSERAND_OK}{line}\n");
+            assert_params(Analysis::Tysserand, &value(&yaml)).unwrap();
+        }
     }
 
     #[test]
@@ -413,6 +438,12 @@ Min neighbors: 3
                 "Trim min distance: -1",
                 "Trim min distance must be 0 or more, got -1",
             ),
+            (
+                "Trim distance: 0",
+                "Trim distance must be greater than 0, got 0",
+            ),
+            ("Trim distance: true", "Trim distance must be a number"),
+            ("Trim distance: far", "Trim distance must be a number"),
         ] {
             let yaml = format!("{TYSSERAND_OK}{line}\n");
             let err = assert_params(Analysis::Tysserand, &value(&yaml)).unwrap_err();

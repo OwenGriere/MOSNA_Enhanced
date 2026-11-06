@@ -3,7 +3,7 @@
 
 use mosna_config::model::tysserand::{
     DEFAULT_TRIM_DISTANCE_RATIO, DEFAULT_TRIM_MIN_DISTANCE, DEFAULT_TRIM_NUMBER_OF_EDGES,
-    TRIM_DISTANCE_RATIO, TRIM_KEYS, TRIM_MIN_DISTANCE, TRIM_NUMBER_OF_EDGES,
+    TRIM_DISTANCE, TRIM_DISTANCE_RATIO, TRIM_KEYS, TRIM_MIN_DISTANCE, TRIM_NUMBER_OF_EDGES,
 };
 use mosna_config::RawConfig;
 use serde_yaml::Value;
@@ -431,10 +431,14 @@ fn build_section(name: &str, body: &Value) -> Section {
 /// The Tysserand General tab: everything up to `Edges method`, then the
 /// Delaunay trimming box right below it, then the rest.
 ///
-/// The three trimming keys are optional in the configuration. When one is
+/// The four trimming keys are optional in the configuration. When one is
 /// missing or null its box still shows it, filled with the tysserand 0.6.0
 /// default — the value the run would use anyway — so the user starts from the
 /// defaults rather than from an empty box, and saving writes them out.
+///
+/// The exception is `Trim distance`, whose default is "no global cut-off": its
+/// box stays empty, and an empty box is written as null. tysserand's `false`
+/// is shown the same way, rather than as a True/False choice.
 ///
 /// A section with no `Edges method` is not a network reconstruction the user
 /// can drive from here, and gets a single box as before.
@@ -461,7 +465,7 @@ fn tysserand_groups(general: &[(String, Value)]) -> Vec<Group> {
     let configured = |key: &str| {
         general
             .iter()
-            .find(|(k, v)| k == key && !v.is_null())
+            .find(|(k, v)| k == key && !v.is_null() && *v != Value::Bool(false))
             .map(|(_, v)| v.clone())
     };
     let defaults = [
@@ -474,6 +478,7 @@ fn tysserand_groups(general: &[(String, Value)]) -> Vec<Group> {
             Value::from(DEFAULT_TRIM_NUMBER_OF_EDGES as u64),
         ),
         (TRIM_MIN_DISTANCE, Value::from(DEFAULT_TRIM_MIN_DISTANCE)),
+        (TRIM_DISTANCE, Value::Null),
     ];
     let trimming: Vec<Field> = defaults
         .into_iter()
@@ -597,6 +602,39 @@ Niche Analysis:
         assert_eq!(text_of(&form, TRIM_DISTANCE_RATIO), "2.0");
         assert_eq!(text_of(&form, TRIM_NUMBER_OF_EDGES), "3");
         assert_eq!(text_of(&form, TRIM_MIN_DISTANCE), "0.0");
+        // No global cut-off by default: an empty box.
+        assert_eq!(text_of(&form, TRIM_DISTANCE), "");
+    }
+
+    #[test]
+    fn the_global_cut_off_is_shown_and_written_back() {
+        for (line, shown) in [
+            ("  Trim distance: 200\n", "200"),
+            ("  Trim distance: false\n", ""),
+            ("  Trim distance: null\n", ""),
+        ] {
+            let yaml = SAMPLE.replace(
+                "  Min neighbors: 3\n",
+                &format!("  Min neighbors: 3\n{line}"),
+            );
+            let form = Form::from_config(&RawConfig::from_yaml_str(&yaml).unwrap());
+            assert_eq!(text_of(&form, TRIM_DISTANCE), shown, "for `{line}`");
+        }
+
+        let original = RawConfig::from_yaml_str(SAMPLE).unwrap();
+        let mut form = Form::from_config(&original);
+        let mut updated = original.clone();
+        form.apply_to(&mut updated);
+        assert_eq!(updated.get("Tysserand", TRIM_DISTANCE), Some(&Value::Null));
+
+        form.set_text("Tysserand", "General", TRIM_DISTANCE, "200");
+        form.apply_to(&mut updated);
+        assert_eq!(
+            updated
+                .get("Tysserand", TRIM_DISTANCE)
+                .and_then(Value::as_f64),
+            Some(200.0)
+        );
     }
 
     #[test]

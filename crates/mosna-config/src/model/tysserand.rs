@@ -1,5 +1,7 @@
 //! Typed view of the `Tysserand` section.
 
+use serde_yaml::Value;
+
 use crate::error::Result;
 use crate::model::raw::RawConfig;
 use crate::section;
@@ -37,8 +39,18 @@ pub const TRIM_NUMBER_OF_EDGES: &str = "Trim number of edges";
 /// Key of the length below which no edge is trimmed (`min_dist` in tysserand).
 pub const TRIM_MIN_DISTANCE: &str = "Trim min distance";
 
-/// The three Delaunay trimming keys, in the order the interface shows them.
-pub const TRIM_KEYS: [&str; 3] = [TRIM_DISTANCE_RATIO, TRIM_NUMBER_OF_EDGES, TRIM_MIN_DISTANCE];
+/// Key of the global length cut-off (`trim_dist` in tysserand).
+pub const TRIM_DISTANCE: &str = "Trim distance";
+
+/// The four Delaunay trimming keys, in the order the interface shows them,
+/// which is also the order tysserand applies them: the per-node rule, then the
+/// global cut-off.
+pub const TRIM_KEYS: [&str; 4] = [
+    TRIM_DISTANCE_RATIO,
+    TRIM_NUMBER_OF_EDGES,
+    TRIM_MIN_DISTANCE,
+    TRIM_DISTANCE,
+];
 
 /// tysserand 0.6.0's `build_delaunay` defaults, which an absent key falls back
 /// to: `trim_dist_ratio=2`, `n_edges=3`, `min_dist=0`.
@@ -68,6 +80,12 @@ pub struct TysserandConfig {
     pub trim_distance_ratio: f64,
     pub trim_number_of_edges: usize,
     pub trim_min_distance: f64,
+    /// Global cut-off applied after the per-node rule: every edge at or above
+    /// this length is dropped, wherever it is (`trim_dist=<float>`).
+    ///
+    /// `None` — key absent, null or `false` — keeps tysserand's default
+    /// `trim_dist=False`, no global cut-off.
+    pub trim_distance: Option<f64>,
     pub cpu: usize,
 }
 
@@ -94,6 +112,11 @@ impl TysserandConfig {
             )
             .max(1) as usize,
             trim_min_distance: get_float_or(s, TRIM_MIN_DISTANCE, DEFAULT_TRIM_MIN_DISTANCE),
+            trim_distance: match s.get(TRIM_DISTANCE) {
+                Some(Value::Number(n)) => n.as_f64(),
+                Some(Value::String(text)) => text.trim().parse::<f64>().ok(),
+                _ => None,
+            },
             cpu: get_int(s, name, "CPU")?.max(1) as usize,
         })
     }
@@ -125,6 +148,21 @@ Tysserand:
         assert_eq!(config.trim_distance_ratio, 2.0);
         assert_eq!(config.trim_number_of_edges, 3);
         assert_eq!(config.trim_min_distance, 0.0);
+        assert_eq!(config.trim_distance, None);
+    }
+
+    #[test]
+    fn the_global_cut_off_is_read_and_off_when_null_or_false() {
+        let read = |line: &str| {
+            let yaml = format!("{BASE}  {line}\n");
+            TysserandConfig::from_raw(&RawConfig::from_yaml_str(&yaml).unwrap())
+                .unwrap()
+                .trim_distance
+        };
+        assert_eq!(read("Trim distance: 200"), Some(200.0));
+        assert_eq!(read("Trim distance: 150.5"), Some(150.5));
+        assert_eq!(read("Trim distance: null"), None);
+        assert_eq!(read("Trim distance: false"), None);
     }
 
     #[test]
