@@ -486,6 +486,28 @@ fn workflow() -> Chapter {
                          Chacune a sa barre de progression, et la croix rouge à côté retire \
                          une analyse en attente ou annule celle en cours.",
                     )),
+                    Block::Paragraph(T::new(
+                        "Under each analysis, the Queue also shows its computing time, stage \
+                         by stage — Delaunay triangulation and reconnection for step 1, the \
+                         assortativity and its permutations for step 2, aggregation, \
+                         reduction and clustering for step 3. These are the algorithms alone: \
+                         checking, reading and writing files and drawing figures are left \
+                         out, so they are the numbers to compare in a benchmark. Where the \
+                         samples run in parallel the time is summed over them, so on several \
+                         cores it can exceed the duration shown beside the state. A stage \
+                         marked cached was read from an earlier run instead of computed.",
+                        "Sous chaque analyse, la Queue affiche aussi son temps de calcul, \
+                         étape par étape : triangulation de Delaunay et reconnexion pour \
+                         l'étape 1, assortativité et permutations pour l'étape 2, \
+                         agrégation, réduction et regroupement pour l'étape 3. Ce sont les \
+                         algorithmes seuls : la vérification, la lecture et l'écriture des \
+                         fichiers et le tracé des figures en sont exclus, ce sont donc les \
+                         valeurs à comparer dans un benchmark. Quand les échantillons \
+                         tournent en parallèle, le temps est additionné sur eux : sur \
+                         plusieurs coeurs, il peut dépasser la durée affichée à côté de \
+                         l'état. Une étape marquée cached a été relue d'un run précédent au \
+                         lieu d'être calculée.",
+                    )),
                 ],
             },
             Section {

@@ -191,8 +191,63 @@ fn row(ui: &mut egui::Ui, position: usize, job: &Job) -> bool {
                         .size(theme::size::SMALL),
                 );
             }
+
+            compute_times(ui, job);
         });
     pressed
+}
+
+/// The computing time of each stage, under the bar.
+///
+/// The duration beside the state is the wall clock: it includes checking the
+/// files, reading them, writing the results and drawing the figures. These are
+/// the algorithms alone, which is what a benchmark compares — summed over the
+/// samples where the samples run in parallel, so on several cores the total
+/// can exceed the wall clock.
+fn compute_times(ui: &mut egui::Ui, job: &Job) {
+    if job.timings.is_empty() {
+        return;
+    }
+    let parts: Vec<String> = job
+        .timings
+        .iter()
+        .map(|time| {
+            let mut part = if time.computed > 0 {
+                format!(
+                    "{} {}",
+                    time.stage,
+                    crate::model::runner::format_compute_time(time.seconds)
+                )
+            } else {
+                format!("{} cached", time.stage)
+            };
+            if time.computed > 1 || (time.computed > 0 && time.cached > 0) {
+                part.push_str(&format!(" ({}×", time.computed));
+                if time.cached > 0 {
+                    part.push_str(&format!(", {} cached", time.cached));
+                }
+                part.push(')');
+            }
+            part
+        })
+        .collect();
+    let line = format!(
+        "Compute {} — {}",
+        crate::model::runner::format_compute_time(job.compute_seconds()),
+        parts.join(" · ")
+    );
+    ui.label(
+        egui::RichText::new(line)
+            .color(theme::TEXT_MUTED)
+            .size(theme::size::SMALL),
+    )
+    .on_hover_text(
+        "Time spent computing, stage by stage: the algorithms alone, without \
+         checking, reading or writing files, nor drawing figures.\nWhere the \
+         samples run in parallel, the time is summed over them, so on several \
+         cores it can exceed the duration shown above.\n\"cached\": read from \
+         an earlier run instead of computed.",
+    );
 }
 
 /// The state, with how long the job took once it has ended.

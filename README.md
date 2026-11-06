@@ -243,6 +243,19 @@ mosna clear-temporary                                    --working_dir /data/run
 The last two take no configuration: they act on a directory that already
 exists, which is what lets them be run on results copied off a cluster.
 
+The three analyses, and `sensitivity-analysis` over its whole grid, end with
+their computing time, stage by stage — the algorithms alone, without checking,
+reading or writing files, nor drawing figures — which is what a benchmark
+compares. The interface shows the same numbers under each analysis in its
+Queue tab.
+
+```text
+Compute time — the algorithms alone, without checking, reading or writing files, nor drawing figures; summed over the samples where they run in parallel:
+  Delaunay triangulation               0.029 s
+  Reconnection of isolated cells       0.022 s
+  total                                0.052 s
+```
+
 A sensitivity analysis is prepared in the interface and can be run from either
 place. **Write the plan (log)**, on the sensitivity screen, writes
 `Niche_Analysis/sensitivity_analysis/sensitivity_plan.log`: it explains every

@@ -25,6 +25,7 @@ pub mod niches;
 pub mod reduction;
 pub mod spatial;
 pub mod stats;
+pub mod timing;
 
 pub use error::{CoreError, Result};
 

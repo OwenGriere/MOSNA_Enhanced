@@ -941,6 +941,13 @@ impl MosnaApp {
                 // a sweep links the configuration it launched to the results it
                 // produced through this and nothing else.
                 OutputLine::Run(name) => self.last_run_directory = Some(name),
+                // The computing time of a stage, kept with the job so the
+                // Queue tab can show it beside the wall-clock duration.
+                OutputLine::Timing { stage, seconds } => {
+                    if let Some(job) = job {
+                        job.add_timing(&stage, seconds);
+                    }
+                }
                 OutputLine::Plain => {}
             }
             self.log.push((classify(&line), line));

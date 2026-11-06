@@ -1200,11 +1200,15 @@ fn load_or_compute_features(
         let expected_columns = use_attributes.len() * params.n_statistics();
         if cached.n_columns() == expected_columns && cached.n_rows == expected_rows {
             progress.info("[INFO] Reusing the cached aggregated features");
+            progress.timing(crate::stage::AGGREGATION, None);
             return Ok(cached);
         }
         progress.info("[INFO] Cached features do not match the cohort, recomputing");
     }
 
+    // The feature computation alone: the clock is handed down to where the
+    // networks have been read and the aggregation starts.
+    let clock = std::sync::Arc::new(mosna_core::timing::ComputeClock::new());
     let var_aggreg = compute_features(
         settings,
         net_dir,
@@ -1212,7 +1216,9 @@ fn load_or_compute_features(
         data_index,
         use_attributes,
         params,
+        &clock,
     )?;
+    progress.timing(crate::stage::AGGREGATION, Some(clock.seconds()));
     let table = var_aggreg.to_table(&settings.patient_column, sample_column)?;
     niche_cache::write_table(&cache, &stems.features_source, &table)?;
     Ok(var_aggreg)
@@ -1243,6 +1249,7 @@ fn cached_reduce(
     {
         Some((values, width)) => {
             progress.info("[INFO] Reusing the cached projection");
+            progress.timing(crate::stage::REDUCTION, None);
             Ok(ClusterInput {
                 values,
                 width,
@@ -1253,7 +1260,13 @@ fn cached_reduce(
             if stems.reduces {
                 progress.info("[PROCESS] Reduction of Spatial Niches");
             }
+            let start = std::time::Instant::now();
             let input = project(var_aggreg, params)?;
+            // Without a reducer there is nothing to time: the features go to
+            // the clusterer as they are.
+            if stems.reduces {
+                progress.timing(crate::stage::REDUCTION, Some(start.elapsed().as_secs_f64()));
+            }
             if stems.reduces {
                 niche_cache::write_matrix(
                     &reduction_path,
@@ -1282,13 +1295,19 @@ fn cached_cluster(
     match niche_cache::read_labels(&clustering_path, source, n_rows) {
         Some(labels) => {
             progress.info("[INFO] Reusing the cached partition");
+            progress.timing(crate::stage::CLUSTERING, None);
             // The graph's shape travels with the partition, so a run reading it
             // back reports the same floor as the run that computed it.
             Ok((labels, niche_cache::recorded_components(&clustering_path)))
         }
         None => {
             progress.info("[PROCESS] Clustering of Spatial Niches");
+            let start = std::time::Instant::now();
             let (labels, components) = cluster(input, n_rows, params, progress)?;
+            progress.timing(
+                crate::stage::CLUSTERING,
+                Some(start.elapsed().as_secs_f64()),
+            );
             niche_cache::write_labels_with_components(
                 &clustering_path,
                 source,
@@ -1307,6 +1326,7 @@ fn compute_features(
     data_index: &[SampleId],
     use_attributes: &[String],
     params: &NicheParams,
+    clock: &std::sync::Arc<mosna_core::timing::ComputeClock>,
 ) -> Result<VarAggreg> {
     let options = SofOptions {
         net_dir: net_dir.to_path_buf(),
@@ -1320,6 +1340,7 @@ fn compute_features(
         stat_names: params.effective_stat_names(),
         var_sep: " ".to_string(),
         add_sample_info: true,
+        compute_clock: Some(clock.clone()),
     };
     Ok(compute_spatial_omic_features_all_networks(
         &options,

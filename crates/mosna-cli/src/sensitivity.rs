@@ -72,6 +72,33 @@ impl Outcome {
 struct RunBar {
     bar: ProgressBar,
     run: Mutex<Option<String>>,
+    /// The computing time of each stage, as the run reported it.
+    timings: Mutex<Vec<(String, Option<f64>)>>,
+}
+
+impl RunBar {
+    fn new(bar: &ProgressBar) -> Self {
+        Self {
+            bar: bar.clone(),
+            run: Mutex::new(None),
+            timings: Mutex::new(Vec::new()),
+        }
+    }
+
+    /// `aggregation cached · reduction 2.104 s · clustering 0.311 s`.
+    fn timings(&self) -> String {
+        let Ok(timings) = self.timings.lock() else {
+            return String::new();
+        };
+        timings
+            .iter()
+            .map(|(stage, seconds)| match seconds {
+                Some(seconds) => format!("{} {seconds:.3} s", stage.to_lowercase()),
+                None => format!("{} cached", stage.to_lowercase()),
+            })
+            .collect::<Vec<_>>()
+            .join(" · ")
+    }
 }
 
 impl Progress for RunBar {
@@ -88,6 +115,12 @@ impl Progress for RunBar {
     fn run_directory(&self, name: &str) {
         if let Ok(mut run) = self.run.lock() {
             *run = Some(name.to_string());
+        }
+    }
+
+    fn timing(&self, stage: &str, seconds: Option<f64>) {
+        if let Ok(mut timings) = self.timings.lock() {
+            timings.push((stage.to_string(), seconds));
         }
     }
 }
@@ -254,6 +287,8 @@ pub fn run_plan(log: &Path, working_dir: Option<&Path>, plan_only: bool) -> anyh
     current.enable_steady_tick(Duration::from_millis(120));
 
     let mut outcomes: Vec<Outcome> = Vec::with_capacity(total);
+    // The computing time of every stage, over the whole grid.
+    let grid_timings = crate::timings::Timings::new();
     for (index, run) in plan.runs.iter().enumerate() {
         let short = match recomputes[index] {
             Recomputes::Everything => "aggregation + projection + clustering",
@@ -270,10 +305,7 @@ pub fn run_plan(log: &Path, working_dir: Option<&Path>, plan_only: bool) -> anyh
         current.set_length(1);
         current.set_message("starting");
 
-        let reporter = RunBar {
-            bar: current.clone(),
-            run: Mutex::new(None),
-        };
+        let reporter = RunBar::new(&current);
         let config = plan.configuration(index);
         let figures =
             Figures::with_renderer(&working_dir, Renderer::detect_captured().formats(&formats));
@@ -290,6 +322,11 @@ pub fn run_plan(log: &Path, working_dir: Option<&Path>, plan_only: bool) -> anyh
             figures.render()
         });
 
+        if let Ok(timings) = reporter.timings.lock() {
+            for (stage, seconds) in timings.iter() {
+                grid_timings.add(stage, *seconds);
+            }
+        }
         let mut outcome = Outcome {
             run: reporter.run.lock().ok().and_then(|run| run.clone()),
             ..Outcome::default()
@@ -310,11 +347,12 @@ pub fn run_plan(log: &Path, working_dir: Option<&Path>, plan_only: bool) -> anyh
                     &bars,
                     interactive,
                     format!(
-                        "  ✓ {} — {} niche(s)",
+                        "  ✓ {} — {} niche(s) · compute: {}",
                         outcome.run.as_deref().unwrap_or("done"),
                         outcome
                             .niches
-                            .map_or_else(|| "?".to_string(), |n| n.to_string())
+                            .map_or_else(|| "?".to_string(), |n| n.to_string()),
+                        reporter.timings()
                     ),
                 );
             }
@@ -341,10 +379,7 @@ pub fn run_plan(log: &Path, working_dir: Option<&Path>, plan_only: bool) -> anyh
         grid.set_message("comparing the runs");
         current.reset();
         current.set_message("comparing the runs");
-        let reporter = RunBar {
-            bar: current.clone(),
-            run: Mutex::new(None),
-        };
+        let reporter = RunBar::new(&current);
         let settings = mosna_config::NicheAnalysisConfig::from_raw(&plan.base)?;
         // Interactive copies too, as the interface asks for: the three
         // comparison figures are the answer the sweep was run for.
@@ -380,6 +415,11 @@ pub fn run_plan(log: &Path, working_dir: Option<&Path>, plan_only: bool) -> anyh
         "{succeeded} of {total} run(s) succeeded — {}",
         table.display()
     );
+    // Given back whatever the outcome: the runs that did finish were timed.
+    if let Some(summary) = grid_timings.summary() {
+        println!();
+        print!("{summary}");
+    }
     if failed > 0 {
         let first = outcomes
             .iter()

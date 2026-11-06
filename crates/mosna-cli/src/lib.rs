@@ -34,10 +34,11 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand};
 
 pub mod sensitivity;
+pub mod timings;
 
 use mosna_pipeline::{
     assortativity, clear_temporary, compare_sweep, generate_report, niche_analysis_in,
-    tysserand_network, StdoutProgress,
+    tysserand_network,
 };
 use mosna_xy::Figures;
 
@@ -288,7 +289,10 @@ impl Command {
 /// starting Python than drawing — and the renderer reports its own progress
 /// through the same protocol, so the interface's bar keeps moving.
 pub fn run(cli: Cli) -> anyhow::Result<()> {
-    let progress = StdoutProgress;
+    // The same lines on stdout as ever, for the interface; the computing time
+    // of each stage is also kept, and given back as a table at the end.
+    let timings = timings::Timings::new();
+    let progress = timings::TimedProgress { timings: &timings };
     let formats = cli.command.figure_formats();
     let no_figures = cli.command.no_figures();
     // Drawn now, or set aside for `render-figures`.
@@ -390,6 +394,12 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
         }
     }
 
+    // Only once the command has succeeded: a failed run's times describe
+    // half of a computation.
+    if let Some(summary) = timings.summary() {
+        println!();
+        print!("{summary}");
+    }
     Ok(())
 }
 

@@ -210,6 +210,9 @@ pub enum OutputLine {
     /// only reliable way for a sweep to link what it launched to what it
     /// produced — see `mosna_pipeline::progress::Progress::run_directory`.
     Run(String),
+    /// How long a computing stage took, the algorithm alone; `None` when it
+    /// was read from the cache — see `mosna_pipeline::Progress::timing`.
+    Timing { stage: String, seconds: Option<f64> },
     /// Anything else: shown in the log, nothing more.
     Plain,
 }
@@ -238,6 +241,17 @@ pub fn parse_output_line(line: &str) -> OutputLine {
         }
     }
 
+    if let Some(payload) = line.strip_prefix("[QT_TIME]") {
+        // `seconds=<float|cached> stage=<name, possibly with spaces>`.
+        if let (Some(value), Some(at)) = (field(payload, "seconds="), payload.find("stage=")) {
+            let stage = payload[at + "stage=".len()..].trim().to_string();
+            let seconds = value.parse::<f64>().ok();
+            if !stage.is_empty() && (seconds.is_some() || value == "cached") {
+                return OutputLine::Timing { stage, seconds };
+            }
+        }
+    }
+
     if let Some(payload) = line.strip_prefix("[QT_PROGRESS]") {
         let current = field(payload, "current=").and_then(|v| v.parse().ok());
         let total = field(payload, "total=").and_then(|v| v.parse().ok());
@@ -262,6 +276,18 @@ fn field<'a>(payload: &'a str, name: &str) -> Option<&'a str> {
     let at = payload.find(name)? + name.len();
     let rest = &payload[at..];
     Some(rest.split_whitespace().next().unwrap_or(rest))
+}
+
+/// A computing time, precise enough to compare: `0.042 s`, `12.3 s`, then
+/// minutes as [`format_duration`] writes them.
+pub fn format_compute_time(seconds: f64) -> String {
+    if seconds < 1.0 {
+        format!("{seconds:.3} s")
+    } else if seconds < 60.0 {
+        format!("{seconds:.1} s")
+    } else {
+        format_duration(seconds)
+    }
 }
 
 /// Render a duration — port of `MosnaGUI._format_duration`.
@@ -296,6 +322,53 @@ mod tests {
     fn the_report_step_takes_no_configuration_either() {
         let arguments = Step::GenerateReport.arguments(Path::new("/cfg.yaml"), Path::new("/work"));
         assert_eq!(arguments, vec!["generate-report", "--working_dir", "/work"]);
+    }
+
+    #[test]
+    fn a_timing_line_is_read_with_its_stage() {
+        assert_eq!(
+            parse_output_line("[QT_TIME] seconds=1.500000 stage=Delaunay triangulation"),
+            OutputLine::Timing {
+                stage: "Delaunay triangulation".to_string(),
+                seconds: Some(1.5)
+            }
+        );
+        assert_eq!(
+            parse_output_line("[QT_TIME] seconds=cached stage=Reduction"),
+            OutputLine::Timing {
+                stage: "Reduction".to_string(),
+                seconds: None
+            }
+        );
+        // Malformed: just a line of the log.
+        assert_eq!(
+            parse_output_line("[QT_TIME] seconds=soon stage=X"),
+            OutputLine::Plain
+        );
+        assert_eq!(
+            parse_output_line("[QT_TIME] seconds=1.0"),
+            OutputLine::Plain
+        );
+    }
+
+    /// The protocol is written in the pipeline and read here: the two must
+    /// agree on its spelling.
+    #[test]
+    fn the_pipelines_timing_line_is_the_one_read_here() {
+        let line = mosna_pipeline::timing_line(mosna_pipeline::stage::CLUSTERING, Some(0.25));
+        assert_eq!(
+            parse_output_line(&line),
+            OutputLine::Timing {
+                stage: "Clustering".to_string(),
+                seconds: Some(0.25)
+            }
+        );
+    }
+
+    #[test]
+    fn compute_times_keep_their_precision() {
+        assert_eq!(format_compute_time(0.0421), "0.042 s");
+        assert_eq!(format_compute_time(12.34), "12.3 s");
     }
 
     /// The action bar: the three analyses each on their own line, then the

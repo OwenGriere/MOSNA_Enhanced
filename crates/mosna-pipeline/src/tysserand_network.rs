@@ -92,6 +92,11 @@ pub fn tysserand_network(
         distance: TrimDist::None,
     };
 
+    // The triangulation and the reconnection, timed apart from the reading,
+    // the figures and the writing around them.
+    let delaunay_clock = mosna_core::timing::ComputeClock::new();
+    let reconnection_clock = mosna_core::timing::ComputeClock::new();
+
     let done = std::sync::atomic::AtomicUsize::new(0);
     progress.step(0, total, "[MULTI PROCESS] Processing file");
 
@@ -101,12 +106,13 @@ pub fn tysserand_network(
             let nodes = read_table(file, extension)?;
 
             let coords = nodes.coords(&settings.x_column, &settings.y_column)?;
-            let pairs = build_delaunay(&coords, trim)?;
+            let pairs = delaunay_clock.measure(|| build_delaunay(&coords, trim))?;
             let method = match settings.edges_method {
                 EdgesMethod::Delaunay => LinkMethod::Delaunay,
                 EdgesMethod::Knn => LinkMethod::Knn,
             };
-            let pairs = link_solitaries(&coords, &pairs, method, settings.min_neighbors)?;
+            let pairs = reconnection_clock
+                .measure(|| link_solitaries(&coords, &pairs, method, settings.min_neighbors))?;
 
             let labels = nodes.string_column(&settings.phenotype_column)?;
             figures.network(
@@ -138,6 +144,11 @@ pub fn tysserand_network(
         })
     })?;
 
+    progress.timing(crate::stage::DELAUNAY, Some(delaunay_clock.seconds()));
+    progress.timing(
+        crate::stage::RECONNECTION,
+        Some(reconnection_clock.seconds()),
+    );
     Ok(())
 }
 

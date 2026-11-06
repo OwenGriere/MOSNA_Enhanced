@@ -26,6 +26,39 @@ pub trait Progress: Sync {
     /// Defaulted to nothing, so a reporter that does not care — every one under
     /// test — need not mention it.
     fn run_directory(&self, _name: &str) {}
+
+    /// How long one stage of the computation took: the algorithm alone, not
+    /// the checking, reading, writing or drawing around it. `None` when the
+    /// stage was not computed because its result was read from the cache.
+    ///
+    /// A stage that runs once per sample is reported once, with the sum over
+    /// the samples — see `mosna_core::timing`. One that runs per sample in a
+    /// per-sample niche analysis is reported each time, and the reader adds
+    /// them up.
+    ///
+    /// Defaulted to nothing, like [`Progress::run_directory`].
+    fn timing(&self, _stage: &str, _seconds: Option<f64>) {}
+}
+
+/// The `[QT_TIME]` line: `[QT_TIME] seconds=1.234567 stage=Delaunay triangulation`,
+/// or `seconds=cached` for a stage read from the cache. The stage comes last
+/// because it may hold spaces.
+pub fn timing_line(stage: &str, seconds: Option<f64>) -> String {
+    match seconds {
+        Some(seconds) => format!("[QT_TIME] seconds={seconds:.6} stage={stage}"),
+        None => format!("[QT_TIME] seconds=cached stage={stage}"),
+    }
+}
+
+/// The names the computing stages are reported under, as `[QT_TIME]` spells
+/// them: one place, so a benchmark reading them can rely on the spelling.
+pub mod stage {
+    pub const DELAUNAY: &str = "Delaunay triangulation";
+    pub const RECONNECTION: &str = "Reconnection of isolated cells";
+    pub const ASSORTATIVITY: &str = "Assortativity and permutations";
+    pub const AGGREGATION: &str = "Aggregation";
+    pub const REDUCTION: &str = "Reduction";
+    pub const CLUSTERING: &str = "Clustering";
 }
 
 /// Emits the `[QT_INFO]` and `[QT_PROGRESS]` lines the GUI parses.
@@ -45,6 +78,10 @@ impl Progress for StdoutProgress {
     fn run_directory(&self, name: &str) {
         println!("[QT_RUN] {name}");
     }
+
+    fn timing(&self, stage: &str, seconds: Option<f64>) {
+        println!("{}", timing_line(stage, seconds));
+    }
 }
 
 /// Discards everything. Used by the tests, where stdout is noise.
@@ -58,6 +95,18 @@ impl Progress for SilentProgress {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_timing_line_names_the_stage_last() {
+        assert_eq!(
+            timing_line("Delaunay triangulation", Some(1.5)),
+            "[QT_TIME] seconds=1.500000 stage=Delaunay triangulation"
+        );
+        assert_eq!(
+            timing_line("Reduction", None),
+            "[QT_TIME] seconds=cached stage=Reduction"
+        );
+    }
 
     #[test]
     fn the_silent_reporter_accepts_everything() {

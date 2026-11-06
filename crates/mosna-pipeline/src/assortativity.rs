@@ -76,6 +76,8 @@ pub fn assortativity(
     let n_shuffle = settings.effective_shuffles();
     let total = data_index.len();
     let done = std::sync::atomic::AtomicUsize::new(0);
+    // The statistic and its permutations, apart from reading the networks.
+    let clock = mosna_core::timing::ComputeClock::new();
     progress.step(0, total, "[PROCESS] Compute Assortativity");
 
     let mut rows: Vec<(usize, mosna_core::assortativity::SampleStats)> = data_index
@@ -98,14 +100,18 @@ pub fn assortativity(
                 .map(|label| label.and_then(|l| attribute_index.get(l.as_str()).copied()))
                 .collect();
 
-            let stats =
-                sample_assort_mixmat(&assignments, &edges.edges()?, &attributes, &stem, n_shuffle);
+            let pairs = edges.edges()?;
+            let stats = clock.measure(|| {
+                sample_assort_mixmat(&assignments, &pairs, &attributes, &stem, n_shuffle)
+            });
 
             let finished = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
             progress.step(finished, total, "[PROCESS] Compute Assortativity");
             Ok((position, stats))
         })
         .collect::<Result<Vec<_>>>()?;
+
+    progress.timing(crate::stage::ASSORTATIVITY, Some(clock.seconds()));
 
     // Restore the deterministic sample order, which parallel completion loses.
     rows.sort_by_key(|(position, _)| *position);

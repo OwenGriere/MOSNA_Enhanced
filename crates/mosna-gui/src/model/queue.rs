@@ -67,6 +67,52 @@ pub struct Job {
     pub message: String,
     /// How long it ran, once it has ended.
     pub elapsed: Option<f64>,
+    /// How long each computing stage took, as the analysis reported it.
+    pub timings: Vec<StageTime>,
+}
+
+/// The computing time of one stage of an analysis: the algorithm alone, not
+/// the checking, reading, writing or drawing around it.
+///
+/// A stage reported several times — once per sample in a per-sample niche
+/// analysis — is added up, and the number of times it ran is kept beside the
+/// number of times it was read from the cache instead.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StageTime {
+    pub stage: String,
+    pub seconds: f64,
+    pub computed: usize,
+    pub cached: usize,
+}
+
+impl Job {
+    /// Record one `[QT_TIME]` report.
+    pub fn add_timing(&mut self, stage: &str, seconds: Option<f64>) {
+        let entry = match self.timings.iter_mut().position(|t| t.stage == stage) {
+            Some(index) => &mut self.timings[index],
+            None => {
+                self.timings.push(StageTime {
+                    stage: stage.to_string(),
+                    seconds: 0.0,
+                    computed: 0,
+                    cached: 0,
+                });
+                self.timings.last_mut().expect("just pushed")
+            }
+        };
+        match seconds {
+            Some(seconds) => {
+                entry.seconds += seconds;
+                entry.computed += 1;
+            }
+            None => entry.cached += 1,
+        }
+    }
+
+    /// The total computing time over every stage that was computed.
+    pub fn compute_seconds(&self) -> f64 {
+        self.timings.iter().map(|t| t.seconds).sum()
+    }
 }
 
 impl Job {
@@ -134,6 +180,7 @@ impl Queue {
             progress: None,
             message: String::new(),
             elapsed: None,
+            timings: Vec::new(),
         });
     }
 
@@ -224,6 +271,40 @@ fn discard(job: &Job) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A stage reported once per sample is added up, and what came from the
+    /// cache is counted apart rather than as a computation of no time.
+    #[test]
+    fn timings_add_up_per_stage() {
+        let mut job = Job {
+            id: 1,
+            step: Step::NicheAnalysis,
+            arguments: Vec::new(),
+            working_dir: PathBuf::from("/w"),
+            config_copy: None,
+            without_figures: false,
+            state: JobState::Running,
+            progress: None,
+            message: String::new(),
+            elapsed: None,
+            timings: Vec::new(),
+        };
+        job.add_timing("Aggregation", Some(1.0));
+        job.add_timing("Reduction", None);
+        job.add_timing("Aggregation", Some(0.5));
+        job.add_timing("Clustering", Some(0.25));
+
+        assert_eq!(job.timings.len(), 3, "{:?}", job.timings);
+        assert_eq!(
+            job.timings[0].stage, "Aggregation",
+            "the order is the report order"
+        );
+        assert_eq!(job.timings[0].seconds, 1.5);
+        assert_eq!(job.timings[0].computed, 2);
+        assert_eq!(job.timings[1].cached, 1);
+        assert_eq!(job.timings[1].computed, 0);
+        assert_eq!(job.compute_seconds(), 1.75);
+    }
 
     fn queue_of(steps: &[Step]) -> (Queue, Vec<u64>) {
         let mut queue = Queue::default();

@@ -29,6 +29,10 @@ pub struct SofOptions {
     pub stat_names: Vec<String>,
     pub var_sep: String,
     pub add_sample_info: bool,
+    /// Where the time spent aggregating is added up, when someone is
+    /// measuring it — the feature computation only, not the reading of the
+    /// network files around it.
+    pub compute_clock: Option<std::sync::Arc<crate::timing::ComputeClock>>,
 }
 
 impl SofOptions {
@@ -196,17 +200,22 @@ pub fn compute_spatial_omic_features_single_network(
     let pairs = edges.edges()?;
     let n_obs = nodes.n_rows();
 
-    let x = build_feature_matrix(&nodes, options, &nodes_path)?;
-
-    let features = make_features_nas(
-        &x,
-        n_obs,
-        &pairs,
-        options.order,
-        &options.use_attributes,
-        &options.stat_names,
-        &options.var_sep,
-    );
+    let compute = || -> Result<_> {
+        let x = build_feature_matrix(&nodes, options, &nodes_path)?;
+        Ok(make_features_nas(
+            &x,
+            n_obs,
+            &pairs,
+            options.order,
+            &options.use_attributes,
+            &options.stat_names,
+            &options.var_sep,
+        ))
+    };
+    let features = match &options.compute_clock {
+        Some(clock) => clock.measure(compute)?,
+        None => compute()?,
+    };
 
     Ok(VarAggreg {
         column_names: features.column_names,
@@ -341,6 +350,7 @@ mod tests {
             stat_names: vec!["mean".into(), "std".into()],
             var_sep: " ".into(),
             add_sample_info: true,
+            compute_clock: None,
         }
     }
 
