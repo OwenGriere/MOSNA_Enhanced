@@ -35,6 +35,7 @@ const NICHE_REDUCTION_KEYS: &[&str] = &[
     "n_neighbors",
     "metric",
     "min_dist",
+    "init",
 ];
 const NICHE_CLUSTERING_KEYS: &[&str] = &[
     "clusterer_type",
@@ -270,7 +271,7 @@ impl Form {
     /// them all editable would invite the user to set something with no effect.
     ///
     /// The reduction picker does the same for its own box. `dim_clust`,
-    /// `min_dist` and `metric` are read by the reducer alone, so
+    /// `min_dist`, `metric` and `init` are read by the reducer alone, so
     /// `reducer_type: none` retires them. `n_neighbors` is not: it also caps
     /// leiden's graph degree through `effective_k_cluster`, so it stays
     /// editable with no reducer at all.
@@ -322,7 +323,7 @@ impl Form {
                             "resolution" => is(&algorithm, &["leiden"]),
                             "n_clusters" => is(&algorithm, &["gmm", "spectral"]),
                             "min_cluster_size" => is(&algorithm, &["hdbscan"]),
-                            "dim_clust" | "min_dist" | "metric" => reduces,
+                            "dim_clust" | "min_dist" | "metric" | "init" => reduces,
                             _ => true,
                         };
                     }
@@ -395,10 +396,26 @@ fn build_section(name: &str, body: &Value) -> Section {
         let Value::Mapping(inner) = &sub_body else {
             continue;
         };
-        let entries: Vec<(String, Value)> = inner
+        let mut entries: Vec<(String, Value)> = inner
             .iter()
             .filter_map(|(k, v)| Some((k.as_str()?.to_string(), v.clone())))
             .collect();
+
+        // `init` is optional in the configuration: one written before the key
+        // existed has none and runs with `pca`. The box still shows it, filled
+        // with that default and placed after `min_dist`, so it can be changed
+        // without editing the file — the same treatment as the trimming keys.
+        let is_niche_tab = is_niche && (sub_name == "Aggregated nodes" || sub_name == "Per sample");
+        if is_niche_tab
+            && entries.iter().any(|(key, _)| key == "reducer_type")
+            && !entries.iter().any(|(key, _)| key == "init")
+        {
+            let at = entries
+                .iter()
+                .position(|(key, _)| key == "min_dist")
+                .map_or(entries.len(), |i| i + 1);
+            entries.insert(at, ("init".to_string(), Value::String("pca".to_string())));
+        }
 
         let groups = if is_niche && (sub_name == "Aggregated nodes" || sub_name == "Per sample") {
             grouped(

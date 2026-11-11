@@ -41,6 +41,7 @@ Niche Analysis:
     n_neighbors: 20
     metric: manhattan
     min_dist: 0.0
+    init: pca
     clusterer_type: gmm
     k_cluster: 20
     n_clusters: 6
@@ -56,6 +57,7 @@ Niche Analysis:
     n_neighbors: 20
     metric: cosine
     min_dist: 0.0
+    init: pca
     clusterer_type: gmm
     k_cluster: 20
     n_clusters: 7

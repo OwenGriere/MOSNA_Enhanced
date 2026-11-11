@@ -1136,15 +1136,31 @@ fn parameters() -> Chapter {
                                 "Distance utilisée pour comparer les voisinages : euclidean, \
                                  manhattan ou cosine.")),
                             Row::new("n_neighbors", "int", T::new(
-                                "Size of the local neighbourhood UMAP builds. Larger values \
-                                 favour global structure.",
-                                "Taille du voisinage local que construit UMAP. Des valeurs \
+                                "Size of the local neighbourhood UMAP builds, the cell itself \
+                                 included as in umap-learn. Larger values favour global \
+                                 structure.",
+                                "Taille du voisinage local que construit UMAP, la cellule \
+                                 elle-même comprise comme dans umap-learn. Des valeurs \
                                  élevées favorisent la structure globale.")),
                             Row::new("min_dist", "float", T::new(
                                 "How tightly points may pack in the projection. Smaller gives \
                                  tighter groups.",
                                 "À quel point les points peuvent se tasser dans la projection. \
                                  Plus petit donne des groupes plus serrés.")),
+                            Row::new("init", "string", T::new(
+                                "Starting layout of UMAP: pca (default), the leading principal \
+                                 components of the features; or spectral, the eigenvectors of \
+                                 the normalised Laplacian of the UMAP graph, which is \
+                                 umap-learn's own default and takes longer to compute. \
+                                 Optional: a configuration without it runs with pca. Ignored \
+                                 when reducer_type is none.",
+                                "Disposition de départ d'UMAP : pca (par défaut), les \
+                                 premières composantes principales des caractéristiques ; ou \
+                                 spectral, les vecteurs propres du laplacien normalisé du \
+                                 graphe d'UMAP, qui est le défaut de umap-learn et prend plus \
+                                 de temps à calculer. Facultatif : une configuration sans \
+                                 cette clé tourne avec pca. Ignoré quand reducer_type vaut \
+                                 none.")),
                             Row::new("dim_clust", "int", T::new(
                                 "Number of dimensions kept after reduction, for clustering.",
                                 "Nombre de dimensions conservées après réduction, pour le \

@@ -91,7 +91,7 @@ impl Recomputes {
 pub fn stage_rank(key: &str) -> u8 {
     match key {
         "order" | "stat_funcs" => 0,
-        "reducer_type" | "n_neighbors" | "dim_clust" | "min_dist" | "metric" => 1,
+        "reducer_type" | "n_neighbors" | "dim_clust" | "min_dist" | "metric" | "init" => 1,
         _ => 2,
     }
 }

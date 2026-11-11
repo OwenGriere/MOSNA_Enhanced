@@ -29,6 +29,7 @@ pub mod metric;
 pub mod nn_descent;
 pub mod optimize_layout;
 pub mod smooth_knn_dist;
+pub mod spectral_layout;
 
 pub use find_ab_params::find_ab_params;
 pub use fuzzy_simplicial_set::fuzzy_simplicial_set;
@@ -38,8 +39,31 @@ pub use metric::Metric;
 pub use nn_descent::{cluster_neighbours, nn_descent, umap_neighbours};
 pub use optimize_layout::{optimize_layout, LAYOUT_REVISION};
 pub use smooth_knn_dist::smooth_knn_dist;
+pub use spectral_layout::spectral_layout;
+
+use rand::SeedableRng;
+use rand_chacha::ChaCha8Rng;
+use rand_distr::{Distribution, Normal};
 
 use crate::error::{CoreError, Result};
+
+/// How the layout optimisation is started — the configuration's `init`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Init {
+    /// The leading principal components of the data — umap-learn's
+    /// `init='pca'`, and the default here.
+    #[default]
+    Pca,
+    /// The eigenvectors of the normalised Laplacian of the fuzzy graph —
+    /// umap-learn's `init='spectral'`, its own default. See
+    /// [`fn@spectral_layout`].
+    Spectral,
+}
+
+/// Standard deviation of the noise `noisy_scale_coords` adds to a PCA or
+/// spectral start: it separates points the start puts exactly on top of one
+/// another — identical NAS rows, which PCA maps to identical coordinates.
+const INIT_NOISE: f64 = 1e-4;
 
 /// The arithmetic the reduction runs in.
 ///
@@ -78,8 +102,8 @@ pub type Scalar = f32;
 pub struct UmapParams {
     /// Dimensionality of the embedding.
     pub n_components: usize,
-    /// Size of the local neighbourhood; the balance between local and global
-    /// structure.
+    /// Size of the local neighbourhood, the point itself included as in
+    /// umap-learn; the balance between local and global structure.
     pub n_neighbors: usize,
     pub metric: Metric,
     /// How tightly points may pack together in the embedding.
@@ -96,6 +120,8 @@ pub struct UmapParams {
     pub repulsion_strength: f64,
     /// Number of neighbours guaranteed a full-strength connection.
     pub local_connectivity: f64,
+    /// Starting layout: principal components (the default) or random.
+    pub init: Init,
     pub seed: u64,
 }
 
@@ -112,6 +138,7 @@ impl Default for UmapParams {
             negative_sample_rate: 5,
             repulsion_strength: 1.0,
             local_connectivity: 1.0,
+            init: Init::Pca,
             seed: 42,
         }
     }
@@ -161,17 +188,51 @@ pub fn umap(
         ));
     }
 
-    let mut embedding = init_layout(data, n_rows, n_features, params.n_components, params.seed);
+    // The PCA start needs no graph, and is also the answer below three points.
+    let pca = init_layout(data, n_rows, n_features, params.n_components, params.seed);
 
     // Below three points there is no neighbourhood structure to model, and the
     // initial layout is already the answer.
     if n_rows < 3 {
-        return Ok(embedding);
+        return Ok(pca);
     }
 
-    let k = params.n_neighbors.max(2).min(n_rows - 1);
+    // `n_neighbors` counts the point itself, as umap-learn's neighbour lists
+    // do: the search is for the `n_neighbors - 1` *other* points, and
+    // `smooth_knn_dist` adds the point back where umap-learn counts it.
+    let k = (params.n_neighbors.max(2) - 1).min(n_rows - 1);
     let graph = umap_neighbours(data, n_rows, n_features, k, params.metric, params.seed);
     let edges = fuzzy_simplicial_set(&graph, n_rows, params.local_connectivity as Scalar);
+    let n_epochs = params.epochs(n_rows);
+
+    let mut embedding = match params.init {
+        Init::Pca => {
+            // `init_layout` has already scaled it so its largest coordinate
+            // is 10; the noise is the rest of `noisy_scale_coords`.
+            let layout: Vec<f64> = pca.iter().map(|&v| v as f64).collect();
+            noisy_scale_coords(layout, params.seed)
+        }
+        Init::Spectral => {
+            // `graph.data[graph.data < graph.data.max() / n_epochs] = 0`: the
+            // edges too weak to be sampled once are gone before umap-learn
+            // initialises, so they do not join components either.
+            let max_weight = edges.iter().map(|e| e.2).fold(0.0 as Scalar, Scalar::max);
+            let floor = max_weight / n_epochs.max(1) as Scalar;
+            let pruned: Vec<(usize, usize, Scalar)> =
+                edges.iter().copied().filter(|e| e.2 >= floor).collect();
+            let layout = spectral_layout(
+                data,
+                n_rows,
+                n_features,
+                &pruned,
+                params.n_components,
+                params.metric,
+                params.seed,
+            );
+            noisy_scale_coords(layout, params.seed)
+        }
+    };
+    rescale_to_ten(&mut embedding, n_rows, params.n_components);
 
     // Fitted in `f64`, as `scipy.optimize.curve_fit` is, and applied in single
     // precision like the rest of the layout.
@@ -183,7 +244,7 @@ pub fn umap(
         n_rows,
         params.n_components,
         &edges,
-        params.epochs(n_rows),
+        n_epochs,
         a,
         b,
         params.learning_rate as Scalar,
@@ -193,6 +254,42 @@ pub fn umap(
     );
 
     Ok(embedding)
+}
+
+/// umap-learn's `noisy_scale_coords(coords, max_coord=10, noise=0.0001)`:
+/// scaled so the largest coordinate is 10, then a little Gaussian noise.
+fn noisy_scale_coords(coords: Vec<f64>, seed: u64) -> Vec<Scalar> {
+    let extent = coords.iter().fold(0.0f64, |m, v| m.max(v.abs()));
+    let expansion = if extent > 0.0 { 10.0 / extent } else { 1.0 };
+    let mut rng = ChaCha8Rng::seed_from_u64(seed ^ 0x2545_f491_4f6c_dd1d);
+    let noise = Normal::new(0.0, INIT_NOISE).expect("a positive standard deviation");
+    coords
+        .into_iter()
+        .map(|v| (v * expansion) as Scalar + noise.sample(&mut rng) as Scalar)
+        .collect()
+}
+
+/// `10 * (embedding - min) / (max - min)`, column by column — what umap-learn
+/// 0.5.12 does to every starting layout before optimising it. A column with
+/// no spread is left at zero rather than divided by it.
+fn rescale_to_ten(embedding: &mut [Scalar], n_rows: usize, n_components: usize) {
+    for d in 0..n_components {
+        let (mut lo, mut hi) = (Scalar::INFINITY, Scalar::NEG_INFINITY);
+        for row in 0..n_rows {
+            let v = embedding[row * n_components + d];
+            lo = lo.min(v);
+            hi = hi.max(v);
+        }
+        let span = hi - lo;
+        for row in 0..n_rows {
+            let v = &mut embedding[row * n_components + d];
+            *v = if span > 0.0 {
+                10.0 * (*v - lo) / span
+            } else {
+                0.0
+            };
+        }
+    }
 }
 
 #[cfg(test)]

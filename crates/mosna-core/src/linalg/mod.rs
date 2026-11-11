@@ -8,12 +8,16 @@
 //!
 //! The matrices involved are small — the number of clusters or the embedding
 //! dimensionality, never the number of cells — so straightforward dense
-//! algorithms are the right choice.
+//! algorithms are the right choice. The one exception is the spectral
+//! initialisation of UMAP, which needs a few eigenvectors of the cell graph
+//! itself: [`mod@lobpcg`] computes those from matrix-vector products alone.
 
 pub mod cholesky;
 pub mod eigen;
 pub mod kmeans;
+pub mod lobpcg;
 
 pub use cholesky::{cholesky, Cholesky};
 pub use eigen::{symmetric_eigen, Eigen};
 pub use kmeans::{kmeans, KMeansResult};
+pub use lobpcg::{leading_eigenpairs, Leading};

@@ -202,7 +202,8 @@ fn knn_graph_clamps_k_to_the_dataset() {
 // ---------------------------------------------------------------------------
 
 /// The defining equation of UMAP's local connectivity: the membership strengths
-/// of a point's neighbours sum to `log2(k)`.
+/// of a point's `k` other neighbours sum to `log2(n_neighbors)`, where
+/// `n_neighbors = k + 1` counts the point itself, as umap-learn does.
 #[test]
 fn smooth_knn_solves_its_defining_equation() {
     let (data, _) = blobs(3, 15, 6.0);
@@ -212,7 +213,7 @@ fn smooth_knn_solves_its_defining_equation() {
     let graph = knn_graph(&data, n_rows, n_features, k, Metric::Euclidean);
     let (rho, sigma) = smooth_knn_dist(&graph.distances, 1.0);
 
-    let target = (k as Scalar).log2();
+    let target = ((k + 1) as Scalar).log2();
     for i in 0..n_rows {
         assert!(sigma[i] > 0.0, "sigma must be positive, got {}", sigma[i]);
         let sum: Scalar = graph.distances[i]
@@ -221,12 +222,13 @@ fn smooth_knn_solves_its_defining_equation() {
             .sum();
         assert!(
             (sum - target).abs() < 1e-3,
-            "point {i}: membership sum {sum} != log2(k) = {target}"
+            "point {i}: membership sum {sum} != log2(k + 1) = {target}"
         );
     }
 }
 
-/// `rho` is the distance to the nearest neighbour, which is what guarantees
+/// `rho` is the distance to the nearest neighbour at a positive distance — on
+/// these blobs no two points coincide, so the nearest one — which is what guarantees
 /// every point keeps at least one full-strength connection and so cannot be
 /// stranded in the embedding.
 #[test]
@@ -511,7 +513,9 @@ proptest! {
         for i in 0..sorted.len() {
             prop_assert!(sigma[i] > 0.0, "sigma[{}] = {}", i, sigma[i]);
             prop_assert!(sigma[i].is_finite());
-            prop_assert!((rho[i] - sorted[i][0]).abs() < 1e-12);
+            // The first positive distance, or 0 when every one is zero.
+            let expected = sorted[i].iter().copied().find(|&d| d > 0.0).unwrap_or(0.0);
+            prop_assert!((rho[i] - expected).abs() < 1e-12);
         }
     }
 }

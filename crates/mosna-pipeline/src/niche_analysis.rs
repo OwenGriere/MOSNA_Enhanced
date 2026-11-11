@@ -3,7 +3,7 @@
 use std::path::{Path, PathBuf};
 
 use mosna_config::model::niche_params::{
-    ClustererType, Metric as ConfigMetric, NicheParams, ReducerType,
+    ClustererType, Metric as ConfigMetric, NicheParams, ReducerType, UmapInit,
 };
 use mosna_config::validate::assert_params::{assert_params, Analysis};
 use mosna_config::{save_config, section, NicheAnalysisConfig, RawConfig};
@@ -18,7 +18,7 @@ use mosna_core::niches::{
     Normalize,
 };
 use mosna_core::reduction::umap::{
-    cluster_neighbours, umap, Metric, Scalar, UmapParams, LAYOUT_REVISION,
+    cluster_neighbours, umap, Init, Metric, Scalar, UmapParams, LAYOUT_REVISION,
 };
 use mosna_io::read::get_opener::{read_table, Extension};
 use mosna_io::write::write_parquet::write_parquet;
@@ -1428,6 +1428,10 @@ fn project(var_aggreg: &VarAggreg, params: &NicheParams) -> Result<ClusterInput>
                     ConfigMetric::Euclidean => Metric::Euclidean,
                 },
                 min_dist: params.min_dist,
+                init: match params.init {
+                    UmapInit::Pca => Init::Pca,
+                    UmapInit::Spectral => Init::Spectral,
+                },
                 ..UmapParams::default()
             };
             // Narrowed on the way in and widened on the way out: the
