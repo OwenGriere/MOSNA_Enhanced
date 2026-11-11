@@ -4,7 +4,7 @@
 //! resolution_parameter=resolution, seed=0)` in `clustering.py::get_clusterer`.
 
 use rand::seq::SliceRandom;
-use rand::SeedableRng;
+use rand::{Rng, SeedableRng};
 use rand_chacha::ChaCha8Rng;
 
 use crate::clustering::relabel_clusters::relabel_clusters;
@@ -72,10 +72,20 @@ impl Graph {
 /// which is what the `resolution` setting in the configuration controls.
 ///
 /// The algorithm is Leiden proper, not Louvain: after each local-moving pass
-/// the communities are *refined* into well-connected sub-communities before
-/// being aggregated. That refinement is what stops Louvain's known failure
+/// the communities are *refined* into sub-communities, never across a
+/// community boundary, before being aggregated (see [`fn@refine`]). That refinement is what stops Louvain's known failure
 /// mode, where a community can end up internally disconnected and yet never be
 /// split again.
+///
+/// # Two iterations, as `leidenalg.find_partition` runs
+///
+/// `find_partition` calls `optimise_partition` `n_iterations` times, two by
+/// default, each starting from the partition the previous one returned. The
+/// second is not a repetition of the first: it starts on the original graph
+/// with the communities already found, refines them back into well-connected
+/// pieces and aggregates on those, so a piece that was put in the wrong
+/// community during the first iteration can now be moved as a whole. This
+/// runs the same two.
 ///
 /// Labels come back renumbered contiguously from 0.
 pub fn leiden(
@@ -88,29 +98,72 @@ pub fn leiden(
         return Vec::new();
     }
 
-    let mut graph = Graph::new(n_nodes, edges);
+    let graph = Graph::new(n_nodes, edges);
+    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+
+    // `n_iterations=2`, leidenalg's default and what `get_clusterer` uses.
+    let mut partition: Vec<usize> = (0..n_nodes).collect();
+    for _ in 0..N_ITERATIONS {
+        partition = optimise_partition(&graph, partition, resolution, &mut rng);
+    }
+
+    let communities: Vec<u32> = partition.iter().map(|&c| c as u32).collect();
+    relabel_clusters(&communities)
+}
+
+/// How many times [`fn@leiden`] optimises the partition, as
+/// `leidenalg.find_partition(..., n_iterations=2)` does by default.
+const N_ITERATIONS: usize = 2;
+
+/// Bumped whenever [`fn@leiden`] changes what it returns for the same input, so
+/// that a partition cached by an earlier revision is recomputed rather than
+/// believed.
+///
+/// - 1: one multi-level pass, stopped as soon as local moving found nothing.
+/// - 2: two passes, each aggregating while the refinement still shrinks the
+///   graph, as `leidenalg` does.
+/// - 3: the refinement of `merge_nodes_constrained` — only single nodes move,
+///   towards the sub-community of one neighbour drawn at random.
+pub const LEIDEN_REVISION: u32 = 3;
+
+/// One `optimise_partition`: local moving, refinement and aggregation, level
+/// after level, starting from `initial` on the original graph.
+///
+/// Returns the partition of the original nodes.
+fn optimise_partition(
+    original: &Graph,
+    initial: Vec<usize>,
+    resolution: f64,
+    rng: &mut ChaCha8Rng,
+) -> Vec<usize> {
+    let mut graph = original.clone();
     // Maps each original node to its node id in the *current* graph. Every
     // aggregation rewrites it; the community assignment is only applied at the
     // very end, because the two numberings are different and mixing them up
     // collapses the whole partition.
-    let mut membership: Vec<usize> = (0..n_nodes).collect();
+    let mut membership: Vec<usize> = (0..original.n_nodes).collect();
     // Partition of the current (possibly aggregated) graph.
-    let mut partition: Vec<usize> = (0..n_nodes).collect();
-    let mut rng = ChaCha8Rng::seed_from_u64(seed);
+    let mut partition = initial;
 
     for _ in 0..64 {
-        let improved = local_move(&graph, &mut partition, resolution, &mut rng);
+        local_move(&graph, &mut partition, resolution, rng);
         let n_communities = renumber(&mut partition);
-
-        if !improved || n_communities == graph.n_nodes {
-            break;
-        }
 
         // Refine each community into well-connected pieces, then aggregate on
         // the refined partition while keeping the coarse communities as the
         // starting point of the next level.
-        let mut refined = refine(&graph, &partition, resolution, &mut rng);
+        let mut refined = refine(&graph, &partition, resolution, rng);
         let n_refined = renumber(&mut refined);
+
+        // leidenalg's `aggregate_further`: go on while aggregating still
+        // shrinks the graph and the graph still has more nodes than
+        // communities. Stopping as soon as local moving finds nothing, as the
+        // first revision did, skips the levels where refined pieces — not
+        // single nodes — would move, and those are the moves the second
+        // iteration exists for.
+        if !(n_refined < graph.n_nodes && graph.n_nodes > n_communities) {
+            break;
+        }
 
         let coarse: Vec<usize> = {
             // For each refined community, the coarse community it came from.
@@ -129,11 +182,7 @@ pub fn leiden(
     }
 
     // Now — and only now — turn node ids into community ids.
-    let communities: Vec<u32> = membership
-        .iter()
-        .map(|&node| partition[node] as u32)
-        .collect();
-    relabel_clusters(&communities)
+    membership.iter().map(|&node| partition[node]).collect()
 }
 
 /// Move nodes one at a time into the neighbouring community that improves the
@@ -213,59 +262,97 @@ fn local_move(
     any_improvement
 }
 
-/// Split each community into well-connected sub-communities.
+/// Split each community into sub-communities, as leidenalg refines.
 ///
-/// Starts from singletons inside the community and merges greedily, never
-/// crossing a community boundary. A community that is internally disconnected
-/// comes out as several pieces, which is precisely what Louvain cannot do and
-/// Leiden can.
+/// A port of `Optimiser::merge_nodes_constrained` with leidenalg's defaults
+/// (`refine_routine = MERGE_NODES`, `refine_consider_comms = RAND_NEIGH_COMM`),
+/// which is what `find_partition` runs:
+///
+/// 1. every node starts alone in its own sub-community;
+/// 2. the nodes are visited once each, in a random order;
+/// 3. only a node that is *still alone* may move — once another node has
+///    joined it, it stays where it is, and a sub-community only ever grows by
+///    absorbing single nodes;
+/// 4. the candidate is drawn at random: with `k` neighbours inside the same
+///    coarse community, the node stays put with probability `1 / (k + 1)`,
+///    and otherwise one of those neighbours is drawn uniformly and its
+///    sub-community is the only candidate — so a sub-community is proposed in
+///    proportion to how many neighbours the node has in it;
+/// 5. the node moves there if the gain is at least zero (`>=`, as in
+///    leidenalg: a move that changes nothing is still taken).
+///
+/// No move ever crosses a coarse community, so a community that is internally
+/// disconnected comes out as several pieces — what Louvain cannot do and Leiden
+/// can.
+///
+/// # What this is not
+///
+/// The paper (Traag, Waltman & van Eck, 2019) draws the target with
+/// probability `exp(gain / theta)` and only among "well-connected"
+/// sub-communities. leidenalg, the reference this ports, does neither: it is
+/// greedy on a single random candidate and checks no connectivity. The port
+/// follows leidenalg.
 fn refine(graph: &Graph, partition: &[usize], resolution: f64, rng: &mut ChaCha8Rng) -> Vec<usize> {
     let mut refined: Vec<usize> = (0..graph.n_nodes).collect();
     let mut community_degree: Vec<f64> = graph.degree.clone();
+    let mut community_size: Vec<usize> = vec![1; graph.n_nodes];
 
     let mut order: Vec<usize> = (0..graph.n_nodes).collect();
     order.shuffle(rng);
 
-    // A `BTreeMap`, not a `HashMap`: the loop below breaks ties by iteration
-    // order, and `HashMap` seeds its hasher per thread — the same graph would
-    // then be partitioned differently on a worker thread than on the main one,
-    // and differently again in the next process. Ordering by community id makes
-    // the tie-break a property of the graph. The map holds one entry per
-    // neighbouring community, so it is tiny and the tree costs nothing.
-    let mut weights_to: std::collections::BTreeMap<usize, f64> = Default::default();
+    // The neighbours of the node being visited that share its coarse
+    // community, one entry per edge, as igraph lists them.
+    let mut inside: Vec<usize> = Vec::new();
 
     for &node in &order {
-        weights_to.clear();
-        for &(neighbour, w) in &graph.adj[node] {
-            // The refinement may not merge across the coarse communities.
-            if partition[neighbour] != partition[node] {
-                continue;
-            }
-            *weights_to.entry(refined[neighbour]).or_insert(0.0) += w;
-        }
-        if weights_to.is_empty() {
+        let current = refined[node];
+        if community_size[current] != 1 {
             continue;
         }
 
-        let current = refined[node];
-        community_degree[current] -= graph.degree[node];
-
-        let mut best_community = current;
-        let mut best_gain = 0.0f64;
-        for (&candidate, &weight) in &weights_to {
-            if candidate == current {
-                continue;
-            }
-            let gain = weight
-                - resolution * graph.degree[node] * community_degree[candidate] / graph.two_m;
-            if gain > best_gain + 1e-12 {
-                best_gain = gain;
-                best_community = candidate;
-            }
+        inside.clear();
+        inside.extend(
+            graph.adj[node]
+                .iter()
+                .map(|&(neighbour, _)| neighbour)
+                .filter(|&neighbour| partition[neighbour] == partition[node]),
+        );
+        // A self-loop is a neighbour in igraph too. Drawing it proposes the
+        // node's own sub-community, which leaves it where it is.
+        if graph.self_loop[node] > 0.0 {
+            inside.push(node);
+        }
+        let k = inside.len();
+        if k == 0 {
+            continue;
         }
 
-        community_degree[best_community] += graph.degree[node];
-        refined[node] = best_community;
+        // `get_random_int(0, k) > 0`: one chance in `k + 1` of staying put.
+        if rng.gen_range(0..=k) == 0 {
+            continue;
+        }
+        let candidate = refined[inside[rng.gen_range(0..k)]];
+        if candidate == current {
+            continue;
+        }
+
+        // The node is alone, so leaving costs nothing and the gain of joining
+        // is measured against an empty starting point.
+        let weight: f64 = graph.adj[node]
+            .iter()
+            .filter(|&&(neighbour, _)| refined[neighbour] == candidate)
+            .map(|&(_, w)| w)
+            .sum();
+        let gain =
+            weight - resolution * graph.degree[node] * community_degree[candidate] / graph.two_m;
+
+        if gain >= 0.0 {
+            community_degree[current] -= graph.degree[node];
+            community_degree[candidate] += graph.degree[node];
+            community_size[current] -= 1;
+            community_size[candidate] += 1;
+            refined[node] = candidate;
+        }
     }
 
     refined
