@@ -118,14 +118,20 @@ impl<R: Run> Renderer<R> {
     pub fn with(interpreter: impl Into<PathBuf>, runner: R) -> Self {
         Self {
             interpreter: interpreter.into(),
-            formats: vec!["png".to_string(), "html".to_string()],
+            formats: vec!["png".to_string()],
             runner,
         }
     }
 
     /// Which formats each figure is written in.
+    ///
+    /// `html` is never passed on: the report is the only HTML written.
     pub fn formats(mut self, formats: &[&str]) -> Self {
-        self.formats = formats.iter().map(|f| f.to_string()).collect();
+        self.formats = formats
+            .iter()
+            .filter(|f| !f.eq_ignore_ascii_case("html"))
+            .map(|f| f.to_string())
+            .collect();
         self
     }
 
@@ -233,21 +239,26 @@ mod tests {
                 "render",
                 "/runs/.mosna-figures",
                 "--formats",
-                "png,html"
+                "png"
             ]
         );
     }
 
     #[test]
-    fn the_formats_can_be_narrowed() {
+    fn html_is_never_asked_of_the_renderer() {
+        let renderer = Renderer::with("/usr/bin/python3", Recording::new(true, ""))
+            .formats(&["png", "html", "svg"]);
+        let arguments = renderer.render_arguments(Path::new("/q"));
+        assert_eq!(arguments.last().map(String::as_str), Some("png,svg"));
+    }
+
+    #[test]
+    fn the_formats_can_be_changed() {
         let renderer =
-            Renderer::with("/usr/bin/python3", Recording::new(true, "")).formats(&["png"]);
+            Renderer::with("/usr/bin/python3", Recording::new(true, "")).formats(&["svg"]);
         assert!(renderer
             .render_arguments(Path::new("/q"))
-            .contains(&"png".to_string()));
-        assert!(!renderer
-            .render_arguments(Path::new("/q"))
-            .contains(&"png,html".to_string()));
+            .contains(&"svg".to_string()));
     }
 
     #[test]

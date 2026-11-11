@@ -21,9 +21,9 @@ class RenderError(RuntimeError):
     """A figure that could not be drawn."""
 
 
-#: What is written for each figure. The PNG is what the interface's gallery
-#: shows; the HTML is the interactive chart, and what the report embeds.
-DEFAULT_FORMATS: tuple[str, ...] = ("png", "html")
+#: What is written for each figure: the PNG the interface's gallery and the
+#: report show. Figures are never written as HTML; the report is the only HTML.
+DEFAULT_FORMATS: tuple[str, ...] = ("png",)
 
 
 @dataclass
@@ -56,7 +56,7 @@ def pending(queue: Path | str) -> list[Path]:
 
 
 def _export(chart, path: Path, extension: str) -> None:
-    exporters = {"png": chart.to_png, "html": chart.to_html, "svg": chart.to_svg}
+    exporters = {"png": chart.to_png, "svg": chart.to_svg}
     if extension not in exporters:
         raise RenderError(f"cannot write a figure as {extension!r}")
     exporters[extension](path)

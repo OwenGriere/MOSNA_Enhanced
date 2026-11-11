@@ -73,14 +73,14 @@ def test_an_empty_queue_succeeds_quietly(tmp_path: Path) -> None:
     assert cli.main(["render", str(tmp_path / "nothing")]) == 0
 
 
-def test_both_formats_are_written_by_default(tmp_path: Path) -> None:
+def test_only_png_is_written_by_default(tmp_path: Path) -> None:
     queue, out = tmp_path / "queue", tmp_path / "out"
     queue_one(queue, "Niches_Histogram", out)
 
     cli.main(["render", str(queue)])
 
     assert (out / "Niches_Histogram.png").is_file()
-    assert (out / "Niches_Histogram.html").is_file()
+    assert not (out / "Niches_Histogram.html").exists()
 
 
 def test_the_check_command_reports_the_versions_it_found(capsys) -> None:

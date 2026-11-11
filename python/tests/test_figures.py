@@ -104,9 +104,9 @@ EVERY_FIGURE = {
 @pytest.mark.parametrize("kind", sorted(EVERY_FIGURE))
 def test_every_figure_is_drawn_and_exported(kind, make_spec, tmp_path: Path) -> None:
     spec = EVERY_FIGURE[kind](make_spec)
-    written = render.render_spec(spec, formats=("png", "html"))
+    written = render.render_spec(spec, formats=("png", "svg"))
 
-    assert [path.suffix for path in written] == [".png", ".html"]
+    assert [path.suffix for path in written] == [".png", ".svg"]
     for path in written:
         assert path.stat().st_size > 0, f"{path.name} is empty"
 
@@ -114,7 +114,7 @@ def test_every_figure_is_drawn_and_exported(kind, make_spec, tmp_path: Path) -> 
 @pytest.mark.parametrize("kind", sorted(EVERY_FIGURE))
 def test_every_figure_is_a_chart_before_it_is_a_file(kind, make_spec) -> None:
     """A builder returns a chart and writes nothing: that is what lets a figure
-    be tested, and what keeps the interactive HTML and the PNG the same chart."""
+    be tested, and what keeps the PNG and the SVG the same chart."""
     spec = EVERY_FIGURE[kind](make_spec)
     chart = figures.BUILDERS[kind](spec)
     assert chart is not None

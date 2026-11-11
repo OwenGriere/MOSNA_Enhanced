@@ -41,11 +41,21 @@ def test_a_figure_is_written_in_every_requested_format(tmp_path: Path) -> None:
     out = tmp_path / "out"
     folder = queue_one(tmp_path / "queue", histogram(out))
 
-    written = render.render_spec(Spec.load(folder / DOCUMENT_NAME), formats=("png", "html"))
+    written = render.render_spec(Spec.load(folder / DOCUMENT_NAME), formats=("png", "svg"))
 
     assert (out / "Niches_Histogram.png").is_file()
-    assert (out / "Niches_Histogram.html").is_file()
-    assert set(written) == {out / "Niches_Histogram.png", out / "Niches_Histogram.html"}
+    assert (out / "Niches_Histogram.svg").is_file()
+    assert set(written) == {out / "Niches_Histogram.png", out / "Niches_Histogram.svg"}
+
+
+def test_a_figure_is_never_written_as_html(tmp_path: Path) -> None:
+    """The report is the only HTML MOSNA writes."""
+    out = tmp_path / "out"
+    folder = queue_one(tmp_path / "queue", histogram(out))
+
+    with pytest.raises(render.RenderError):
+        render.render_spec(Spec.load(folder / DOCUMENT_NAME), formats=("html",))
+    assert not (out / "Niches_Histogram.html").exists()
 
 
 def test_only_the_requested_formats_are_written(tmp_path: Path) -> None:
@@ -55,7 +65,7 @@ def test_only_the_requested_formats_are_written(tmp_path: Path) -> None:
     render.render_spec(Spec.load(folder / DOCUMENT_NAME), formats=("png",))
 
     assert (out / "Niches_Histogram.png").is_file()
-    assert not (out / "Niches_Histogram.html").exists()
+    assert not (out / "Niches_Histogram.svg").exists()
 
 
 def test_the_saving_directory_is_created(tmp_path: Path) -> None:
