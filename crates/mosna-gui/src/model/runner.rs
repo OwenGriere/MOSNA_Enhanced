@@ -154,19 +154,15 @@ impl Step {
     }
 }
 
-/// Which analyses run *without plotting figures*.
-///
-/// One box per analysis, at the top of its panel. Ticked, the analysis writes
-/// its tables and every other file as usual, and sets its figures aside instead
-/// of drawing them; [`Step::PlotFigures`] draws them afterwards.
+/// One box per analysis, at the top of its panel.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub struct WithoutFigures {
+pub struct PerAnalysis {
     pub tysserand: bool,
     pub assortativity: bool,
     pub niche_analysis: bool,
 }
 
-impl WithoutFigures {
+impl PerAnalysis {
     /// The box of `step`, for an analysis; `None` for anything else.
     pub fn get_mut(&mut self, step: Step) -> Option<&mut bool> {
         match step {
@@ -177,17 +173,45 @@ impl WithoutFigures {
         }
     }
 
-    /// Whether `step` is to run without drawing.
-    pub fn skips(mut self, step: Step) -> bool {
+    /// Whether the box of `step` is ticked; never for anything but an analysis.
+    pub fn ticked(mut self, step: Step) -> bool {
         self.get_mut(step).is_some_and(|ticked| *ticked)
     }
+}
 
-    /// The arguments `step` is started with, `--no-figures` included when its
-    /// box is ticked.
+/// The two boxes at the top of each analysis panel, side by side.
+///
+/// - *Without plotting figures*: the analysis writes its tables and every
+///   other file as usual, and sets its figures aside instead of drawing them;
+///   [`Step::PlotFigures`] draws them afterwards.
+/// - *Benchmark*: the analysis also writes its execution time as a CSV, one
+///   row per network, in `<working_dir>/benchmark/` — the CLI's `--benchmark`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RunOptions {
+    pub without_figures: PerAnalysis,
+    pub benchmark: PerAnalysis,
+}
+
+impl RunOptions {
+    /// Whether `step` is to run without drawing.
+    pub fn skips(self, step: Step) -> bool {
+        self.without_figures.ticked(step)
+    }
+
+    /// Whether `step` is to write its execution time.
+    pub fn benchmarks(self, step: Step) -> bool {
+        self.benchmark.ticked(step)
+    }
+
+    /// The arguments `step` is started with, `--no-figures` and `--benchmark`
+    /// included when their boxes are ticked.
     pub fn arguments(self, step: Step, config_path: &Path, working_dir: &Path) -> Vec<String> {
         let mut arguments = step.arguments(config_path, working_dir);
         if self.skips(step) {
             arguments.push("--no-figures".to_string());
+        }
+        if self.benchmarks(step) {
+            arguments.push("--benchmark".to_string());
         }
         arguments
     }
@@ -414,19 +438,59 @@ mod tests {
     #[test]
     fn a_ticked_box_runs_its_analysis_without_figures() {
         let (config, work) = (Path::new("/cfg.yaml"), Path::new("/work"));
-        let mut boxes = WithoutFigures::default();
+        let mut boxes = RunOptions::default();
         for step in Step::all() {
             assert!(!boxes
                 .arguments(step, config, work)
                 .contains(&"--no-figures".to_string()));
         }
 
-        *boxes.get_mut(Step::Assortativity).unwrap() = true;
+        *boxes.without_figures.get_mut(Step::Assortativity).unwrap() = true;
         for step in Step::all() {
             let flagged = boxes
                 .arguments(step, config, work)
                 .contains(&"--no-figures".to_string());
             assert_eq!(flagged, step == Step::Assortativity, "{step:?}");
+        }
+    }
+
+    /// The benchmark box adds `--benchmark` to its own analysis only, and
+    /// independently of the figures box.
+    #[test]
+    fn a_ticked_benchmark_box_times_its_analysis() {
+        let (config, work) = (Path::new("/cfg.yaml"), Path::new("/work"));
+        let mut boxes = RunOptions::default();
+        for step in Step::all() {
+            assert!(!boxes
+                .arguments(step, config, work)
+                .contains(&"--benchmark".to_string()));
+        }
+
+        *boxes.benchmark.get_mut(Step::NicheAnalysis).unwrap() = true;
+        for step in Step::all() {
+            let arguments = boxes.arguments(step, config, work);
+            assert_eq!(
+                arguments.contains(&"--benchmark".to_string()),
+                step == Step::NicheAnalysis,
+                "{step:?}"
+            );
+            assert!(!arguments.contains(&"--no-figures".to_string()), "{step:?}");
+        }
+    }
+
+    /// The CLI accepts the flag where the interface puts it, after the
+    /// subcommand's own arguments.
+    #[test]
+    fn the_benchmark_flag_is_one_the_cli_parses() {
+        let mut boxes = RunOptions::default();
+        for step in [Step::Tysserand, Step::Assortativity, Step::NicheAnalysis] {
+            *boxes.benchmark.get_mut(step).unwrap() = true;
+            *boxes.without_figures.get_mut(step).unwrap() = true;
+            let arguments = boxes.arguments(step, Path::new("/cfg.yaml"), Path::new("/work"));
+            let cli =
+                mosna_cli::Cli::parse_from(std::iter::once("mosna".to_string()).chain(arguments))
+                    .unwrap_or_else(|error| panic!("{step:?}: {error}"));
+            assert!(cli.benchmark, "{step:?}");
         }
     }
 
@@ -448,7 +512,7 @@ mod tests {
             Step::PlotFigures,
             Step::ClearTemporary,
         ] {
-            assert!(WithoutFigures::default().get_mut(step).is_none());
+            assert!(PerAnalysis::default().get_mut(step).is_none());
         }
     }
 

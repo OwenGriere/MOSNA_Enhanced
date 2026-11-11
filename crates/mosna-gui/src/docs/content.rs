@@ -863,7 +863,8 @@ fn parameters() -> Chapter {
                          than Trim distance ratio × that length, and longer than Trim min \
                          distance, is removed. Because the threshold is measured on each \
                          cell's own neighbourhood, an edge that is too long in a dense region \
-                         can be kept at the same length in a sparse one.",
+                         can be kept at the same length in a sparse one. Trim distance can \
+                         then add a single cut-off for the whole sample on top of it.",
                         "Une triangulation relie chaque cellule à quelque chose, y compris à \
                          travers les zones vides et le long du bord du tissu, où elle trace de \
                          longues arêtes entre des cellules qui ne sont pas voisines. La coupe \
@@ -873,7 +874,8 @@ fn parameters() -> Chapter {
                          cette longueur, et plus longue que Trim min distance, est retirée. \
                          Comme le seuil est mesuré sur le voisinage propre de chaque cellule, \
                          une arête trop longue dans une région dense peut être conservée à la \
-                         même longueur dans une région clairsemée.",
+                         même longueur dans une région clairsemée. Trim distance peut ensuite \
+                         y ajouter un seuil unique pour tout l'échantillon.",
                     )),
                     Block::Paragraph(T::new(
                         "Example: a cell whose edges measure 8, 10, 11, 14, 25 and 40, with \
@@ -942,20 +944,45 @@ fn parameters() -> Chapter {
                                  nulle.",
                                 ),
                             ),
+                            Row::new(
+                                "Trim distance",
+                                "float or null",
+                                T::new(
+                                    "A single cut-off for the whole sample, applied after the \
+                                 per-cell trimming: every remaining edge at or above this length \
+                                 is removed, wherever it is. This is tysserand's trim_dist. In \
+                                 the unit of your coordinates, like Trim min distance. Empty or \
+                                 null (the default) means no cut-off; false is accepted too. It \
+                                 only changes anything where every edge of a cell is long — sparse \
+                                 regions, holes, the border of the tissue — since elsewhere the \
+                                 per-cell rule has already removed such edges. Must be greater \
+                                 than 0.",
+                                    "Un seuil unique pour tout l'échantillon, appliqué après la \
+                                 coupe par cellule : toute arête restante de longueur supérieure \
+                                 ou égale à cette valeur est retirée, où qu'elle soit. C'est le \
+                                 trim_dist de tysserand. Il s'exprime dans l'unité de vos \
+                                 coordonnées, comme Trim min distance. Vide ou null (le défaut) : \
+                                 pas de seuil ; false est aussi accepté. Il ne change quelque \
+                                 chose que là où toutes les arêtes d'une cellule sont longues \
+                                 (régions clairsemées, trous, bord du tissu), car ailleurs la \
+                                 coupe par cellule a déjà retiré ces arêtes. Doit être supérieur \
+                                 à 0.",
+                                ),
+                            ),
                         ],
                     },
                     Block::Callout {
                         kind: CalloutKind::Note,
                         text: T::new(
-                            "The defaults — 2, 3 and 0 — are those of tysserand 0.6.0, so they \
-                             build the same networks as MOSNA in Python. A configuration that \
-                             does not mention these three settings uses them too. The box is \
+                            "The defaults — 2, 3, 0 and no Trim distance — are those of \
+                             tysserand 0.6.0, so they build the same networks as MOSNA in Python. \
+                             A configuration that does not mention these settings uses them too. The box is \
                              only shown while Edges method is delaunay; with knn it is hidden, \
                              but the triangulation is still trimmed with the values it holds.",
-                            "Les valeurs par défaut (2, 3 et 0) sont celles de tysserand 0.6.0 : \
-                             elles construisent les mêmes réseaux que MOSNA en Python. Une \
-                             configuration qui ne mentionne pas ces trois réglages les utilise \
-                             aussi. Le bloc n'est affiché que lorsque Edges method vaut \
+                            "Les valeurs par défaut (2, 3, 0 et pas de Trim distance) sont \
+                             celles de tysserand 0.6.0 : elles construisent les mêmes réseaux que \
+                             MOSNA en Python. Une configuration qui ne mentionne pas ces réglages \
+                             les utilise aussi. Le bloc n'est affiché que lorsque Edges method vaut \
                              delaunay ; avec knn il est masqué, mais la triangulation est \
                              toujours coupée avec les valeurs qu'il contient.",
                         ),

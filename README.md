@@ -218,15 +218,14 @@ mosna-gui                        # the interface
 mosna --help                     # the command line, for scripts and clusters
 ```
 
-Every figure is written twice: a **PNG**, which is what the interface's gallery
-shows, and an **HTML** chart beside it, which is the same figure with its axes
-live — pan, zoom, and the value of a cell under the pointer.
+Every figure is written as a **PNG**, which is what the interface's gallery
+shows. No figure is written as HTML: the only HTML file MOSNA produces is the
+report, and only when **Generate report** is clicked.
 
 **Generate report** gathers all of them into `report.html` at the root of the
 working directory. One tab per analysis; inside each, the cohort's figures
 first and then a patient at a time; a search box that filters by patient,
-sample or file name; and thumbnails that open full size, where the chart zooms
-and pans as it does on its own. A fourth tab lists everything else in the
+sample or file name; and thumbnails that open full size. A fourth tab lists everything else in the
 directory. It references the figures rather than copying them, so a report of
 five hundred figures is six hundred kilobytes and travels with the folder.
 

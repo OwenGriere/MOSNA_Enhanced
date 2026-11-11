@@ -89,16 +89,32 @@ fn sections(app: &mut MosnaApp, ui: &mut egui::Ui) {
     // At the very top of an analysis's panel, above its parameters: it says
     // what the run will produce rather than how it computes.
     if let Some(step) = crate::model::runner::Step::for_section(&names[section_index]) {
-        if let Some(ticked) = app.without_figures.get_mut(step) {
-            ui.checkbox(
-                ticked,
-                egui::RichText::new("Without plotting figures").size(theme::size::LABEL),
-            )
-            .on_hover_text(
-                "Run this analysis without drawing its figures. The tables and every \
-                 other file are written as usual; the figures are set aside, and \
-                 \"Plot all figures\" draws them later without computing again.",
-            );
+        if let (Some(no_figures), Some(benchmark)) = (
+            app.run_options.without_figures.get_mut(step),
+            app.run_options.benchmark.get_mut(step),
+        ) {
+            ui.horizontal_wrapped(|ui| {
+                ui.checkbox(
+                    no_figures,
+                    egui::RichText::new("Without plotting figures").size(theme::size::LABEL),
+                )
+                .on_hover_text(
+                    "Run this analysis without drawing its figures. The tables and every \
+                     other file are written as usual; the figures are set aside, and \
+                     \"Plot all figures\" draws them later without computing again.",
+                );
+                ui.add_space(12.0);
+                ui.checkbox(
+                    benchmark,
+                    egui::RichText::new("Benchmark").size(theme::size::LABEL),
+                )
+                .on_hover_text(
+                    "Also write the execution time of this analysis as a CSV, in \
+                     <working_dir>/benchmark/: one row per patient/sample, one column \
+                     per important stage, in seconds, and a last \"cohort\" row with \
+                     the whole command's time.",
+                );
+            });
             ui.add_space(4.0);
         }
     }

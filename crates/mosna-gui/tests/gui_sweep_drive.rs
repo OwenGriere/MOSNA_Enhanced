@@ -326,12 +326,9 @@ fn a_sweep_of_many_runs_driven_through_the_interface() {
     ] {
         let png = sensitivity.join(format!("{stem}.png"));
         let html = sensitivity.join(format!("{stem}.html"));
-        println!(
-            "  {stem:<32} png={:<7} html={}",
-            png.is_file(),
-            html.is_file()
-        );
-        drawn += usize::from(png.is_file() && html.is_file());
+        println!("  {stem:<32} png={}", png.is_file());
+        assert!(!html.exists(), "{stem} was written as HTML");
+        drawn += usize::from(png.is_file());
     }
     if renderer.is_some() {
         assert_eq!(drawn, 3, "the comparison figures were not drawn");

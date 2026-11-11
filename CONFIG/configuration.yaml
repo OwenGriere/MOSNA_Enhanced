@@ -10,6 +10,7 @@ Tysserand:
   Trim distance ratio: 2.0
   Trim number of edges: 3
   Trim min distance: 0.0
+  Trim distance: null
   Min neighbors: 3
   CPU: 20
 Assortativity:

@@ -75,6 +75,7 @@ pub fn tooltip(key: &str) -> Option<&'static str> {
         "Trim distance ratio" => "Per-cell cut-off, as a multiple of the cell's reference edge.\nAn edge longer than ratio × reference edge is removed. Default 2.\nLower removes more edges; below 1 even the reference edge is cut.",
         "Trim number of edges" => "Which of the cell's shortest edges is its reference length (the n-th).\nA cell with no more edges than this is never trimmed. Default 3, at least 1.",
         "Trim min distance" => "Edges shorter than this are never removed, whatever the ratio.\nIn the unit of the coordinates (µm or pixels). Default 0: no floor.",
+        "Trim distance" => "Global cut-off, applied after the per-cell trimming:\nevery edge at or above this length is removed, wherever it is.\nIn the unit of the coordinates (µm or pixels). Empty: no cut-off (default).",
         "CPU" => "Number of CPU cores for parallel processing.",
         _ => return None,
     })

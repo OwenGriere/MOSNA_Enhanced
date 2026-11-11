@@ -146,8 +146,8 @@ fn the_network_figure_is_named_after_its_sample_and_shows_its_phenotypes() {
     }
 
     assert!(
-        dir.path().join("net_4-9.html").is_file(),
-        "the interactive chart is missing"
+        !dir.path().join("net_4-9.html").exists(),
+        "a figure was written as HTML"
     );
 }
 

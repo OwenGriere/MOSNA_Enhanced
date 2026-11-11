@@ -415,12 +415,9 @@ pub fn run_plan(
         current.set_message("comparing the runs");
         let reporter = RunBar::new(&current, None);
         let settings = mosna_config::NicheAnalysisConfig::from_raw(&plan.base)?;
-        // Interactive copies too, as the interface asks for: the three
-        // comparison figures are the answer the sweep was run for.
-        let figures = Figures::with_renderer(
-            &working_dir,
-            Renderer::detect_captured().formats(&["png", "html"]),
-        );
+        // PNG only: the report is the only HTML ever written.
+        let figures =
+            Figures::with_renderer(&working_dir, Renderer::detect_captured().formats(&["png"]));
         let compared = compare_sweep(
             &working_dir,
             &plan.results_in,

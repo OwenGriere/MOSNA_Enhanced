@@ -87,15 +87,11 @@ pub enum Command {
         /// Working directory, as chosen in the interface.
         #[arg(long = "working_dir")]
         working_dir: PathBuf,
-        /// Formats each figure is written in, comma-separated.
+        /// Formats each figure is written in, comma-separated (`png`, `svg`).
         ///
-        /// Every figure is written as a PNG and as an interactive HTML, which
-        /// is about 5 MB per niche run. Sweeping a grid of parameters turns
-        /// that into gigabytes, and the HTML — a third of it — is for
-        /// inspecting one run rather than for comparing many. `--figure-formats
-        /// png` halves the output; the HTML can be redrawn later from the
-        /// embedding and the cached partition.
-        #[arg(long = "figure-formats", default_value = "png,html")]
+        /// Figures are never written as HTML: the only HTML a run produces is
+        /// `report.html`, and only `generate-report` writes it.
+        #[arg(long = "figure-formats", default_value = "png")]
         figure_formats: String,
         /// Write the tables, but set the figures aside instead of drawing them.
         ///
@@ -113,15 +109,11 @@ pub enum Command {
         file: PathBuf,
         #[arg(long = "working_dir")]
         working_dir: PathBuf,
-        /// Formats each figure is written in, comma-separated.
+        /// Formats each figure is written in, comma-separated (`png`, `svg`).
         ///
-        /// Every figure is written as a PNG and as an interactive HTML, which
-        /// is about 5 MB per niche run. Sweeping a grid of parameters turns
-        /// that into gigabytes, and the HTML — a third of it — is for
-        /// inspecting one run rather than for comparing many. `--figure-formats
-        /// png` halves the output; the HTML can be redrawn later from the
-        /// embedding and the cached partition.
-        #[arg(long = "figure-formats", default_value = "png,html")]
+        /// Figures are never written as HTML: the only HTML a run produces is
+        /// `report.html`, and only `generate-report` writes it.
+        #[arg(long = "figure-formats", default_value = "png")]
         figure_formats: String,
         /// Write the tables, but set the figures aside instead of drawing them.
         ///
@@ -148,15 +140,11 @@ pub enum Command {
         /// the same number to two different partitions.
         #[arg(long = "results-in")]
         results_in: Option<String>,
-        /// Formats each figure is written in, comma-separated.
+        /// Formats each figure is written in, comma-separated (`png`, `svg`).
         ///
-        /// Every figure is written as a PNG and as an interactive HTML, which
-        /// is about 5 MB per niche run. Sweeping a grid of parameters turns
-        /// that into gigabytes, and the HTML — a third of it — is for
-        /// inspecting one run rather than for comparing many. `--figure-formats
-        /// png` halves the output; the HTML can be redrawn later from the
-        /// embedding and the cached partition.
-        #[arg(long = "figure-formats", default_value = "png,html")]
+        /// Figures are never written as HTML: the only HTML a run produces is
+        /// `report.html`, and only `generate-report` writes it.
+        #[arg(long = "figure-formats", default_value = "png")]
         figure_formats: String,
         /// Write the tables, but set the figures aside instead of drawing them.
         ///
@@ -182,7 +170,7 @@ pub enum Command {
         /// The sub-directory of `Niche_Analysis` holding the sweep.
         #[arg(long = "results-in", default_value = "sensitivity_analysis")]
         results_in: String,
-        #[arg(long = "figure-formats", default_value = "png,html")]
+        #[arg(long = "figure-formats", default_value = "png")]
         figure_formats: String,
     },
 
@@ -217,7 +205,7 @@ pub enum Command {
     RenderFigures {
         #[arg(long = "working_dir")]
         working_dir: PathBuf,
-        #[arg(long = "figure-formats", default_value = "png,html")]
+        #[arg(long = "figure-formats", default_value = "png")]
         figure_formats: String,
     },
 
@@ -280,7 +268,8 @@ impl Command {
 
     /// The figure formats this command was asked for.
     ///
-    /// The two that draw nothing have none, and are never asked.
+    /// The two that draw nothing have none, and are never asked. `html` is
+    /// dropped whatever was asked: the report is the only HTML written.
     pub fn figure_formats(&self) -> Vec<String> {
         let spelled = match self {
             Command::TysserandNetwork { figure_formats, .. }
@@ -297,6 +286,7 @@ impl Command {
             .split(',')
             .map(str::trim)
             .filter(|format| !format.is_empty())
+            .filter(|format| !format.eq_ignore_ascii_case("html"))
             .map(str::to_string)
             .collect()
     }
@@ -601,9 +591,9 @@ mod tests {
         assert_eq!(cli.command.figure_formats(), vec!["png"]);
     }
 
-    /// Both, by default — which is what every run has always produced.
+    /// PNG only, by default: figures are never written as HTML.
     #[test]
-    fn both_formats_are_written_unless_told_otherwise() {
+    fn only_png_is_written_unless_told_otherwise() {
         let cli = Cli::parse_from([
             "mosna",
             "niche-analysis",
@@ -613,7 +603,24 @@ mod tests {
             "/w",
         ])
         .unwrap();
-        assert_eq!(cli.command.figure_formats(), vec!["png", "html"]);
+        assert_eq!(cli.command.figure_formats(), vec!["png"]);
+    }
+
+    /// Asking for HTML figures is ignored: only the report is HTML.
+    #[test]
+    fn html_figures_are_never_asked_for() {
+        let cli = Cli::parse_from([
+            "mosna",
+            "niche-analysis",
+            "--file",
+            "c.yaml",
+            "--working_dir",
+            "/w",
+            "--figure-formats",
+            "png,HTML,svg",
+        ])
+        .unwrap();
+        assert_eq!(cli.command.figure_formats(), vec!["png", "svg"]);
     }
 
     /// Several, comma-separated, the way the renderer already spells them.
@@ -683,7 +690,7 @@ mod tests {
     fn the_figures_set_aside_are_drawn_from_a_directory_alone() {
         let cli = Cli::parse_from(["mosna", "render-figures", "--working_dir", "/w"]).unwrap();
         assert_eq!(cli.command.name(), "render-figures");
-        assert_eq!(cli.command.figure_formats(), vec!["png", "html"]);
+        assert_eq!(cli.command.figure_formats(), vec!["png"]);
         assert!(Cli::parse_from([
             "mosna",
             "render-figures",

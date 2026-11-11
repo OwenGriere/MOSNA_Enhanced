@@ -404,8 +404,12 @@ fn the_report_describes_what_the_analyses_wrote() {
         "the abundance figure is missing"
     );
     assert!(
-        page.contains("Assortativity/abundance.html"),
-        "the interactive chart is not linked"
+        page.contains("Assortativity/abundance.png"),
+        "the figure is not linked"
+    );
+    assert!(
+        !page.contains("Assortativity/abundance.html"),
+        "a figure was written as HTML"
     );
     // And the table beside them, which is not a figure but is in the directory.
     assert!(page.contains("net_stat.csv"), "the listing is incomplete");

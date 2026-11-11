@@ -83,15 +83,17 @@ pub fn tysserand_network(
         .map_err(|e| PipelineError::invalid(format!("cannot start the worker pool: {e}")))?;
 
     // The per-node rule of tysserand 0.6.0, with the three settings the
-    // configuration may override; the global threshold stays off, as it is in
-    // `ty.build_delaunay(coords)`.
+    // configuration may override, then the global cut-off (`trim_dist`), off
+    // unless `Trim distance` is set, as it is in `ty.build_delaunay(coords)`.
     let trim = DelaunayTrim {
         node_adaptive: Some(NodeAdaptive {
             n_edges: settings.trim_number_of_edges,
             trim_dist_ratio: settings.trim_distance_ratio,
             min_dist: settings.trim_min_distance,
         }),
-        distance: TrimDist::None,
+        distance: settings
+            .trim_distance
+            .map_or(TrimDist::None, TrimDist::Fixed),
     };
 
     // The triangulation and the reconnection, timed apart from the reading,

@@ -5,7 +5,7 @@ person:
 
 ```text
 python -m mosna_xy check
-python -m mosna_xy render <queue> [--formats png,html]
+python -m mosna_xy render <queue> [--formats png,svg]
 ```
 
 Progress goes to stdout in the `[QT_INFO]` / `[QT_PROGRESS]` form the interface
@@ -41,7 +41,7 @@ def _parser() -> argparse.ArgumentParser:
         "--formats",
         type=_formats,
         default=render.DEFAULT_FORMATS,
-        help="comma-separated, from png, html and svg",
+        help="comma-separated, from png and svg",
     )
     return parser
 

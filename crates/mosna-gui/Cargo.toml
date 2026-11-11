@@ -48,5 +48,7 @@ rfd = "0.17"
 serde_json.workspace = true
 
 [dev-dependencies]
+# Only to check that the flags the interface adds are ones the CLI parses.
+mosna-cli = { path = "../mosna-cli" }
 mosna-pipeline = { path = "../mosna-pipeline" }
 tempfile = "3"
