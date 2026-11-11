@@ -8,7 +8,8 @@ use mosna_config::model::niche_params::{
 use mosna_config::validate::assert_params::{assert_params, Analysis};
 use mosna_config::{save_config, section, NicheAnalysisConfig, RawConfig};
 use mosna_core::clustering::{
-    gaussian_mixture, leiden, spectral_clustering, GmmParams, SpectralParams, LEIDEN_REVISION,
+    gaussian_mixture, leiden, spectral_clustering, GmmParams, SpectralParams, GMM_REVISION,
+    LEIDEN_REVISION,
 };
 use mosna_core::nas::spatial_omic_features::{
     compute_spatial_omic_features_all_networks, SofOptions, VarAggreg,
@@ -516,14 +517,20 @@ impl Stems {
             "features": features,
             "reduction": computed_reduction,
         }));
-        // Leiden's revision, on the same terms as the layout's: a partition
-        // computed by an earlier revision of the algorithm is a miss, while the
-        // run numbers stay where they are.
+        // The clusterer's revision (Leiden's or the mixture's), on the same
+        // terms as the layout's: a partition computed by an earlier revision of
+        // the algorithm is a miss, while the run numbers stay where they are.
         let computed_clustering = {
             let mut settings = clustering.clone();
-            if params.clusterer_type == ClustererType::Leiden {
-                if let Some(object) = settings.as_object_mut() {
-                    object.insert("leiden_revision".to_string(), json!(LEIDEN_REVISION));
+            if let Some(object) = settings.as_object_mut() {
+                match params.clusterer_type {
+                    ClustererType::Leiden => {
+                        object.insert("leiden_revision".to_string(), json!(LEIDEN_REVISION));
+                    }
+                    ClustererType::Gmm => {
+                        object.insert("gmm_revision".to_string(), json!(GMM_REVISION));
+                    }
+                    _ => {}
                 }
             }
             settings

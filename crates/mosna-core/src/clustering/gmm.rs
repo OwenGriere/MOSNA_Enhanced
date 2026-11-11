@@ -1,8 +1,13 @@
-//! Gaussian mixture model with full covariances.
+//! Gaussian mixture model, with diagonal covariances by default.
 //!
 //! Replaces the `torchgmm.bayes.GaussianMixture` call in
 //! `clustering.py::get_clusterer`, which is the clusterer the shipped
-//! configuration selects (`clusterer_type: gmm`).
+//! configuration selects (`clusterer_type: gmm`). The reference calls
+//! `GaussianMixture(n_clusters)` and nothing else, so it runs with torchgmm
+//! 0.1.4's `covariance_type="diag"`: every component has its own variance per
+//! feature and no correlation between features. [`CovarianceType::Diag`] is
+//! that model, and the default here; [`CovarianceType::Full`] is kept for
+//! comparison.
 
 use crate::clustering::relabel_clusters::relabel_clusters;
 use crate::error::{CoreError, Result};
@@ -10,6 +15,25 @@ use crate::linalg::cholesky::{cholesky, Cholesky};
 use crate::linalg::kmeans::kmeans;
 
 use rayon::prelude::*;
+
+/// Shape of each component's covariance — torchgmm's `covariance_type`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CovarianceType {
+    /// One variance per feature and component, no covariance between
+    /// features: torchgmm's default, and so what the reference fits.
+    #[default]
+    Diag,
+    /// A full `n_features x n_features` matrix per component: scikit-learn's
+    /// default, and what this port fitted before revision 2.
+    Full,
+}
+
+/// Bumped whenever the mixture fitted for the same input changes, so that a
+/// niche run cached by an older version is computed again.
+///
+/// - 1: full covariances.
+/// - 2: diagonal covariances, as torchgmm fits them.
+pub const GMM_REVISION: u32 = 2;
 
 /// Settings of a mixture fit.
 #[derive(Debug, Clone, PartialEq)]
@@ -23,10 +47,12 @@ pub struct GmmParams {
     /// Restarts; the best likelihood wins.
     pub n_init: usize,
     pub seed: u64,
+    pub covariance_type: CovarianceType,
 }
 
 impl Default for GmmParams {
-    /// scikit-learn's defaults, which `torchgmm` also follows.
+    /// scikit-learn's numbers, which `torchgmm` also follows, with torchgmm's
+    /// diagonal covariances.
     fn default() -> Self {
         Self {
             n_clusters: 8,
@@ -35,6 +61,7 @@ impl Default for GmmParams {
             reg_covar: 1e-6,
             n_init: 1,
             seed: 0,
+            covariance_type: CovarianceType::Diag,
         }
     }
 }
@@ -146,6 +173,7 @@ fn fit_once(
         k,
         &responsibilities,
         params.reg_covar,
+        params.covariance_type,
         &mut weights,
         &mut means,
         &mut covariances,
@@ -165,6 +193,7 @@ fn fit_once(
             &means,
             &covariances,
             params.reg_covar,
+            params.covariance_type,
             &mut responsibilities,
         )?;
         history.push(log_likelihood);
@@ -177,6 +206,7 @@ fn fit_once(
             k,
             &responsibilities,
             params.reg_covar,
+            params.covariance_type,
             &mut weights,
             &mut means,
             &mut covariances,
@@ -198,6 +228,7 @@ fn fit_once(
         &means,
         &covariances,
         params.reg_covar,
+        params.covariance_type,
         &mut responsibilities,
     )?;
 
@@ -239,6 +270,7 @@ fn expectation(
     means: &[f64],
     covariances: &[f64],
     reg_covar: f64,
+    covariance_type: CovarianceType,
     responsibilities: &mut [f64],
 ) -> Result<f64> {
     let factorisations: Vec<Cholesky> = (0..k)
@@ -270,9 +302,20 @@ fn expectation(
                     for f in 0..n_features {
                         delta[f] = point[f] - means[component * n_features + f];
                     }
+                    // A diagonal factor is the standard deviations: the
+                    // distance is a plain sum, without the substitution.
+                    let distance = match covariance_type {
+                        CovarianceType::Diag => (0..n_features)
+                            .map(|f| {
+                                let z = delta[f] / factorisation.l[f * n_features + f];
+                                z * z
+                            })
+                            .sum(),
+                        CovarianceType::Full => factorisation.mahalanobis_squared(delta),
+                    };
                     log_joint[component] = weights[component].ln() + normaliser
                         - 0.5 * factorisation.log_det()
-                        - 0.5 * factorisation.mahalanobis_squared(delta);
+                        - 0.5 * distance;
                 }
 
                 // Log-sum-exp, shifted by the maximum so the exponentials
@@ -306,6 +349,7 @@ fn maximisation(
     k: usize,
     responsibilities: &[f64],
     reg_covar: f64,
+    covariance_type: CovarianceType,
     weights: &mut [f64],
     means: &mut [f64],
     covariances: &mut [f64],
@@ -318,6 +362,14 @@ fn maximisation(
     // additions, in the same order, as the row-major loop this replaced.
     let floor = 10.0 * f64::EPSILON;
     let block_size = n_features * n_features;
+    // Past the last column of row `i` that the covariance type keeps: only
+    // the diagonal for `Diag`, the whole upper triangle for `Full`. A
+    // diagonal covariance is torchgmm's `sum(r * (x - mean)^2) / N + reg`,
+    // feature by feature; the entries off the diagonal stay zero.
+    let last = |i: usize| match covariance_type {
+        CovarianceType::Diag => i + 1,
+        CovarianceType::Full => n_features,
+    };
     let fitted: Vec<(f64, Vec<f64>, Vec<f64>)> = (0..k)
         .into_par_iter()
         .map(|component| {
@@ -353,13 +405,13 @@ fn maximisation(
                 }
                 for i in 0..n_features {
                     let scaled = r * delta[i];
-                    for j in i..n_features {
+                    for j in i..last(i) {
                         covariance[i * n_features + j] += scaled * delta[j];
                     }
                 }
             }
             for i in 0..n_features {
-                for j in i..n_features {
+                for j in i..last(i) {
                     let mut value = covariance[i * n_features + j] / count;
                     if i == j {
                         value += reg_covar;
@@ -520,6 +572,76 @@ mod tests {
     #[test]
     fn rejects_an_empty_dataset() {
         assert!(gaussian_mixture(&[], 0, 2, &GmmParams::default()).is_err());
+    }
+
+    /// Points along the line `y = x`, with a little spread across it.
+    fn correlated_cloud() -> (Vec<f64>, usize) {
+        let mut data = Vec::new();
+        for i in 0..40 {
+            let t = i as f64 * 0.25;
+            let wobble = if i % 2 == 0 { 0.1 } else { -0.1 };
+            data.push(t + wobble);
+            data.push(t - wobble);
+        }
+        (data, 40)
+    }
+
+    #[test]
+    fn the_default_is_torchgmms_diagonal_covariance() {
+        assert_eq!(GmmParams::default().covariance_type, CovarianceType::Diag);
+    }
+
+    /// One diagonal component is a product of independent normals whose
+    /// variances are the per-feature variances plus `reg_covar`. Its mean
+    /// log-likelihood can therefore be written down directly.
+    #[test]
+    fn one_diagonal_component_is_independent_normals_per_feature() {
+        let (data, n) = correlated_cloud();
+        let params = GmmParams {
+            n_clusters: 1,
+            ..Default::default()
+        };
+        let result = gaussian_mixture(&data, n, 2, &params).unwrap();
+
+        let mut expected = 0.0;
+        for f in 0..2 {
+            let mean = (0..n).map(|r| data[r * 2 + f]).sum::<f64>() / n as f64;
+            let var = (0..n)
+                .map(|r| (data[r * 2 + f] - mean).powi(2))
+                .sum::<f64>()
+                / n as f64
+                + params.reg_covar;
+            let sum: f64 = (0..n)
+                .map(|r| {
+                    -0.5 * (2.0 * std::f64::consts::PI * var).ln()
+                        - 0.5 * (data[r * 2 + f] - mean).powi(2) / var
+                })
+                .sum();
+            expected += sum / n as f64;
+        }
+        assert!(
+            (result.log_likelihood - expected).abs() < 1e-9,
+            "{} vs {expected}",
+            result.log_likelihood
+        );
+    }
+
+    /// The diagonal model cannot see that the two features move together, so
+    /// on a cloud along `y = x` it explains the data less well than a full one.
+    #[test]
+    fn a_full_covariance_captures_the_correlation_a_diagonal_one_ignores() {
+        let (data, n) = correlated_cloud();
+        let fit = |covariance_type| {
+            let params = GmmParams {
+                n_clusters: 1,
+                covariance_type,
+                ..Default::default()
+            };
+            gaussian_mixture(&data, n, 2, &params)
+                .unwrap()
+                .log_likelihood
+        };
+        assert!(fit(CovarianceType::Full) > fit(CovarianceType::Diag) + 1.0);
     }
 
     #[test]
