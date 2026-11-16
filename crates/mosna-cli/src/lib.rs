@@ -35,6 +35,7 @@ use clap::{Parser, Subcommand};
 
 pub mod benchmark;
 pub mod sensitivity;
+pub mod terminal;
 pub mod timings;
 
 use mosna_pipeline::{
@@ -308,10 +309,75 @@ pub fn load_config(file: &std::path::Path) -> anyhow::Result<mosna_config::RawCo
     Ok(config)
 }
 
+impl Command {
+    /// How the command is named at the top of what it prints in a terminal,
+    /// what it was given, and the lines under that.
+    fn heading(&self) -> (&'static str, String, Vec<String>) {
+        let results = |directory: &std::path::Path| format!("results in {}", directory.display());
+        let niches = |working_dir: &std::path::Path, results_in: Option<&str>| {
+            let mut directory = working_dir.join("Niche_Analysis");
+            if let Some(results_in) = results_in {
+                directory.push(results_in);
+            }
+            results(&directory)
+        };
+        match self {
+            Command::TysserandNetwork {
+                file, working_dir, ..
+            } => (
+                "Tysserand network",
+                file.display().to_string(),
+                vec![results(working_dir)],
+            ),
+            Command::Assortativity {
+                file, working_dir, ..
+            } => (
+                "Assortativity",
+                file.display().to_string(),
+                vec![results(working_dir)],
+            ),
+            Command::NicheAnalysis {
+                file,
+                working_dir,
+                results_in,
+                ..
+            } => (
+                "Niche analysis",
+                file.display().to_string(),
+                vec![niches(working_dir, results_in.as_deref())],
+            ),
+            Command::CompareSweep {
+                file,
+                working_dir,
+                results_in,
+                ..
+            } => (
+                "Sweep comparison",
+                file.display().to_string(),
+                vec![niches(working_dir, Some(results_in))],
+            ),
+            Command::RenderFigures { working_dir, .. } => {
+                ("Render figures", working_dir.display().to_string(), vec![])
+            }
+            Command::ClearTemporary { working_dir } => {
+                ("Clear temporary", working_dir.display().to_string(), vec![])
+            }
+            Command::GenerateReport { working_dir } => {
+                ("Report", working_dir.display().to_string(), vec![])
+            }
+            Command::SensitivityAnalysis { log, .. } => {
+                ("Sensitivity analysis", log.display().to_string(), vec![])
+            }
+        }
+    }
+}
+
 /// Execute a parsed command.
 ///
-/// Progress goes to stdout in the `[QT_INFO]` / `[QT_PROGRESS]` form the
-/// interface parses, and figures are drawn by the Python `xy` package.
+/// Under the interface — which sets [`terminal::PROTOCOL_ENV`] — progress goes
+/// to stdout in the `[QT_INFO]` / `[QT_PROGRESS]` form it parses. Anywhere
+/// else it is shown as `sensitivity-analysis` shows its own: a heading, lines
+/// for what happened, and bars. Figures are drawn by the Python `xy` package.
 ///
 /// # Two phases, and why
 ///
@@ -319,13 +385,41 @@ pub fn load_config(file: &std::path::Path) -> anyhow::Result<mosna_config::RawCo
 /// end, in one pass. One interpreter is started per run rather than one per
 /// figure — a cohort of two hundred samples would otherwise spend more time
 /// starting Python than drawing — and the renderer reports its own progress
-/// through the same protocol, so the interface's bar keeps moving.
+/// through the same protocol, which is passed on to the interface or turned
+/// into the bars.
 pub fn run(cli: Cli) -> anyhow::Result<()> {
-    // The same lines on stdout as ever, for the interface; the computing time
-    // of each stage is also kept, and given back as a table at the end.
+    // The sensitivity analysis draws its own bars.
+    let display: std::sync::Arc<dyn terminal::Display> =
+        if matches!(cli.command, Command::SensitivityAnalysis { .. }) {
+            std::sync::Arc::new(terminal::Protocol)
+        } else {
+            let (title, subject, details) = cli.command.heading();
+            terminal::display(title, &subject, &details)
+        };
+    if !terminal::protocol_requested() {
+        let display = display.clone();
+        mosna_xy::set_notices(move |message| {
+            for line in message.lines() {
+                display.info(line);
+            }
+        });
+    }
+
+    let outcome = execute(&cli, &display);
+    // A success has finished its bars already, before its closing table.
+    if outcome.is_err() {
+        display.finish(false);
+    }
+    outcome
+}
+
+fn execute(cli: &Cli, display: &std::sync::Arc<dyn terminal::Display>) -> anyhow::Result<()> {
+    // The computing time of each stage is kept as it is reported, and given
+    // back as a table at the end.
     let timings = timings::Timings::new();
     let benchmark = cli.benchmark.then(benchmark::Benchmark::new);
     let progress = timings::TimedProgress {
+        display: display.as_ref(),
         timings: &timings,
         benchmark: benchmark.as_ref(),
     };
@@ -335,21 +429,22 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
     let mut results_dir = cli.command.working_dir().map(std::path::Path::to_path_buf);
     let formats = cli.command.figure_formats();
     let no_figures = cli.command.no_figures();
+    // The renderer's output goes to the display, line by line.
+    let renderer = || {
+        let borrowed: Vec<&str> = formats.iter().map(String::as_str).collect();
+        let display = display.clone();
+        mosna_xy::renderer::Renderer::detect_streamed(move |line| display.renderer_line(line))
+            .formats(&borrowed)
+    };
     // Drawn now, or set aside for `render-figures`.
-    let finish = |figures: &Figures| -> anyhow::Result<()> {
+    let finish = |figures: &Figures<mosna_xy::renderer::Streamed>| -> anyhow::Result<()> {
         if no_figures {
             figures.defer().map(|_| ())
         } else {
             figures.render()
         }
     };
-    let sink = |working_dir: &std::path::Path| {
-        let borrowed: Vec<&str> = formats.iter().map(String::as_str).collect();
-        Figures::with_renderer(
-            working_dir,
-            mosna_xy::renderer::Renderer::detect().formats(&borrowed),
-        )
-    };
+    let sink = |working_dir: &std::path::Path| Figures::with_renderer(working_dir, renderer());
 
     match cli.command {
         Command::TysserandNetwork {
@@ -415,9 +510,7 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
         Command::RenderFigures {
             ref working_dir, ..
         } => {
-            let borrowed: Vec<&str> = formats.iter().map(String::as_str).collect();
-            let renderer = mosna_xy::renderer::Renderer::detect().formats(&borrowed);
-            mosna_xy::render_deferred(working_dir, &renderer)?;
+            mosna_xy::render_deferred(working_dir, &renderer())?;
         }
         Command::SensitivityAnalysis {
             ref log,
@@ -436,7 +529,8 @@ pub fn run(cli: Cli) -> anyhow::Result<()> {
     }
 
     // Only once the command has succeeded: a failed run's times describe
-    // half of a computation.
+    // half of a computation. The bars are finished first.
+    display.finish(true);
     if let Some(summary) = timings.summary() {
         println!();
         print!("{summary}");

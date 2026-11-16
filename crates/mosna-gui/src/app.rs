@@ -451,6 +451,9 @@ impl MosnaApp {
         let mut command = std::process::Command::new(analysis_binary());
         command
             .args(arguments)
+            // The `[QT_*]` lines parsed below: without it, `mosna` draws
+            // progress bars for a terminal instead.
+            .env("MOSNA_PROGRESS", "qt")
             .current_dir(working_dir)
             .stdout(std::process::Stdio::piped())
             .stderr(std::process::Stdio::piped());

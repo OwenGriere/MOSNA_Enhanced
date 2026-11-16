@@ -36,6 +36,36 @@ use crate::renderer::{Renderer, Run, Subprocess};
 use crate::spec::{Queue, Spec};
 use crate::table::Table;
 
+/// Where this crate's own status lines go, when not to the interface.
+static NOTICES: std::sync::OnceLock<NoticeSink> = std::sync::OnceLock::new();
+
+type NoticeSink = Box<dyn Fn(&str) + Send + Sync>;
+
+/// The stream a status line is written to under the interface's protocol.
+#[derive(Debug, Clone, Copy)]
+enum Stream {
+    Out,
+    Err,
+}
+
+/// Send this crate's status lines — figures set aside, not drawn, drawn from
+/// a batch — to `sink` instead of printing them as `[QT_INFO]` lines.
+///
+/// For the command line in a terminal, which shows its own progress. Set once
+/// per process; a second call is ignored.
+pub fn set_notices(sink: impl Fn(&str) + Send + Sync + 'static) {
+    let _ = NOTICES.set(Box::new(sink));
+}
+
+/// One status line: to the sink if one was set, as `[QT_INFO]` otherwise.
+fn notice(stream: Stream, message: &str) {
+    match (NOTICES.get(), stream) {
+        (Some(sink), _) => sink(message),
+        (None, Stream::Out) => println!("[QT_INFO] {message}"),
+        (None, Stream::Err) => eprintln!("[QT_INFO] {message}"),
+    }
+}
+
 /// Queues every figure an analysis produces, then has them drawn.
 pub struct Figures<R: Run = Subprocess> {
     working_dir: PathBuf,
@@ -93,11 +123,14 @@ impl<R: Run> Figures<R> {
             if let Err(reason) = self.renderer.check() {
                 // The queue is kept, so installing the renderer later leaves
                 // the next run able to draw what this one could not.
-                eprintln!(
-                    "[QT_INFO] Figures not drawn: {reason}\n\
-                     The analysis is complete and its tables are written. To \
-                     draw the figures, install MOSNA again with INSTALLATION.exe \
-                     (figures ticked) or install.sh (without --no-figures)."
+                notice(
+                    Stream::Err,
+                    &format!(
+                        "Figures not drawn: {reason}\n\
+                         The analysis is complete and its tables are written. To \
+                         draw the figures, install MOSNA again with INSTALLATION.exe \
+                         (figures ticked) or install.sh (without --no-figures)."
+                    ),
                 );
                 return Ok(());
             }
@@ -159,9 +192,12 @@ impl<R: Run> Figures<R> {
             let _ = std::fs::remove_dir(parent);
         }
 
-        println!(
-            "[QT_INFO] {queued} figures set aside, not drawn. \
-             Press \"Plot all figures\" to draw them without computing again."
+        notice(
+            Stream::Out,
+            &format!(
+                "{queued} figures set aside, not drawn. \
+                 Press \"Plot all figures\" to draw them without computing again."
+            ),
         );
         Ok(queued)
     }
@@ -303,9 +339,10 @@ pub fn render_deferred<R: Run>(
 ) -> anyhow::Result<usize> {
     let batches = deferred_batches(working_dir);
     if batches.is_empty() {
-        println!(
-            "[QT_INFO] No figures are waiting to be drawn: every analysis run in this \
-             directory has already drawn its own."
+        notice(
+            Stream::Out,
+            "No figures are waiting to be drawn: every analysis run in this \
+             directory has already drawn its own.",
         );
         return Ok(0);
     }
@@ -313,10 +350,13 @@ pub fn render_deferred<R: Run>(
     let mut drawn = 0;
     let mut failures = Vec::new();
     for (index, batch) in batches.iter().enumerate() {
-        println!(
-            "[QT_INFO] Drawing figures set aside, batch {} of {}",
-            index + 1,
-            batches.len()
+        notice(
+            Stream::Out,
+            &format!(
+                "Drawing figures set aside, batch {} of {}",
+                index + 1,
+                batches.len()
+            ),
         );
         match renderer.render(batch) {
             Ok(()) => {
@@ -343,7 +383,7 @@ pub fn render_deferred<R: Run>(
         std::fs::remove_dir(working_dir.join(mosna_pipeline::figures::DEFERRED_FIGURE_DIRECTORY));
 
     if failures.is_empty() {
-        println!("[QT_INFO] Every figure set aside is drawn");
+        notice(Stream::Out, "Every figure set aside is drawn");
         Ok(drawn)
     } else {
         Err(anyhow::anyhow!(
@@ -358,7 +398,10 @@ pub fn render_deferred<R: Run>(
 /// A queue that could not be removed costs disk space and nothing else: the
 /// figures it described are already on disk. It is reported, not raised.
 fn log_discard_failure(error: &std::io::Error) {
-    eprintln!("[QT_INFO] the figure queue could not be removed: {error}");
+    notice(
+        Stream::Err,
+        &format!("the figure queue could not be removed: {error}"),
+    );
 }
 
 /// A queueing failure must not read like a computation failure, so it says
