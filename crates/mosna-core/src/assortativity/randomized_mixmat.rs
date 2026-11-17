@@ -53,24 +53,49 @@ pub fn randomized_mixmat(
         };
     }
 
-    // Welford accumulators, merged across threads: storing every one of the
-    // `n_shuffle` matrices would cost n_shuffle * n^2 * 8 bytes, which for a
-    // few hundred phenotypes and 500 shuffles runs into hundreds of megabytes.
-    let accumulator = (0..n_shuffle)
+    // Welford accumulators rather than every matrix: storing all `n_shuffle`
+    // of them would cost n_shuffle * n^2 * 8 bytes, which for a few hundred
+    // phenotypes and 500 shuffles runs into hundreds of megabytes.
+    //
+    // The repetitions are cut into blocks that depend on `n_shuffle` alone.
+    // Each block is accumulated in repetition order, the blocks in parallel,
+    // and the blocks are then merged one after the other, in order. Floating
+    // point addition is not associative, so merging in whatever order the
+    // threads finish — what a parallel `reduce` does — changed the last digits
+    // of the means and deviations from one run to the next. Here the sums are
+    // the same sums on one thread or sixteen.
+    let block = n_shuffle.div_ceil(BLOCKS);
+    let blocks: Vec<Accumulator> = (0..n_shuffle.div_ceil(block))
         .into_par_iter()
-        .map(|repetition| {
-            let mut rng = ChaCha8Rng::seed_from_u64(SEED.wrapping_add(repetition as u64));
-            let mut shuffled = assignments.to_vec();
-            shuffled.shuffle(&mut rng);
+        .map(|index| {
+            let repetitions = index * block..((index + 1) * block).min(n_shuffle);
+            repetitions.fold(
+                Accumulator::empty(n_attributes),
+                |accumulator, repetition| {
+                    let mut rng = ChaCha8Rng::seed_from_u64(SEED.wrapping_add(repetition as u64));
+                    let mut shuffled = assignments.to_vec();
+                    shuffled.shuffle(&mut rng);
 
-            let mixmat = mixing_matrix(&shuffled, pairs, n_attributes, true, true);
-            let assort = attribute_ac(&mixmat);
-            Accumulator::single(mixmat, assort, repetition)
+                    let mixmat = mixing_matrix(&shuffled, pairs, n_attributes, true, true);
+                    let assort = attribute_ac(&mixmat);
+                    accumulator.merge(Accumulator::single(mixmat, assort, repetition))
+                },
+            )
         })
-        .reduce(|| Accumulator::empty(n_attributes), Accumulator::merge);
+        .collect();
 
-    accumulator.finish()
+    blocks
+        .into_iter()
+        .fold(Accumulator::empty(n_attributes), Accumulator::merge)
+        .finish()
 }
+
+/// How many blocks the repetitions are cut into, whatever the thread count.
+///
+/// Enough for sixteen threads to share the work evenly; few enough that the
+/// blocks' accumulators, held until they are merged, stay small beside one
+/// mixing matrix per thread.
+const BLOCKS: usize = 32;
 
 /// Streaming mean and variance of the null matrices.
 struct Accumulator {
@@ -225,6 +250,46 @@ mod tests {
 
         assert!((null.mixmat_mean.get(0, 0) - mean).abs() < 1e-12);
         assert!((null.mixmat_std.get(0, 0) - std).abs() < 1e-12);
+    }
+
+    /// Bit for bit, not to a tolerance: `net_stat.csv` is compared between
+    /// runs, and a null that depends on how the threads happened to share the
+    /// work changes its last digits from one run to the next.
+    #[test]
+    fn the_null_does_not_depend_on_the_threads() {
+        // Three phenotypes over a ring with chords: means that are not round
+        // numbers, so a different summation order shows in the last bits.
+        let n = 90u32;
+        let assignments: Vec<Option<u32>> = (0..n).map(|i| Some(i * 7 % 3)).collect();
+        let mut pairs: Vec<Pair> = (0..n).map(|i| (i, (i + 1) % n)).collect();
+        pairs.extend((0..n).step_by(4).map(|i| (i, (i + 13) % n)));
+
+        let bits = |null: &NullDistribution| -> Vec<u64> {
+            null.mixmat_mean
+                .values
+                .iter()
+                .chain(&null.mixmat_std.values)
+                .chain(&null.assort)
+                .map(|v| v.to_bits())
+                .collect()
+        };
+        let in_pool = |threads: usize| {
+            rayon::ThreadPoolBuilder::new()
+                .num_threads(threads)
+                .build()
+                .unwrap()
+                .install(|| bits(&randomized_mixmat(&assignments, &pairs, 3, 500)))
+        };
+
+        let reference = in_pool(1);
+        for threads in [2, 3, 8, 16] {
+            for _ in 0..4 {
+                assert!(
+                    in_pool(threads) == reference,
+                    "on {threads} threads the null differs from the one-thread run"
+                );
+            }
+        }
     }
 
     #[test]
