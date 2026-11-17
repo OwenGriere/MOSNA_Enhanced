@@ -103,9 +103,12 @@ jobs:
   # a matrix entry cannot be turned off with `if:` (the matrix context is not
   # available there), a separate job can.
   #
-  # Skipped for now, like `test-windows` in rust.yml: it shows as "skipped"
-  # rather than as a red build. `workflow_dispatch` still runs it on demand.
-  # Turning it back on is deleting the `if:` line below.
+  # Run on demand only (`workflow_dispatch`, from the Actions tab), not on a
+  # tag: the zip it makes is not installable on Windows yet. It carries
+  # install.sh, which needs bash, and not INSTALLATION.exe — and INSTALLATION.exe
+  # builds from a source checkout, which the zip is not. Until one of them
+  # installs from pre-built binaries, publishing the zip would ship a package
+  # nobody can install. Turning it on for tags is deleting the `if:` line below.
   # ---------------------------------------------------------------------------
   build-windows:
     name: build (windows-latest)
