@@ -13,7 +13,7 @@ pub mod sample_assort_mixmat;
 pub mod zscore;
 
 pub use attribute_ac::attribute_ac;
-pub use mixing_matrix::{mixing_matrix, MixMat};
+pub use mixing_matrix::{mixing_matrix, mixing_matrix_of_edges, MixMat};
 pub use mixmat_columns::{attributes_pairs, mixmat_to_columns, series_to_mixmat};
 pub use randomized_mixmat::randomized_mixmat;
 pub use sample_assort_mixmat::{sample_assort_mixmat, SampleStats};

@@ -46,6 +46,12 @@ use mosna_io::read::get_opener::{read_table, Extension};
 /// three orders of magnitude above the residual actually observed.
 const TOLERANCE: f64 = 1e-12;
 
+/// The network as the steps hand it to each other, in its compressed sparse
+/// rows: the parity is checked on what the files now carry.
+fn network(pairs: &[(u32, u32)], n_cells: usize) -> mosna_core::Csr {
+    mosna_core::Csr::from_pairs(pairs, n_cells).expect("edges within the sample")
+}
+
 fn repo_root() -> PathBuf {
     // `CARGO_MANIFEST_DIR` is `crates/mosna-pipeline`.
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -189,7 +195,13 @@ fn step_two_reproduces_the_mixing_matrix() {
         )
         .unwrap();
 
-        let mixmat = mixing_matrix(&codes, &pairs, vocabulary.len(), true, true);
+        let mixmat = mixing_matrix(
+            &codes,
+            &network(&pairs, coords.len()),
+            vocabulary.len(),
+            true,
+            true,
+        );
         let got_values = mixmat_to_columns(&mixmat);
         let got_assort = attribute_ac(&mixmat);
 
@@ -248,7 +260,13 @@ fn step_two_pairs_each_name_with_its_own_value() {
             3,
         )
         .unwrap();
-        let mixmat = mixing_matrix(&codes, &pairs, vocabulary.len(), true, true);
+        let mixmat = mixing_matrix(
+            &codes,
+            &network(&pairs, coords.len()),
+            vocabulary.len(),
+            true,
+            true,
+        );
 
         let got_names = attributes_pairs(&vocabulary, "", " - ", "");
         let got_values = mixmat_to_columns(&mixmat);
@@ -329,8 +347,14 @@ fn step_three_reproduces_the_neighbourhood_features() {
         .unwrap();
 
         let x = one_hot(&phenotypes, &vocabulary);
-        let features =
-            make_features_nas(&x, coords.len(), &pairs, 1, &vocabulary, &stat_names, " ");
+        let features = make_features_nas(
+            &x,
+            &network(&pairs, coords.len()),
+            1,
+            &vocabulary,
+            &stat_names,
+            " ",
+        );
 
         assert_eq!(
             features.column_names, expected_columns,

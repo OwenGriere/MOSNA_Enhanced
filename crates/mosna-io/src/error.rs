@@ -55,6 +55,15 @@ pub enum IoError {
         found: String,
     },
 
+    /// A nodes file and an edges file that do not make a network together.
+    #[error("{nodes} and {edges} do not form a network: {source}")]
+    Network {
+        nodes: PathBuf,
+        edges: PathBuf,
+        #[source]
+        source: crate::network::CsrError,
+    },
+
     #[error("{0}")]
     Invalid(String),
 }

@@ -613,6 +613,21 @@ fn workflow() -> Chapter {
                         ],
                     },
                     Block::Paragraph(T::new(
+                        "A network is two files per sample. The nodes file keeps your \
+                         cells' columns and gains one, degree: how many neighbours each \
+                         cell has. The edges file has a single column, indices: the \
+                         neighbours of the first cell, then of the second, and so on. \
+                         A network directory from an earlier version, with one source, \
+                         target row per edge, is still read and gives the same results.",
+                        "Un réseau tient en deux fichiers par échantillon. Le fichier des \
+                         nœuds garde les colonnes de vos cellules et en gagne une, degree : \
+                         le nombre de voisins de chaque cellule. Le fichier des arêtes n'a \
+                         qu'une colonne, indices : les voisins de la première cellule, puis \
+                         ceux de la deuxième, et ainsi de suite. Un dossier de réseaux d'une \
+                         version précédente, avec une ligne source, target par arête, est \
+                         toujours lu et donne les mêmes résultats.",
+                    )),
+                    Block::Paragraph(T::new(
                         "Under the three step buttons sit two more, side by side. Neither \
                          computes anything: they are what you do with a directory the steps \
                          have already filled.",

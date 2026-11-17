@@ -1,5 +1,6 @@
 //! Port of `assortativity.py::mixing_matrix`.
 
+use crate::Csr;
 use crate::Pair;
 
 /// A dense symmetric `n x n` matrix, stored row-major.
@@ -59,18 +60,49 @@ impl MixMat {
 /// `assignments[node]` is the attribute index of that node, or `None` when the
 /// node carries no attribute in the current vocabulary. Taking the assignment
 /// rather than the full one-hot matrix turns the two dense matrix products into
-/// a single pass over the edges, which is what makes the shuffling loop —
+/// a single pass over the network, which is what makes the shuffling loop —
 /// hundreds of repetitions per sample — affordable.
+///
+/// # Reading the rows
+///
+/// The matrix is one pass over the edges, each edge once: it adds
+/// `src.T @ tgt`'s `(a, b)` and `tgt.T @ src`'s `(b, a)`, and a self-loop adds
+/// both to the diagonal. The pass runs over the network's edge list
+/// ([`Csr::pairs`]) rather than its rows: Delaunay rows hold five to seven
+/// neighbours, and walking twelve thousand short rows measured three to four
+/// times slower than one loop over the same edges — the end of every short
+/// loop is a branch the processor mispredicts. The shuffling loop therefore
+/// takes the edge list once and reuses it, through [`mixing_matrix_of_edges`].
 pub fn mixing_matrix(
     assignments: &[Option<u32>],
-    pairs: &[Pair],
+    network: &Csr,
+    n_attributes: usize,
+    normalized: bool,
+    double_diag: bool,
+) -> MixMat {
+    mixing_matrix_of_edges(
+        assignments,
+        &network.pairs(),
+        n_attributes,
+        normalized,
+        double_diag,
+    )
+}
+
+/// [`mixing_matrix`] over a network's edge list, as [`Csr::pairs`] gives it.
+///
+/// For a loop that computes the matrix many times over one network — the
+/// permutation null — so the edge list is taken once, not once per shuffle.
+pub fn mixing_matrix_of_edges(
+    assignments: &[Option<u32>],
+    edges: &[Pair],
     n_attributes: usize,
     normalized: bool,
     double_diag: bool,
 ) -> MixMat {
     let mut mixmat = MixMat::zeros(n_attributes);
 
-    for &(source, target) in pairs {
+    for &(source, target) in edges {
         let (Some(a), Some(b)) = (
             assignments.get(source as usize).copied().flatten(),
             assignments.get(target as usize).copied().flatten(),
@@ -107,11 +139,21 @@ pub fn mixing_matrix(
 mod tests {
     use super::*;
 
+    fn net(pairs: &[Pair], n_nodes: usize) -> Csr {
+        Csr::from_pairs(pairs, n_nodes).unwrap()
+    }
+
     #[test]
     fn counts_each_edge_in_both_directions() {
         // Two nodes of attributes 0 and 1, one edge between them.
         let assignments = vec![Some(0), Some(1)];
-        let m = mixing_matrix(&assignments, &[(0, 1)], 2, false, true);
+        let m = mixing_matrix(
+            &assignments,
+            &net(&[(0, 1)], assignments.len()),
+            2,
+            false,
+            true,
+        );
         assert_eq!(m.get(0, 1), 1.0);
         assert_eq!(m.get(1, 0), 1.0);
         assert_eq!(m.get(0, 0), 0.0);
@@ -122,17 +164,35 @@ mod tests {
     fn the_diagonal_is_doubled_like_networkx() {
         // Both endpoints share attribute 0.
         let assignments = vec![Some(0), Some(0)];
-        let m = mixing_matrix(&assignments, &[(0, 1)], 1, false, true);
+        let m = mixing_matrix(
+            &assignments,
+            &net(&[(0, 1)], assignments.len()),
+            1,
+            false,
+            true,
+        );
         assert_eq!(m.get(0, 0), 2.0);
 
-        let halved = mixing_matrix(&assignments, &[(0, 1)], 1, false, false);
+        let halved = mixing_matrix(
+            &assignments,
+            &net(&[(0, 1)], assignments.len()),
+            1,
+            false,
+            false,
+        );
         assert_eq!(halved.get(0, 0), 1.0);
     }
 
     #[test]
     fn normalisation_makes_the_matrix_sum_to_one() {
         let assignments = vec![Some(0), Some(1), Some(1)];
-        let m = mixing_matrix(&assignments, &[(0, 1), (1, 2)], 2, true, true);
+        let m = mixing_matrix(
+            &assignments,
+            &net(&[(0, 1), (1, 2)], assignments.len()),
+            2,
+            true,
+            true,
+        );
         assert!((m.sum() - 1.0).abs() < 1e-12);
     }
 
@@ -141,7 +201,7 @@ mod tests {
         let assignments = vec![Some(0), Some(1), Some(2), Some(0)];
         let m = mixing_matrix(
             &assignments,
-            &[(0, 1), (1, 2), (2, 3), (0, 2)],
+            &net(&[(0, 1), (1, 2), (2, 3), (0, 2)], 4),
             3,
             true,
             true,
@@ -156,15 +216,51 @@ mod tests {
     #[test]
     fn nodes_without_an_attribute_are_skipped() {
         let assignments = vec![Some(0), None, Some(1)];
-        let m = mixing_matrix(&assignments, &[(0, 1), (0, 2)], 2, false, true);
+        let m = mixing_matrix(
+            &assignments,
+            &net(&[(0, 1), (0, 2)], assignments.len()),
+            2,
+            false,
+            true,
+        );
         // Only the 0-2 edge counts.
         assert_eq!(m.sum(), 2.0);
         assert_eq!(m.get(0, 1), 1.0);
     }
 
+    /// A self-loop is one entry in its row, but was one `source`, `target`
+    /// row — which `src.T @ tgt + tgt.T @ src` counts twice on the diagonal.
+    /// Reading the network as rows must not halve it.
+    #[test]
+    fn a_self_loop_counts_twice_on_the_diagonal() {
+        let assignments = vec![Some(0), Some(1)];
+        let m = mixing_matrix(&assignments, &net(&[(0, 0), (0, 1)], 2), 2, false, true);
+        assert_eq!(m.get(0, 0), 2.0);
+        assert_eq!(m.get(0, 1), 1.0);
+        assert_eq!(m.sum(), 4.0);
+    }
+
+    /// The rows list every edge twice; each listing is one of the two
+    /// products, so an edge is still counted once each way, not twice.
+    #[test]
+    fn walking_the_rows_counts_each_edge_once_each_way() {
+        let assignments = vec![Some(0), Some(1), Some(1)];
+        let m = mixing_matrix(
+            &assignments,
+            &net(&[(0, 1), (0, 2), (1, 2)], 3),
+            2,
+            false,
+            true,
+        );
+        assert_eq!(m.get(0, 1), 2.0);
+        assert_eq!(m.get(1, 0), 2.0);
+        assert_eq!(m.get(1, 1), 2.0);
+        assert_eq!(m.sum(), 6.0);
+    }
+
     #[test]
     fn an_edgeless_network_yields_zeros() {
-        let m = mixing_matrix(&[Some(0)], &[], 1, true, true);
+        let m = mixing_matrix(&[Some(0)], &Csr::empty(1), 1, true, true);
         assert_eq!(m.sum(), 0.0, "normalising zero must not produce NaN");
     }
 }

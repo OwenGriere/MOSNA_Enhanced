@@ -4,6 +4,7 @@ use mosna_core::assortativity::{
     attribute_ac, attributes_pairs, mixing_matrix, mixmat_to_columns, sample_assort_mixmat,
     series_to_mixmat, zscore,
 };
+use mosna_core::{Csr, Pair};
 use mosna_testkit::assert_symmetric;
 use mosna_testkit::strategies::small_graph;
 use proptest::prelude::*;
@@ -15,18 +16,66 @@ fn assignments(n_nodes: usize, n_attributes: usize) -> Vec<Option<u32>> {
         .collect()
 }
 
+fn net(edges: &[Pair], n_nodes: usize) -> Csr {
+    Csr::from_pairs(edges, n_nodes).unwrap()
+}
+
+/// The Python, element for element: one-hot `src` and `tgt` matrices from the
+/// `source`, `target` rows, and `src.T @ tgt + tgt.T @ src`.
+fn python_mixing_matrix(assignments: &[Option<u32>], edges: &[Pair], n: usize) -> Vec<f64> {
+    let one_hot = |node: u32| -> Vec<f64> {
+        let mut row = vec![0.0; n];
+        if let Some(a) = assignments[node as usize] {
+            row[a as usize] = 1.0;
+        }
+        row
+    };
+    let mut m = vec![0.0; n * n];
+    for &(s, t) in edges {
+        let (src, tgt) = (one_hot(s), one_hot(t));
+        for i in 0..n {
+            for j in 0..n {
+                m[i * n + j] += src[i] * tgt[j] + tgt[i] * src[j];
+            }
+        }
+    }
+    m
+}
+
 fn attribute_names(n: usize) -> Vec<String> {
     (0..n).map(|i| format!("p{i}")).collect()
 }
 
 proptest! {
+    /// Walking the rows of the network gives, exactly, what the Python's two
+    /// matrix products give on its edge list — self-loops, repeated edges,
+    /// pairs in either direction and cells without a phenotype included.
+    #[test]
+    fn prop_the_rows_give_the_python_mixing_matrix(
+        n_nodes in 1usize..15,
+        raw in proptest::collection::vec((0u32..15, 0u32..15), 0..40),
+        n_attributes in 1usize..4,
+        missing in proptest::collection::vec(any::<bool>(), 15),
+    ) {
+        let edges: Vec<Pair> = raw
+            .into_iter()
+            .map(|(a, b)| (a % n_nodes as u32, b % n_nodes as u32))
+            .collect();
+        let a: Vec<Option<u32>> = (0..n_nodes)
+            .map(|i| (!missing[i]).then_some((i % n_attributes) as u32))
+            .collect();
+
+        let m = mixing_matrix(&a, &net(&edges, n_nodes), n_attributes, false, true);
+        prop_assert_eq!(m.values, python_mixing_matrix(&a, &edges, n_attributes));
+    }
+
     #[test]
     fn prop_mixing_matrix_is_symmetric(
         (n_nodes, edges) in small_graph(20),
         n_attributes in 1usize..5,
     ) {
         let a = assignments(n_nodes, n_attributes);
-        let m = mixing_matrix(&a, &edges, n_attributes, false, true);
+        let m = mixing_matrix(&a, &net(&edges, n_nodes), n_attributes, false, true);
         assert_symmetric(&m.values, n_attributes, 1e-12, "mixing matrix");
     }
 
@@ -38,7 +87,7 @@ proptest! {
         n_attributes in 1usize..5,
     ) {
         let a = assignments(n_nodes, n_attributes);
-        let m = mixing_matrix(&a, &edges, n_attributes, false, true);
+        let m = mixing_matrix(&a, &net(&edges, n_nodes), n_attributes, false, true);
         prop_assert_eq!(m.sum(), 2.0 * edges.len() as f64);
     }
 
@@ -50,7 +99,7 @@ proptest! {
         n_attributes in 1usize..5,
     ) {
         let a = assignments(n_nodes, n_attributes);
-        let m = mixing_matrix(&a, &edges, n_attributes, true, true);
+        let m = mixing_matrix(&a, &net(&edges, n_nodes), n_attributes, true, true);
         if edges.is_empty() {
             prop_assert_eq!(m.sum(), 0.0);
         } else {
@@ -69,7 +118,7 @@ proptest! {
         n_attributes in 2usize..5,
     ) {
         let a = assignments(n_nodes, n_attributes);
-        let m = mixing_matrix(&a, &edges, n_attributes, true, true);
+        let m = mixing_matrix(&a, &net(&edges, n_nodes), n_attributes, true, true);
         let r = attribute_ac(&m);
         if r.is_finite() {
             prop_assert!(r <= 1.0 + 1e-9, "assortativity {r} exceeds 1");
@@ -86,8 +135,8 @@ proptest! {
     ) {
         prop_assume!(!edges.is_empty());
         let a = assignments(n_nodes, n_attributes);
-        let raw = mixing_matrix(&a, &edges, n_attributes, false, true);
-        let normalised = mixing_matrix(&a, &edges, n_attributes, true, true);
+        let raw = mixing_matrix(&a, &net(&edges, n_nodes), n_attributes, false, true);
+        let normalised = mixing_matrix(&a, &net(&edges, n_nodes), n_attributes, true, true);
 
         let (r_raw, r_norm) = (attribute_ac(&raw), attribute_ac(&normalised));
         if r_raw.is_finite() && r_norm.is_finite() {
@@ -102,7 +151,7 @@ proptest! {
     fn prop_single_attribute_is_undefined((n_nodes, edges) in small_graph(15)) {
         prop_assume!(!edges.is_empty());
         let a = vec![Some(0u32); n_nodes];
-        let m = mixing_matrix(&a, &edges, 1, true, true);
+        let m = mixing_matrix(&a, &net(&edges, n_nodes), 1, true, true);
         prop_assert!(attribute_ac(&m).is_nan());
     }
 
@@ -169,7 +218,7 @@ proptest! {
     ) {
         let a = assignments(n_nodes, n_attributes);
         let names = attribute_names(n_attributes);
-        let stats = sample_assort_mixmat(&a, &edges, &names, "patient-1_sample-1", 8);
+        let stats = sample_assort_mixmat(&a, &net(&edges, n_nodes), &names, "patient-1_sample-1", 8);
 
         prop_assert_eq!(stats.values.len(), stats.column_names.len());
         prop_assert_eq!(stats.values[0], n_nodes as f64);
@@ -191,8 +240,8 @@ proptest! {
     ) {
         let a = assignments(n_nodes, n_attributes);
         let names = attribute_names(n_attributes);
-        let first = sample_assort_mixmat(&a, &edges, &names, "s", 12);
-        let second = sample_assort_mixmat(&a, &edges, &names, "s", 12);
+        let first = sample_assort_mixmat(&a, &net(&edges, n_nodes), &names, "s", 12);
+        let second = sample_assort_mixmat(&a, &net(&edges, n_nodes), &names, "s", 12);
 
         for (x, y) in first.values.iter().zip(&second.values) {
             prop_assert!(

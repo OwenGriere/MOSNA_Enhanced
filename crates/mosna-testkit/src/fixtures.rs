@@ -7,7 +7,6 @@
 
 use std::path::{Path, PathBuf};
 
-use mosna_io::write::write_parquet::write_parquet;
 use mosna_io::Table;
 
 /// `k` compact, well-separated Gaussian-ish blobs in the plane.
@@ -111,13 +110,16 @@ pub fn cohort(n_samples: usize, n_cells: usize, phenotypes: &[&str]) -> Cohort {
         let pairs: Vec<(u32, u32)> = (0..n_cells.saturating_sub(1))
             .map(|i| (i as u32, i as u32 + 1))
             .collect();
-        let edges = Table::from_edges(&pairs).expect("a well-formed edges table");
+        let network = mosna_io::Csr::from_pairs(&pairs, n_cells).expect("a path over the cells");
 
         let stem = format!("patient-{}_sample-1", sample + 1);
-        write_parquet(&nodes, net_dir.join(format!("nodes_{stem}.parquet")))
-            .expect("nodes must be writable");
-        write_parquet(&edges, net_dir.join(format!("edges_{stem}.parquet")))
-            .expect("edges must be writable");
+        mosna_io::write_network(
+            &nodes,
+            &network,
+            &net_dir.join(format!("nodes_{stem}.parquet")),
+            &net_dir.join(format!("edges_{stem}.parquet")),
+        )
+        .expect("the network must be writable");
     }
 
     Cohort {
@@ -181,10 +183,37 @@ mod tests {
     #[test]
     fn cohort_edges_form_a_path() {
         let cohort = cohort(1, 5, &["A"]);
+        let (_, network) = mosna_io::read_network_files(
+            &cohort.dir().join("nodes_patient-1_sample-1.parquet"),
+            &cohort.dir().join("edges_patient-1_sample-1.parquet"),
+            mosna_io::Extension::Parquet,
+        )
+        .unwrap();
+        assert_eq!(network.pairs(), vec![(0, 1), (1, 2), (2, 3), (3, 4)]);
+    }
+
+    /// The cohort is written in the current format: degrees beside the cells,
+    /// neighbours in the edges file.
+    #[test]
+    fn the_cohort_is_written_in_the_csr_format() {
+        let cohort = cohort(1, 5, &["A"]);
+        let nodes = mosna_io::read::read_parquet::read_parquet(
+            cohort.dir().join("nodes_patient-1_sample-1.parquet"),
+        )
+        .unwrap();
         let edges = mosna_io::read::read_parquet::read_parquet(
             cohort.dir().join("edges_patient-1_sample-1.parquet"),
         )
         .unwrap();
-        assert_eq!(edges.edges().unwrap(), vec![(0, 1), (1, 2), (2, 3), (3, 4)]);
+        assert_eq!(
+            nodes
+                .index_column(mosna_io::network::DEGREE_COLUMN)
+                .unwrap(),
+            vec![1, 2, 2, 2, 1]
+        );
+        assert_eq!(
+            mosna_io::network::edges_format(&edges).unwrap(),
+            mosna_io::network::EdgesFormat::Csr
+        );
     }
 }

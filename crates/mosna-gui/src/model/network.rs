@@ -903,21 +903,11 @@ impl NetworkSample {
         })?;
 
         let edges = match edges {
-            Some(path) => {
-                let pairs = read_table(path, extension)?.edges()?;
-                // An endpoint past the end of the sample would index out of
-                // the position array inside the paint loop. Better to refuse
-                // the file, naming it, than to panic while drawing.
-                let n_cells = positions.len() as u32;
-                if let Some((a, b)) = pairs.iter().find(|(a, b)| *a >= n_cells || *b >= n_cells) {
-                    anyhow::bail!(
-                        "{} has an edge {a}–{b}, and {} only has {n_cells} cells",
-                        path.display(),
-                        nodes.display()
-                    );
-                }
-                pairs
-            }
+            // Reading the network checks it against the cells: an endpoint
+            // past the end of the sample would index out of the position array
+            // inside the paint loop, so it is refused here, naming both files.
+            // Each edge is then drawn once, as one segment.
+            Some(path) => mosna_io::read_network(&table, &read_table(path, extension)?)?.pairs(),
             None => Vec::new(),
         };
 
@@ -1514,13 +1504,42 @@ mod tests {
         ])
         .unwrap();
         let nodes_path = directory.join("nodes_patient-1.parquet");
-        mosna_io::write::write_parquet::write_parquet(&nodes, &nodes_path).unwrap();
-
-        let edges = Table::from_edges(&[(0, 1), (1, 2), (2, 3)]).unwrap();
         let edges_path = directory.join("edges_patient-1.parquet");
-        mosna_io::write::write_parquet::write_parquet(&edges, &edges_path).unwrap();
+        let network = mosna_io::Csr::from_pairs(&[(0, 1), (1, 2), (2, 3)], 4).unwrap();
+        mosna_io::write_network(&nodes, &network, &nodes_path, &edges_path).unwrap();
 
         (nodes_path, edges_path)
+    }
+
+    /// A network directory from before the current format — or from the
+    /// Python side — shows the same edges.
+    #[test]
+    fn a_previous_format_edges_file_shows_the_same_edges() {
+        let directory = tempfile::tempdir().unwrap();
+        let (nodes, _) = write_sample(directory.path());
+        let edges_path = directory.path().join("edges_previous.parquet");
+        mosna_io::write::write_parquet::write_parquet(
+            &Table::source_target_edges(&[(2, 3), (1, 0), (1, 2)]).unwrap(),
+            &edges_path,
+        )
+        .unwrap();
+
+        let sample =
+            NetworkSample::load(&nodes, Some(&edges_path), Extension::Parquet, "X", "Y").unwrap();
+        assert_eq!(sample.edges, vec![(0, 1), (1, 2), (2, 3)]);
+    }
+
+    /// The degree written beside each cell is a column like the others, so a
+    /// sample can be coloured by how connected its cells are.
+    #[test]
+    fn the_degree_is_offered_as_a_column() {
+        let directory = tempfile::tempdir().unwrap();
+        let (nodes, edges) = write_sample(directory.path());
+        let sample =
+            NetworkSample::load(&nodes, Some(&edges), Extension::Parquet, "X", "Y").unwrap();
+        assert!(sample
+            .columns
+            .contains(&mosna_io::network::DEGREE_COLUMN.to_string()));
     }
 
     #[test]
@@ -1560,7 +1579,7 @@ mod tests {
     fn an_edge_pointing_outside_the_sample_is_refused() {
         let directory = tempfile::tempdir().unwrap();
         let (nodes, _) = write_sample(directory.path());
-        let edges = Table::from_edges(&[(0, 9)]).unwrap();
+        let edges = Table::source_target_edges(&[(0, 9)]).unwrap();
         let edges_path = directory.path().join("edges_bad.parquet");
         mosna_io::write::write_parquet::write_parquet(&edges, &edges_path).unwrap();
 

@@ -259,6 +259,15 @@ computed for that row (read from the cache, for instance).
 `Network directory` are read where the configuration says; a relative one is
 taken relative to the configuration file, not to the working directory.
 
+A network is two files per sample, in compressed sparse row form.
+`nodes_{sample}` keeps the cells' own columns and gains `degree`, each cell's
+number of neighbours. `edges_{sample}` has a single `indices` column: the
+neighbours of the first cell, then those of the second, and so on, each run
+sorted. Every network is undirected, so an edge appears from both ends and the
+`degree` column is each cell's true degree. A network directory in the previous
+format, with one `source`, `target` row per edge (as earlier versions and the
+Python MOSNA write it), is still read, and gives the same results.
+
 ```text
 Compute time — the algorithms alone, without checking, reading or writing files, nor drawing figures; summed over the samples where they run in parallel:
   Delaunay triangulation               0.029 s

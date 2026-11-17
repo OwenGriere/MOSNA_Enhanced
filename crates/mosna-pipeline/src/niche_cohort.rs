@@ -276,16 +276,11 @@ mod tests {
                 ),
             ])
             .unwrap();
-            mosna_io::write::write_parquet::write_parquet(
+            mosna_io::write_network(
                 &nodes,
-                dir.join(id.nodes_file_name("patient", None, "parquet")),
-            )
-            .unwrap();
-
-            let edges = Table::from_edges(&[(0, 1)]).unwrap();
-            mosna_io::write::write_parquet::write_parquet(
-                &edges,
-                dir.join(id.edges_file_name("patient", None, "parquet")),
+                &mosna_io::Csr::from_pairs(&[(0, 1)], labels.len()).unwrap(),
+                &dir.join(id.nodes_file_name("patient", None, "parquet")),
+                &dir.join(id.edges_file_name("patient", None, "parquet")),
             )
             .unwrap();
 
@@ -376,7 +371,9 @@ mod tests {
         let index = cohort(dir.path(), &[&["A", "B", "C"]]);
         let before = digest(dir.path(), &index, &["Cluster"]);
 
-        let edges = Table::from_edges(&[(0, 1), (1, 2), (0, 2)]).unwrap();
+        let edges =
+            Table::csr_edges(&mosna_io::Csr::from_pairs(&[(0, 1), (1, 2), (0, 2)], 3).unwrap())
+                .unwrap();
         mosna_io::write::write_parquet::write_parquet(
             &edges,
             dir.path()

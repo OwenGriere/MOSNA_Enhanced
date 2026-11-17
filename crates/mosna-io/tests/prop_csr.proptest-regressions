@@ -1,0 +1,16 @@
+# Seeds for failure cases proptest has generated in the past. It is
+# automatically read and these particular cases re-run before any
+# novel cases are generated.
+#
+# It is recommended to check this file in to source control so that
+# everyone who runs the test benefits from these saved cases.
+cc c19d4c4956e83318229587d1fcf882f78eb873d236a6e7451ea622bb49736f97 # shrinks to (n, pairs) = (1, [])
+cc 40612de49fed8ec103f62ea9abc4c2f833d3a653466616b4f7731746e1ff2d9f # shrinks to (n, pairs) = (1, [])
+cc 182aad3cdf4584fea2ba221787569f4262c3d2ad889e6da9c14e37519055621f # shrinks to (n, pairs) = (1, [])
+cc 16e4bef3766ba917f17e8cc310e2d4ac5907772be9236bf6663b13a3a6aa9390 # shrinks to (n, pairs) = (1, [])
+cc a3478dd80e2df4fe88552216f7772a7cfa311687d63350428862ae4b94683c52 # shrinks to (n, pairs) = (1, [])
+cc 7bb09cb1eab67d543a6d5dc44951c440ebef98447dbb592c366b1e630267e083 # shrinks to (n, pairs) = (1, [])
+cc 4235dd38f6b060960ee4af489eadb95f396541d7ad0aa0597abf1896d7613192 # shrinks to (n, pairs) = (1, [])
+cc b24bb614285b58ac4bc11c7f514a163cd91a1260214c1729bd021f05952d7e79 # shrinks to (n, pairs) = (14, [(0, 1), (0, 2), (0, 3), (0, 5), (0, 6), (0, 7), (0, 11), (0, 12), (1, 2), (1, 3), (1, 7), (1, 8), (1, 9), (1, 10), (1, 12), (1, 13), (2, 3), (2, 4), (2, 5), (2, 6), (2, 10), (2, 11), (3, 5), (3, 6), (3, 8), (3, 10), (4, 7), (4, 8), (4, 9), (4, 11), (4, 12), (4, 13), (5, 7), (5, 8), (5, 9), (5, 10), (5, 12), (5, 13), (7, 8), (7, 10), (8, 10), (8, 11), (8, 12), (8, 13), (9, 10), (9, 11), (10, 11), (10, 12), (10, 13), (11, 12), (11, 13), (12, 13)])
+cc 8881453a17e85c09029bca4c4ae0d7fef22ebe94d8140dff626ab066e36a71e3 # shrinks to (n, pairs) = (2, [(0, 1)]), pick = Index(0)
+cc a1ea49e557d4a05a88fa679fe08aeeeb06a7ea0232642a043898a20df113127f # shrinks to (n, pairs) = (2, [])

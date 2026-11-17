@@ -11,8 +11,7 @@ use mosna_core::geometry::{
     build_delaunay, link_solitaries, DelaunayTrim, LinkMethod, NodeAdaptive, TrimDist,
 };
 use mosna_io::read::get_opener::{read_table, Extension};
-use mosna_io::write::write_parquet::write_parquet;
-use mosna_io::{find_sample, find_sample_from_file, Table};
+use mosna_io::{find_sample, find_sample_from_file, write_network};
 
 use crate::error::{create_dir_all, PipelineError, Result};
 use crate::figures::FigureSink;
@@ -136,11 +135,16 @@ pub fn tysserand_network(
 
                 // The network files are always parquet: that is what the later
                 // steps read from `temp/net_dir_mosna`, whatever the input format.
+                // The cells keep their columns and gain their degree; the edges
+                // file holds the neighbours of each cell in turn.
                 let stem = sample.str_group(&settings.patient_column, sample_column);
-                write_parquet(&nodes, temp_folder.join(format!("nodes_{stem}.parquet")))?;
-                write_parquet(
-                    &Table::from_edges(&pairs)?,
-                    temp_folder.join(format!("edges_{stem}.parquet")),
+                let network = mosna_io::Csr::from_pairs(&pairs, nodes.n_rows())
+                    .map_err(|error| PipelineError::invalid(error.to_string()))?;
+                write_network(
+                    &nodes,
+                    &network,
+                    &temp_folder.join(format!("nodes_{stem}.parquet")),
+                    &temp_folder.join(format!("edges_{stem}.parquet")),
                 )?;
 
                 let finished = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;

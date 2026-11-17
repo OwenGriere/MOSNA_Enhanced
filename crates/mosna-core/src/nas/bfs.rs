@@ -1,6 +1,6 @@
 //! K-order neighbourhood traversal — port of `neighbors.py::_bfs_csr`.
 
-use crate::nas::adjacency::Adjacency;
+use crate::Csr;
 
 /// Scratch buffers reused across nodes.
 ///
@@ -36,7 +36,7 @@ impl BfsScratch {
     /// Ordering does not affect the mean and standard deviation computed over
     /// the set, but it is kept because it makes the traversal directly
     /// comparable with the Python one when debugging.
-    pub fn neighbourhood(&mut self, adj: &Adjacency, start: usize, order: usize) -> &[u32] {
+    pub fn neighbourhood(&mut self, network: &Csr, start: usize, order: usize) -> &[u32] {
         self.generation = self.generation.wrapping_add(1);
         if self.generation == 0 {
             // Wrapped around: clear so stale stamps cannot alias.
@@ -55,7 +55,7 @@ impl BfsScratch {
         for _ in 0..order {
             self.next_frontier.clear();
             for &node in &self.frontier {
-                for &neighbour in adj.neighbours(node as usize) {
+                for &neighbour in network.neighbours(node as usize) {
                     if self.stamp[neighbour as usize] != generation {
                         self.stamp[neighbour as usize] = generation;
                         self.next_frontier.push(neighbour);
@@ -78,8 +78,8 @@ mod tests {
     use super::*;
 
     /// A path graph 0 - 1 - 2 - 3 - 4.
-    fn path() -> Adjacency {
-        Adjacency::from_pairs(&[(0, 1), (1, 2), (2, 3), (3, 4)], 5)
+    fn path() -> Csr {
+        Csr::from_pairs(&[(0, 1), (1, 2), (2, 3), (3, 4)], 5).unwrap()
     }
 
     #[test]
@@ -109,7 +109,7 @@ mod tests {
 
     #[test]
     fn an_isolated_node_is_its_own_neighbourhood() {
-        let adj = Adjacency::from_pairs(&[(0, 1)], 3);
+        let adj = Csr::from_pairs(&[(0, 1)], 3).unwrap();
         let mut scratch = BfsScratch::new(3);
         assert_eq!(scratch.neighbourhood(&adj, 2, 3), &[2]);
     }
@@ -117,7 +117,7 @@ mod tests {
     #[test]
     fn each_node_is_reported_once() {
         // A triangle, where a naive traversal would revisit nodes.
-        let adj = Adjacency::from_pairs(&[(0, 1), (1, 2), (0, 2)], 3);
+        let adj = Csr::from_pairs(&[(0, 1), (1, 2), (0, 2)], 3).unwrap();
         let mut scratch = BfsScratch::new(3);
         let got = scratch.neighbourhood(&adj, 0, 3).to_vec();
         let mut unique = got.clone();

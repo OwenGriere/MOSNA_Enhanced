@@ -116,30 +116,6 @@ impl Table {
         Ok(xs.into_iter().zip(ys).map(|(a, b)| [a, b]).collect())
     }
 
-    /// Read the `source`/`target` columns of an edges table.
-    ///
-    /// The Python code asserts `sorted(edges.columns) == ["source", "target"]`;
-    /// the same requirement is enforced here, with the same intent of catching
-    /// a file that is not actually an edge list.
-    pub fn edges(&self) -> Result<Vec<(u32, u32)>> {
-        let mut names = self.column_names();
-        names.sort_unstable();
-        if names != ["source", "target"] {
-            return Err(IoError::invalid(format!(
-                "edges files must contain source and target columns only, {} has {:?}",
-                self.origin().display(),
-                self.column_names()
-            )));
-        }
-        let source = self.index_column("source")?;
-        let target = self.index_column("target")?;
-        Ok(source
-            .into_iter()
-            .zip(target)
-            .map(|(s, t)| (s as u32, t as u32))
-            .collect())
-    }
-
     /// Whether a column holds numbers rather than labels.
     ///
     /// The storage type answers this, not the values: a `Utf8` column casts to
@@ -242,29 +218,5 @@ mod tests {
         let err = table.require_column("Cluster").unwrap_err();
         assert!(err.to_string().contains("Cluster"));
         assert!(err.to_string().contains("nodes_patient-1.parquet"));
-    }
-
-    #[test]
-    fn edges_require_exactly_source_and_target() {
-        let good = Table::from_edges(&[(0, 1), (2, 3)]).unwrap();
-        assert_eq!(good.edges().unwrap(), vec![(0, 1), (2, 3)]);
-
-        let bad = Table::from_columns(vec![
-            ("source".into(), Table::i64_array([0])),
-            ("target".into(), Table::i64_array([1])),
-            ("weight".into(), Table::f64_array([1.0])),
-        ])
-        .unwrap();
-        assert!(bad.edges().is_err());
-    }
-
-    #[test]
-    fn negative_edge_indices_are_rejected() {
-        let table = Table::from_columns(vec![
-            ("source".into(), Table::i64_array([-1])),
-            ("target".into(), Table::i64_array([1])),
-        ])
-        .unwrap();
-        assert!(table.edges().is_err());
     }
 }

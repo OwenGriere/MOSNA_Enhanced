@@ -176,18 +176,23 @@ proptest! {
         prop_assert_eq!(loaded.f64_column("value").unwrap(), column);
     }
 
-    /// An edge list survives the round-trip through the parquet edges file.
+    /// An edges file in the previous `source`, `target` format, written to
+    /// parquet as the Python side writes it, still reads as its network.
     #[test]
-    fn prop_edges_round_trip(
+    fn prop_a_previous_format_edges_file_still_reads(
         raw in proptest::collection::vec((0u32..500, 0u32..500), 1..40),
     ) {
         let pairs: Vec<(u32, u32)> = raw;
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("edges.parquet");
+        let nodes = Table::from_columns(vec![("x".into(), Table::f64_array(vec![0.0; 500]))]).unwrap();
 
-        write_parquet(&Table::from_edges(&pairs).unwrap(), &path).unwrap();
+        write_parquet(&Table::source_target_edges(&pairs).unwrap(), &path).unwrap();
         let loaded = read_table(&path, Extension::Parquet).unwrap();
-        prop_assert_eq!(loaded.edges().unwrap(), pairs);
+        prop_assert_eq!(
+            mosna_io::read_network(&nodes, &loaded).unwrap(),
+            mosna_io::Csr::from_pairs(&pairs, 500).unwrap()
+        );
     }
 
     /// Adding a column leaves every other column untouched, which is what

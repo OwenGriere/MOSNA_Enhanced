@@ -149,6 +149,8 @@ mod tests {
         }
     }
 
+    /// `degree` among them: without it the edges file next to these nodes
+    /// could no longer be read as a network.
     #[test]
     fn the_original_columns_survive() {
         let fixture = cohort(1, 5, &["A"]);
@@ -171,7 +173,13 @@ mod tests {
         .unwrap();
         assert_eq!(
             table.column_names(),
-            vec!["X_position", "Y_position", "Cluster", "niches_1-1-1"]
+            vec![
+                "X_position",
+                "Y_position",
+                "Cluster",
+                mosna_io::network::DEGREE_COLUMN,
+                "niches_1-1-1"
+            ]
         );
     }
 

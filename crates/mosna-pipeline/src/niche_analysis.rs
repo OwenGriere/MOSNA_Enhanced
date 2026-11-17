@@ -1688,8 +1688,13 @@ fn plot_networks(
     let sample_column = settings.sample_column.as_deref();
     let mut offset = 0usize;
     for id in data_index {
-        let nodes = read_table(
-            net_dir.join(id.nodes_file_name(
+        let (nodes, network) = mosna_io::read_network_files(
+            &net_dir.join(id.nodes_file_name(
+                &settings.patient_column,
+                sample_column,
+                extension.as_str(),
+            )),
+            &net_dir.join(id.edges_file_name(
                 &settings.patient_column,
                 sample_column,
                 extension.as_str(),
@@ -1697,15 +1702,8 @@ fn plot_networks(
             extension,
         )?;
         let coords = nodes.coords(x_column, y_column)?;
-        let edges = read_table(
-            net_dir.join(id.edges_file_name(
-                &settings.patient_column,
-                sample_column,
-                extension.as_str(),
-            )),
-            extension,
-        )?;
-        let pairs = edges.edges()?;
+        // The figure draws each edge once, as a segment.
+        let pairs = network.pairs();
 
         // This sample's slice of the cohort's labels, in the order the features
         // were stacked — the same split `merge_niche_pheno` makes.

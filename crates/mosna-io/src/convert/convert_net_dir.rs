@@ -98,7 +98,38 @@ mod tests {
         let edges =
             crate::read::read_parquet::read_parquet(dst.join("edges_patient-1_sample-2.parquet"))
                 .unwrap();
-        assert_eq!(edges.edges().unwrap(), vec![(0, 1)]);
+        assert_eq!(
+            crate::read_network(&nodes, &edges).unwrap(),
+            crate::Csr::from_pairs(&[(0, 1)], 2).unwrap()
+        );
+    }
+
+    /// A network directory in CSV, already in the CSR format, converts to a
+    /// parquet network that reads back the same.
+    #[test]
+    fn a_csr_network_in_csv_converts_to_the_same_network() {
+        let dir = tempfile::tempdir().unwrap();
+        let src = dir.path().join("src");
+        let dst = dir.path().join("dst");
+        std::fs::create_dir_all(&src).unwrap();
+        std::fs::write(
+            src.join("nodes_patient-1.csv"),
+            "x,degree\n1.0,2\n2.0,1\n3.0,1\n",
+        )
+        .unwrap();
+        std::fs::write(src.join("edges_patient-1.csv"), "indices\n1\n2\n0\n0\n").unwrap();
+
+        convert_net_dir(&src, &dst, "patient", None, Extension::Csv).unwrap();
+        let (_, network) = crate::read_network_files(
+            &dst.join("nodes_patient-1.parquet"),
+            &dst.join("edges_patient-1.parquet"),
+            Extension::Parquet,
+        )
+        .unwrap();
+        assert_eq!(
+            network,
+            crate::Csr::from_pairs(&[(0, 1), (0, 2)], 3).unwrap()
+        );
     }
 
     #[test]

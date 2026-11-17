@@ -13,6 +13,7 @@
 pub mod convert;
 pub mod discovery;
 pub mod error;
+pub mod network;
 pub mod progress;
 pub mod read;
 pub mod table;
@@ -24,6 +25,7 @@ pub use discovery::{
     make_data_index::make_data_index, sample_id::SampleId,
 };
 pub use error::{IoError, Result};
+pub use network::{read_network, read_network_files, write_network, Csr};
 pub use progress::emit::{emit_qt_info, emit_qt_progress};
 pub use read::{get_opener::read_table, get_opener::Extension};
 pub use table::Table;

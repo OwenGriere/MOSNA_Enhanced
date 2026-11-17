@@ -82,24 +82,6 @@ impl Table {
         Table::from_columns(pairs)
     }
 
-    /// Build the two-column edge table the pipelines write out.
-    ///
-    /// `pd.DataFrame(data=pairs, columns=['source', 'target'])` produces int64
-    /// columns from a numpy integer array, so the same width is used here to
-    /// keep the parquet files interchangeable.
-    pub fn from_edges(pairs: &[(u32, u32)]) -> Result<Self, ArrowError> {
-        let source: ArrayRef = Arc::new(Int64Array::from_iter_values(
-            pairs.iter().map(|(s, _)| *s as i64),
-        ));
-        let target: ArrayRef = Arc::new(Int64Array::from_iter_values(
-            pairs.iter().map(|(_, t)| *t as i64),
-        ));
-        Table::from_columns(vec![
-            ("source".to_string(), source),
-            ("target".to_string(), target),
-        ])
-    }
-
     /// An empty table with no columns and no rows.
     pub fn empty() -> Self {
         Self {
@@ -179,12 +161,5 @@ mod tests {
             .unwrap();
         assert_eq!(table.n_columns(), 2);
         assert_eq!(table.column_names(), vec!["x", "niches"]);
-    }
-
-    #[test]
-    fn edge_tables_use_the_python_column_names() {
-        let table = Table::from_edges(&[(0, 1), (1, 2)]).unwrap();
-        assert_eq!(table.column_names(), vec!["source", "target"]);
-        assert_eq!(table.n_rows(), 2);
     }
 }

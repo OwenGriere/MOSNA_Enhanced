@@ -45,11 +45,6 @@ fn write_network(root: &Path, side: usize) {
         ("niches".into(), Table::f64_array(niches)),
     ])
     .unwrap();
-    mosna_io::write::write_parquet::write_parquet(
-        &nodes,
-        net_dir.join("nodes_patient-1_sample-1.parquet"),
-    )
-    .unwrap();
 
     // Each cell to its right-hand and lower neighbour: a lattice, which is
     // enough edges to exercise the segment mesh.
@@ -63,9 +58,11 @@ fn write_network(root: &Path, side: usize) {
             edges.push((i as u32, (i + side) as u32));
         }
     }
-    mosna_io::write::write_parquet::write_parquet(
-        &Table::from_edges(&edges).unwrap(),
-        net_dir.join("edges_patient-1_sample-1.parquet"),
+    mosna_io::write_network(
+        &nodes,
+        &mosna_io::Csr::from_pairs(&edges, n).unwrap(),
+        &net_dir.join("nodes_patient-1_sample-1.parquet"),
+        &net_dir.join("edges_patient-1_sample-1.parquet"),
     )
     .unwrap();
 }

@@ -103,9 +103,9 @@ pub fn assortativity(
                     .map(|label| label.and_then(|l| attribute_index.get(l.as_str()).copied()))
                     .collect();
 
-                let pairs = edges.edges()?;
+                let network = mosna_io::read_network(&nodes, &edges)?;
                 let stats = clock.measure_for(id, || {
-                    sample_assort_mixmat(&assignments, &pairs, &attributes, &stem, n_shuffle)
+                    sample_assort_mixmat(&assignments, &network, &attributes, &stem, n_shuffle)
                 });
 
                 let finished = done.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;

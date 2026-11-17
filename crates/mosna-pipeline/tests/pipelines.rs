@@ -84,6 +84,47 @@ impl Workspace {
     fn net_dir(&self) -> PathBuf {
         self.root.join("temp/net_dir_mosna")
     }
+
+    /// The network of one sample, read the way the later steps read it.
+    fn network(&self, stem: &str) -> mosna_io::Csr {
+        mosna_io::read_network_files(
+            &self.net_dir().join(format!("nodes_{stem}.parquet")),
+            &self.net_dir().join(format!("edges_{stem}.parquet")),
+            Extension::Parquet,
+        )
+        .unwrap()
+        .1
+    }
+
+    /// Rewrite every network of step 1 in the previous format: an edges file of
+    /// `source`, `target` rows, and nodes files without the `degree` column —
+    /// what MOSNA wrote before, and what its Python implementation writes.
+    fn downgrade_networks(&self) {
+        let files = find_sample(self.net_dir(), "parquet", "patient", Some("sample")).unwrap();
+        for nodes_path in files {
+            let name = nodes_path
+                .file_name()
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            let edges_path = self.net_dir().join(name.replacen("nodes_", "edges_", 1));
+            let (nodes, network) =
+                mosna_io::read_network_files(&nodes_path, &edges_path, Extension::Parquet).unwrap();
+
+            let kept: Vec<(String, _)> = nodes
+                .column_names()
+                .into_iter()
+                .filter(|&name| name != mosna_io::network::DEGREE_COLUMN)
+                .map(|name| (name.to_string(), nodes.column(name).unwrap().clone()))
+                .collect();
+            mosna_io::write_parquet(&Table::from_columns(kept).unwrap(), &nodes_path).unwrap();
+            mosna_io::write_parquet(
+                &Table::source_target_edges(&network.pairs()).unwrap(),
+                &edges_path,
+            )
+            .unwrap();
+        }
+    }
 }
 
 /// Counts the figures a run asks for, so a test can assert that a figure which
@@ -236,16 +277,134 @@ fn tysserand_writes_a_network_per_sample() {
         assert_eq!(nodes_table.n_rows(), 36, "every cell must be kept");
         assert!(nodes_table.has_column("Cluster"));
 
-        let edges_table = read_table(&edges_path, Extension::Parquet).unwrap();
-        let pairs = edges_table.edges().unwrap();
-        assert!(!pairs.is_empty(), "the network has no edges");
-        assert!(
-            pairs
-                .iter()
-                .all(|&(a, b)| (a as usize) < 36 && (b as usize) < 36),
-            "an edge points outside the sample"
-        );
+        let (_, network) =
+            mosna_io::read_network_files(path, &edges_path, Extension::Parquet).unwrap();
+        assert_eq!(network.n_nodes(), 36, "one row of the network per cell");
+        assert!(network.n_edges() > 0, "the network has no edges");
     }
+}
+
+/// Step 1 writes the compressed sparse row form: each cell's degree in the
+/// nodes file, beside its own columns, and the neighbours in the edges file.
+#[test]
+fn tysserand_writes_degrees_beside_the_cells_and_neighbours_in_the_edges() {
+    let workspace = Workspace::new(1, 36, &["A", "B"]);
+    tysserand_network(&config(), workspace.root(), &SilentProgress, &NoFigures).unwrap();
+
+    let nodes = read_table(
+        workspace.net_dir().join("nodes_patient-1_sample-1.parquet"),
+        Extension::Parquet,
+    )
+    .unwrap();
+    let edges = read_table(
+        workspace.net_dir().join("edges_patient-1_sample-1.parquet"),
+        Extension::Parquet,
+    )
+    .unwrap();
+
+    assert_eq!(
+        nodes.column_names(),
+        vec![
+            "X_position",
+            "Y_position",
+            "Cluster",
+            mosna_io::network::DEGREE_COLUMN
+        ]
+    );
+    assert_eq!(
+        edges.column_names(),
+        vec![mosna_io::network::INDICES_COLUMN]
+    );
+
+    let network = workspace.network("patient-1_sample-1");
+    let degrees = nodes
+        .index_column(mosna_io::network::DEGREE_COLUMN)
+        .unwrap();
+    assert_eq!(
+        degrees,
+        network
+            .degrees()
+            .iter()
+            .map(|&d| d as usize)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(
+        edges.n_rows(),
+        2 * network.n_edges(),
+        "every edge from both ends"
+    );
+}
+
+/// A network directory written before this format — or by MOSNA's Python
+/// implementation — gives step 2 the same statistics, to the last digit.
+#[test]
+fn assortativity_reads_a_previous_format_network_to_the_same_result() {
+    let assort_of = |downgrade: bool| {
+        let workspace = Workspace::new(2, 36, &["A", "B", "C"]);
+        let configuration = config();
+        tysserand_network(
+            &configuration,
+            workspace.root(),
+            &SilentProgress,
+            &NoFigures,
+        )
+        .unwrap();
+        if downgrade {
+            workspace.downgrade_networks();
+        }
+        assortativity(
+            &configuration,
+            workspace.root(),
+            &SilentProgress,
+            &NoFigures,
+        )
+        .unwrap();
+        let table = read_table(
+            workspace.root().join("Assortativity/net_stat.csv"),
+            Extension::Csv,
+        )
+        .unwrap();
+        (
+            table.f64_column("assort").unwrap(),
+            table.f64_column("C - A Z").unwrap(),
+        )
+    };
+    assert_eq!(assort_of(false), assort_of(true));
+}
+
+/// The same for step 3: the niches found over a previous-format network are
+/// the niches found over the same network in the current format.
+#[test]
+fn niche_analysis_reads_a_previous_format_network_to_the_same_niches() {
+    let niches_of = |downgrade: bool| {
+        let workspace = Workspace::new(2, 36, &["A", "B"]);
+        let configuration = config();
+        tysserand_network(
+            &configuration,
+            workspace.root(),
+            &SilentProgress,
+            &NoFigures,
+        )
+        .unwrap();
+        if downgrade {
+            workspace.downgrade_networks();
+        }
+        niche_analysis(
+            &configuration,
+            workspace.root(),
+            &SilentProgress,
+            &NoFigures,
+        )
+        .unwrap();
+        read_table(
+            workspace.net_dir().join("nodes_patient-1_sample-1.parquet"),
+            Extension::Parquet,
+        )
+        .unwrap()
+        .f64_column("niches_1-1-1")
+        .unwrap()
+    };
+    assert_eq!(niches_of(false), niches_of(true));
 }
 
 /// The reconstructed network must connect every cell: an isolated cell has no
@@ -255,20 +414,19 @@ fn tysserand_leaves_no_cell_isolated() {
     let workspace = Workspace::new(1, 36, &["A"]);
     tysserand_network(&config(), workspace.root(), &SilentProgress, &NoFigures).unwrap();
 
-    let edges = read_table(
-        workspace.net_dir().join("edges_patient-1_sample-1.parquet"),
+    // The degree column says it directly, and agrees with the edges.
+    let degree = read_table(
+        workspace.net_dir().join("nodes_patient-1_sample-1.parquet"),
         Extension::Parquet,
     )
+    .unwrap()
+    .index_column(mosna_io::network::DEGREE_COLUMN)
     .unwrap();
-    let mut degree = vec![0usize; 36];
-    for (a, b) in edges.edges().unwrap() {
-        degree[a as usize] += 1;
-        degree[b as usize] += 1;
-    }
     assert!(
         degree.iter().all(|&d| d > 0),
         "a cell has no edge: {degree:?}"
     );
+    assert!(workspace.network("patient-1_sample-1").neighbours(0).len() == degree[0]);
 }
 
 #[test]
@@ -277,12 +435,7 @@ fn tysserand_is_reproducible() {
     let mut runs = Vec::new();
     for _ in 0..2 {
         tysserand_network(&config(), workspace.root(), &SilentProgress, &NoFigures).unwrap();
-        let edges = read_table(
-            workspace.net_dir().join("edges_patient-1_sample-1.parquet"),
-            Extension::Parquet,
-        )
-        .unwrap();
-        runs.push(edges.edges().unwrap());
+        runs.push(workspace.network("patient-1_sample-1"));
     }
     assert_eq!(runs[0], runs[1]);
 }

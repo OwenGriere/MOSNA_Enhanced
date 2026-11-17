@@ -16,6 +16,7 @@ use mosna_core::geometry::link_solitaries::{link_solitaries, LinkMethod};
 use mosna_core::nas::make_features_nas::make_features_nas;
 use mosna_core::nas::onehot::one_hot;
 use mosna_core::reduction::umap::{umap, UmapParams};
+use mosna_core::Csr;
 
 use crate::agreement::{adjusted_rand_index, knn_overlap, normalized_mutual_information};
 use crate::cohort::{CohortSpec, Tissue};
@@ -54,14 +55,15 @@ pub fn level_1_golden(spec: &CohortSpec) -> Fingerprint {
             .expect("relinking cannot fail on a valid graph");
         fingerprint.pairs(&stage("edges"), &edges);
 
+        // From here on the network is what the steps hand each other: its
+        // compressed sparse rows, as written to and read from the files.
+        let network =
+            Csr::from_pairs(&edges, tissue.coords.len()).expect("edges within the tissue");
+
         // The degree distribution is what the min-neighbours guarantee is
         // about, and it moves for reasons a hash of the edge set would not
         // explain.
-        let mut degrees = vec![0u32; tissue.coords.len()];
-        for &(a, b) in &edges {
-            degrees[a as usize] += 1;
-            degrees[b as usize] += 1;
-        }
+        let degrees = network.degrees();
         fingerprint.floats(
             &stage("degree_summary"),
             &[
@@ -72,14 +74,14 @@ pub fn level_1_golden(spec: &CohortSpec) -> Fingerprint {
         );
 
         // -- neighbourhood features -----------------------------------------
-        let (features, n_rows, _) = neighbourhood_features(&tissue, &edges, &phenotypes);
+        let (features, n_rows, _) = neighbourhood_features(&tissue, &network, &phenotypes);
         // The whole feature matrix is far too large for git; its column means
         // are not, and they move whenever the aggregation does.
         fingerprint.floats(&stage("nas_column_means"), &column_means(&features, n_rows));
 
         // -- assortativity ---------------------------------------------------
         let assignments = assignments_of(&tissue, &phenotypes);
-        let mixmat = mixing_matrix(&assignments, &edges, phenotypes.len(), true, true);
+        let mixmat = mixing_matrix(&assignments, &network, phenotypes.len(), true, true);
         fingerprint.floats(&stage("mixing_matrix"), &mixmat.values);
         fingerprint.floats(&stage("assortativity"), &[attribute_ac(&mixmat)]);
     }
@@ -150,15 +152,15 @@ fn seeded_run(spec: &CohortSpec) -> Fingerprint {
     // Only the first sample: level 2 is about determinism, not coverage, and
     // the stochastic code paths are the same from one sample to the next.
     let tissue = Tissue::generate(spec, 0);
-    let edges = network_of(&tissue);
+    let network = network_of(&tissue);
     let assignments = assignments_of(&tissue, &phenotypes);
 
     // The permutation null. Its seed is fixed inside the core, precisely so
     // this is reproducible; the Python cannot make the same promise.
-    let stats = sample_assort_mixmat(&assignments, &edges, &phenotypes, "sample_0", 32);
+    let stats = sample_assort_mixmat(&assignments, &network, &phenotypes, "sample_0", 32);
     fingerprint.floats("assortativity_zscores", &stats.values);
 
-    let (features, n_rows, n_features) = neighbourhood_features(&tissue, &edges, &phenotypes);
+    let (features, n_rows, n_features) = neighbourhood_features(&tissue, &network, &phenotypes);
 
     let embedding = embed(&features, n_rows, n_features);
     fingerprint.floats("umap_embedding", &embedding);
@@ -166,9 +168,13 @@ fn seeded_run(spec: &CohortSpec) -> Fingerprint {
     let gmm = cluster(&embedding, n_rows, spec.n_niches);
     fingerprint.labels("gmm_labels", &gmm);
 
-    let graph: Vec<(usize, usize, f64)> = edges
-        .iter()
-        .map(|&(a, b)| (a as usize, b as usize, 1.0))
+    // Each edge once, in the order the edge list had before: Leiden's moves
+    // are seeded, so a different order would be a different, equally valid,
+    // partition.
+    let graph: Vec<(usize, usize, f64)> = network
+        .pairs()
+        .into_iter()
+        .map(|(a, b)| (a as usize, b as usize, 1.0))
         .collect();
     fingerprint.labels("leiden_labels", &leiden(n_rows, &graph, 1.0, 42));
 
@@ -184,9 +190,9 @@ fn seeded_run(spec: &CohortSpec) -> Fingerprint {
 pub fn level_3_recovery(spec: &CohortSpec) -> Recovery {
     let phenotypes = vocabulary(spec);
     let tissue = Tissue::generate(spec, 0);
-    let edges = network_of(&tissue);
+    let network = network_of(&tissue);
 
-    let (features, n_rows, n_features) = neighbourhood_features(&tissue, &edges, &phenotypes);
+    let (features, n_rows, n_features) = neighbourhood_features(&tissue, &network, &phenotypes);
     let embedding = embed(&features, n_rows, n_features);
     let found = cluster(&embedding, n_rows, spec.n_niches);
 
@@ -241,10 +247,11 @@ fn vocabulary(spec: &CohortSpec) -> Vec<String> {
 }
 
 /// The network of a tissue, as step one builds it.
-fn network_of(tissue: &Tissue) -> Vec<(u32, u32)> {
+fn network_of(tissue: &Tissue) -> Csr {
     let raw = build_delaunay(&tissue.coords, DelaunayTrim::default()).expect("enough points");
-    link_solitaries(&tissue.coords, &raw, LinkMethod::Delaunay, MIN_NEIGHBORS)
-        .expect("relinking cannot fail")
+    let edges = link_solitaries(&tissue.coords, &raw, LinkMethod::Delaunay, MIN_NEIGHBORS)
+        .expect("relinking cannot fail");
+    Csr::from_pairs(&edges, tissue.coords.len()).expect("edges within the tissue")
 }
 
 /// Each cell as an index into the vocabulary.
@@ -264,7 +271,7 @@ fn assignments_of(tissue: &Tissue, phenotypes: &[String]) -> Vec<Option<u32>> {
 /// The neighbourhood description of every cell: `(values, rows, columns)`.
 fn neighbourhood_features(
     tissue: &Tissue,
-    edges: &[(u32, u32)],
+    network: &Csr,
     phenotypes: &[String],
 ) -> (Vec<f64>, usize, usize) {
     let labels: Vec<Option<String>> = tissue.phenotypes.iter().cloned().map(Some).collect();
@@ -272,8 +279,7 @@ fn neighbourhood_features(
 
     let nas = make_features_nas(
         &encoded,
-        tissue.coords.len(),
-        edges,
+        network,
         ORDER,
         phenotypes,
         &["mean".to_string(), "std".to_string()],

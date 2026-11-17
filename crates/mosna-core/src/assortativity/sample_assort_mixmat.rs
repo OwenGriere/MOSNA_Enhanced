@@ -5,6 +5,8 @@ use crate::assortativity::mixing_matrix::mixing_matrix;
 use crate::assortativity::mixmat_columns::{attributes_pairs, mixmat_to_columns};
 use crate::assortativity::randomized_mixmat::randomized_mixmat;
 use crate::assortativity::zscore::zscore;
+use crate::Csr;
+#[cfg(test)]
 use crate::Pair;
 
 /// One row of `net_stat.csv`: the statistics of a single sample's network.
@@ -31,7 +33,7 @@ pub struct SampleStats {
 /// the node's phenotype is missing.
 pub fn sample_assort_mixmat(
     assignments: &[Option<u32>],
-    pairs: &[Pair],
+    network: &Csr,
     attributes: &[String],
     sample_id: &str,
     n_shuffle: usize,
@@ -39,10 +41,10 @@ pub fn sample_assort_mixmat(
     let n_attributes = attributes.len();
     let n_nodes = assignments.len();
 
-    let mixmat = mixing_matrix(assignments, pairs, n_attributes, true, true);
+    let mixmat = mixing_matrix(assignments, network, n_attributes, true, true);
     let assort = attribute_ac(&mixmat);
 
-    let null = randomized_mixmat(assignments, pairs, n_attributes, n_shuffle);
+    let null = randomized_mixmat(assignments, network, n_attributes, n_shuffle);
     let (assort_mean, assort_std, assort_z) = zscore(assort, &null.assort);
 
     // Element-wise z-scores of the mixing matrix against its null.
@@ -99,11 +101,11 @@ mod tests {
     }
 
     /// A ring of 12 nodes alternating between two phenotypes.
-    fn ring() -> (Vec<Option<u32>>, Vec<Pair>) {
+    fn ring() -> (Vec<Option<u32>>, Csr) {
         let n = 12u32;
         let assignments = (0..n).map(|i| Some(i % 2)).collect();
-        let pairs = (0..n).map(|i| (i, (i + 1) % n)).collect();
-        (assignments, pairs)
+        let pairs: Vec<Pair> = (0..n).map(|i| (i, (i + 1) % n)).collect();
+        (assignments, Csr::from_pairs(&pairs, n as usize).unwrap())
     }
 
     #[test]
@@ -178,6 +180,7 @@ mod tests {
             }
         }
         pairs.push((5, 6));
+        let pairs = Csr::from_pairs(&pairs, 12).unwrap();
 
         let stats = sample_assort_mixmat(&assignments, &pairs, &attrs(&["A", "B"]), "s", 200);
         let z_index = stats

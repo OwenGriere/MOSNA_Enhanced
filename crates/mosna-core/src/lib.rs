@@ -30,7 +30,7 @@ pub mod timing;
 pub use error::{CoreError, Result};
 
 /// An undirected edge between two node indices.
-pub type Pair = (u32, u32);
+pub use mosna_io::network::{Csr, Pair};
 
 /// A 2-D point.
 pub type Point2 = [f64; 2];

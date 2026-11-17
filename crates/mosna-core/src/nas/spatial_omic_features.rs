@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 use rayon::prelude::*;
 
-use mosna_io::read::get_opener::{read_table, Extension};
+use mosna_io::read::get_opener::Extension;
 use mosna_io::{SampleId, Table};
 
 use crate::error::{CoreError, Result};
@@ -195,17 +195,15 @@ pub fn compute_spatial_omic_features_single_network(
         ext,
     ));
 
-    let nodes = read_table(&nodes_path, options.extension)?;
-    let edges = read_table(&edges_path, options.extension)?;
-    let pairs = edges.edges()?;
+    let (nodes, network) =
+        mosna_io::read_network_files(&nodes_path, &edges_path, options.extension)?;
     let n_obs = nodes.n_rows();
 
     let compute = || -> Result<_> {
         let x = build_feature_matrix(&nodes, options, &nodes_path)?;
         Ok(make_features_nas(
             &x,
-            n_obs,
-            &pairs,
+            &network,
             options.order,
             &options.use_attributes,
             &options.stat_names,
@@ -362,15 +360,11 @@ mod tests {
             ("Cluster".into(), Table::string_array(["A", "B", "A"])),
         ])
         .unwrap();
-        let edges = Table::from_edges(&[(0, 1), (1, 2)]).unwrap();
-        write_parquet(
+        mosna_io::write_network(
             &nodes,
-            dir.join(format!("nodes_patient-{patient}_sample-{sample}.parquet")),
-        )
-        .unwrap();
-        write_parquet(
-            &edges,
-            dir.join(format!("edges_patient-{patient}_sample-{sample}.parquet")),
+            &crate::Csr::from_pairs(&[(0, 1), (1, 2)], 3).unwrap(),
+            &dir.join(format!("nodes_patient-{patient}_sample-{sample}.parquet")),
+            &dir.join(format!("edges_patient-{patient}_sample-{sample}.parquet")),
         )
         .unwrap();
     }

@@ -2,8 +2,9 @@
 
 use rayon::prelude::*;
 
-use crate::nas::adjacency::Adjacency;
 use crate::nas::bfs::BfsScratch;
+use crate::Csr;
+#[cfg(test)]
 use crate::Pair;
 
 /// The aggregated feature table: `n_obs` rows by `n_var * n_stats` columns,
@@ -29,9 +30,10 @@ impl NasFeatures {
     }
 }
 
-/// Aggregate `x` over the `order`-hop neighbourhood of every node.
+/// Aggregate `x` over the `order`-hop neighbourhood of every node of `network`.
 ///
-/// `x` is row-major, `n_obs` rows by `var_names.len()` columns.
+/// `x` is row-major, one row per node of the network by `var_names.len()`
+/// columns. The neighbourhoods are read straight from the network's rows.
 ///
 /// Only the default `stat_funcs` — mean and population standard deviation — is
 /// implemented, because that is the only combination the configuration can
@@ -43,13 +45,13 @@ impl NasFeatures {
 /// statistic, then all variables for the second, each named `{var}{sep}{stat}`.
 pub fn make_features_nas(
     x: &[f64],
-    n_obs: usize,
-    pairs: &[Pair],
+    network: &Csr,
     order: usize,
     var_names: &[String],
     stat_names: &[String],
     var_sep: &str,
 ) -> NasFeatures {
+    let n_obs = network.n_nodes();
     let n_var = var_names.len();
     debug_assert_eq!(x.len(), n_obs * n_var, "x must be n_obs by n_var");
 
@@ -76,14 +78,12 @@ pub fn make_features_nas(
         };
     }
 
-    let adj = Adjacency::from_pairs(pairs, n_obs);
-
     // One node per work item; each writes only its own row, so the rows can be
     // filled in parallel without synchronisation.
     values.par_chunks_mut(width).enumerate().for_each_init(
         || BfsScratch::new(n_obs),
         |scratch, (node, row)| {
-            let neighbourhood = scratch.neighbourhood(&adj, node, order);
+            let neighbourhood = scratch.neighbourhood(network, node, order);
             let count = neighbourhood.len() as f64;
 
             for v in 0..n_var {
@@ -122,6 +122,25 @@ pub fn make_features_nas(
 mod tests {
     use super::*;
 
+    fn net(pairs: &[Pair], n_nodes: usize) -> Csr {
+        Csr::from_pairs(pairs, n_nodes).unwrap()
+    }
+
+    /// A self-loop puts the cell in its own row; the cell is still averaged
+    /// once, not twice — it is a neighbourhood, a set of cells.
+    #[test]
+    fn a_self_loop_does_not_weigh_the_cell_twice() {
+        let features = make_features_nas(
+            &[0.0, 3.0],
+            &net(&[(0, 0), (0, 1)], 2),
+            1,
+            &names(&["v"]),
+            &names(&["mean"]),
+            " ",
+        );
+        assert_eq!(features.row(0), &[1.5]);
+    }
+
     fn names(items: &[&str]) -> Vec<String> {
         items.iter().map(|s| s.to_string()).collect()
     }
@@ -130,8 +149,7 @@ mod tests {
     fn column_names_match_the_python_layout() {
         let features = make_features_nas(
             &[1.0, 0.0, 0.0, 1.0],
-            2,
-            &[(0, 1)],
+            &net(&[(0, 1)], 2),
             1,
             &names(&["A", "B"]),
             &names(&["mean", "std"]),
@@ -149,8 +167,7 @@ mod tests {
         let x = vec![0.0, 3.0, 9.0];
         let features = make_features_nas(
             &x,
-            3,
-            &[(0, 1), (1, 2)],
+            &net(&[(0, 1), (1, 2)], 3),
             1,
             &names(&["v"]),
             &names(&["mean", "std"]),
@@ -168,8 +185,7 @@ mod tests {
         let x = vec![0.0, 3.0, 9.0];
         let features = make_features_nas(
             &x,
-            3,
-            &[(0, 1), (1, 2)],
+            &net(&[(0, 1), (1, 2)], 3),
             1,
             &names(&["v"]),
             &names(&["mean", "std"]),
@@ -187,8 +203,7 @@ mod tests {
     fn a_single_stat_name_produces_only_the_mean() {
         let features = make_features_nas(
             &[1.0, 2.0],
-            2,
-            &[(0, 1)],
+            &net(&[(0, 1)], 2),
             1,
             &names(&["v"]),
             &names(&["mean"]),
@@ -201,8 +216,14 @@ mod tests {
     #[test]
     fn an_isolated_node_aggregates_only_itself() {
         let x = vec![5.0, 1.0];
-        let features =
-            make_features_nas(&x, 2, &[], 1, &names(&["v"]), &names(&["mean", "std"]), " ");
+        let features = make_features_nas(
+            &x,
+            &net(&[], 2),
+            1,
+            &names(&["v"]),
+            &names(&["mean", "std"]),
+            " ",
+        );
         assert_eq!(features.row(0)[0], 5.0);
         assert_eq!(features.row(0)[1], 0.0, "a lone node has zero dispersion");
     }
@@ -212,8 +233,7 @@ mod tests {
         let x = vec![0.0, 0.0, 12.0];
         let order_one = make_features_nas(
             &x,
-            3,
-            &[(0, 1), (1, 2)],
+            &net(&[(0, 1), (1, 2)], 3),
             1,
             &names(&["v"]),
             &names(&["mean"]),
@@ -221,8 +241,7 @@ mod tests {
         );
         let order_two = make_features_nas(
             &x,
-            3,
-            &[(0, 1), (1, 2)],
+            &net(&[(0, 1), (1, 2)], 3),
             2,
             &names(&["v"]),
             &names(&["mean"]),
@@ -239,7 +258,14 @@ mod tests {
         let n = 200;
         let x: Vec<f64> = (0..n).map(|i| (i as f64 * 0.37).sin()).collect();
         let pairs: Vec<Pair> = (0..n as u32 - 1).map(|i| (i, i + 1)).collect();
-        let features = make_features_nas(&x, n, &pairs, 1, &names(&["v"]), &names(&["mean"]), " ");
+        let features = make_features_nas(
+            &x,
+            &net(&pairs, n),
+            1,
+            &names(&["v"]),
+            &names(&["mean"]),
+            " ",
+        );
 
         for node in 0..n {
             let mut members = vec![node];
@@ -259,7 +285,8 @@ mod tests {
 
     #[test]
     fn an_empty_network_yields_an_empty_table() {
-        let features = make_features_nas(&[], 0, &[], 1, &names(&["v"]), &names(&["mean"]), " ");
+        let features =
+            make_features_nas(&[], &net(&[], 0), 1, &names(&["v"]), &names(&["mean"]), " ");
         assert_eq!(features.n_rows, 0);
         assert!(features.values.is_empty());
     }

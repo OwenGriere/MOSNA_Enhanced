@@ -1406,9 +1406,9 @@ mod tests {
         mosna_io::write::write_parquet::write_parquet(&nodes, &nodes_path).unwrap();
 
         let edges_file = with_edges.then(|| {
-            let edges = Table::from_edges(&[(0, 1), (1, 2), (2, 3)]).unwrap();
+            let network = mosna_io::Csr::from_pairs(&[(0, 1), (1, 2), (2, 3)], 4).unwrap();
             let name = "edges_patient-1_sample-1.parquet";
-            mosna_io::write::write_parquet::write_parquet(&edges, directory.join(name)).unwrap();
+            mosna_io::write_network(&nodes, &network, &nodes_path, &directory.join(name)).unwrap();
             name.to_string()
         });
 

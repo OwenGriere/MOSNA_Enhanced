@@ -4,9 +4,9 @@
 //! here is invisible until the biology comes out wrong. These properties are
 //! the ones a correct aggregation cannot violate.
 
-use mosna_core::nas::adjacency::Adjacency;
 use mosna_core::nas::bfs::BfsScratch;
 use mosna_core::nas::{make_features_nas, one_hot};
+use mosna_core::Csr;
 use mosna_testkit::strategies::small_graph;
 use proptest::prelude::*;
 
@@ -19,7 +19,7 @@ proptest! {
     /// each undirected edge is stored in both directions, exactly once each.
     #[test]
     fn prop_adjacency_degrees_sum_to_twice_the_edges((n_nodes, edges) in small_graph(20)) {
-        let adj = Adjacency::from_pairs(&edges, n_nodes);
+        let adj = Csr::from_pairs(&edges, n_nodes).unwrap();
         let total: usize = (0..n_nodes).map(|i| adj.degree(i)).sum();
         prop_assert_eq!(total, 2 * edges.len());
     }
@@ -28,7 +28,7 @@ proptest! {
     /// neighbour of `b`.
     #[test]
     fn prop_adjacency_is_symmetric((n_nodes, edges) in small_graph(15)) {
-        let adj = Adjacency::from_pairs(&edges, n_nodes);
+        let adj = Csr::from_pairs(&edges, n_nodes).unwrap();
         for a in 0..n_nodes {
             for &b in adj.neighbours(a) {
                 prop_assert!(
@@ -46,7 +46,7 @@ proptest! {
         (n_nodes, edges) in small_graph(15),
         order in 1usize..4,
     ) {
-        let adj = Adjacency::from_pairs(&edges, n_nodes);
+        let adj = Csr::from_pairs(&edges, n_nodes).unwrap();
         let mut scratch = BfsScratch::new(n_nodes);
 
         for node in 0..n_nodes {
@@ -61,10 +61,28 @@ proptest! {
         }
     }
 
+    /// At order 1 a neighbourhood is the cell and its row of the network:
+    /// the aggregation reads the CSR rows as they are, nothing more or less.
+    #[test]
+    fn prop_order_one_is_the_cell_and_its_row((n_nodes, edges) in small_graph(15)) {
+        let network = Csr::from_pairs(&edges, n_nodes).unwrap();
+        let mut scratch = BfsScratch::new(n_nodes);
+
+        for node in 0..n_nodes {
+            let mut got = scratch.neighbourhood(&network, node, 1).to_vec();
+            got.sort_unstable();
+            let mut expected = network.neighbours(node).to_vec();
+            expected.push(node as u32);
+            expected.sort_unstable();
+            expected.dedup();
+            prop_assert_eq!(got, expected);
+        }
+    }
+
     /// Widening the order can only reach more nodes, never fewer.
     #[test]
     fn prop_neighbourhood_grows_with_order((n_nodes, edges) in small_graph(15)) {
-        let adj = Adjacency::from_pairs(&edges, n_nodes);
+        let adj = Csr::from_pairs(&edges, n_nodes).unwrap();
         let mut scratch = BfsScratch::new(n_nodes);
 
         for node in 0..n_nodes {
@@ -113,10 +131,7 @@ proptest! {
             .collect();
         let x = one_hot(&labels, &categories);
 
-        let features = make_features_nas(
-            &x,
-            n_nodes,
-            &edges,
+        let features = make_features_nas(&x, &Csr::from_pairs(&edges, n_nodes).unwrap(),
             order,
             &categories,
             &names(&["mean", "std"]),
@@ -144,8 +159,7 @@ proptest! {
             .collect();
         let x = one_hot(&labels, &categories);
 
-        let features = make_features_nas(
-            &x, n_nodes, &edges, order, &categories, &names(&["mean", "std"]), " ",
+        let features = make_features_nas(&x, &Csr::from_pairs(&edges, n_nodes).unwrap(), order, &categories, &names(&["mean", "std"]), " ",
         );
 
         for value in &features.values {
@@ -166,8 +180,7 @@ proptest! {
         order in 1usize..3,
     ) {
         let x: Vec<f64> = (0..n_nodes).map(|i| (i as f64 * 0.7).sin()).collect();
-        let features = make_features_nas(
-            &x, n_nodes, &edges, order, &names(&["v"]), &names(&["mean"]), " ",
+        let features = make_features_nas(&x, &Csr::from_pairs(&edges, n_nodes).unwrap(), order, &names(&["v"]), &names(&["mean"]), " ",
         );
 
         let lo = x.iter().copied().fold(f64::INFINITY, f64::min);
@@ -191,8 +204,7 @@ proptest! {
         let vars: Vec<String> = (0..n_vars).map(|i| format!("v{i}")).collect();
         let x = vec![1.0; n_nodes * n_vars];
 
-        let features = make_features_nas(
-            &x, n_nodes, &edges, 1, &vars, &names(&["mean", "std"]), " ",
+        let features = make_features_nas(&x, &Csr::from_pairs(&edges, n_nodes).unwrap(), 1, &vars, &names(&["mean", "std"]), " ",
         );
 
         prop_assert_eq!(features.column_names.len(), n_vars * 2);

@@ -5,13 +5,11 @@
 //! mean and the population standard deviation. The resulting vector is what the
 //! niche clustering runs on.
 
-pub mod adjacency;
 pub mod bfs;
 pub mod make_features_nas;
 pub mod onehot;
 pub mod spatial_omic_features;
 
-pub use adjacency::Adjacency;
 pub use make_features_nas::{make_features_nas, NasFeatures};
 pub use onehot::one_hot;
 pub use spatial_omic_features::{
