@@ -3,12 +3,13 @@
 use std::path::{Path, PathBuf};
 
 use mosna_config::model::niche_params::{
-    ClustererType, Metric as ConfigMetric, NicheParams, ReducerType,
+    ClustererType, Metric as ConfigMetric, NicheParams, ReducerType, UmapInit,
 };
 use mosna_config::validate::assert_params::{assert_params, Analysis};
 use mosna_config::{save_config, section, NicheAnalysisConfig, RawConfig};
 use mosna_core::clustering::{
-    gaussian_mixture, leiden, spectral_clustering, GmmParams, SpectralParams,
+    gaussian_mixture, leiden, spectral_clustering, GmmParams, SpectralParams, GMM_REVISION,
+    LEIDEN_REVISION,
 };
 use mosna_core::nas::spatial_omic_features::{
     compute_spatial_omic_features_all_networks, SofOptions, VarAggreg,
@@ -18,7 +19,7 @@ use mosna_core::niches::{
     Normalize,
 };
 use mosna_core::reduction::umap::{
-    cluster_neighbours, umap, Metric, Scalar, UmapParams, LAYOUT_REVISION,
+    cluster_neighbours, umap, Init, Metric, Scalar, UmapParams, LAYOUT_REVISION,
 };
 use mosna_io::read::get_opener::{read_table, Extension};
 use mosna_io::write::write_parquet::write_parquet;
@@ -516,11 +517,29 @@ impl Stems {
             "features": features,
             "reduction": computed_reduction,
         }));
+        // The clusterer's revision (Leiden's or the mixture's), on the same
+        // terms as the layout's: a partition computed by an earlier revision of
+        // the algorithm is a miss, while the run numbers stay where they are.
+        let computed_clustering = {
+            let mut settings = clustering.clone();
+            if let Some(object) = settings.as_object_mut() {
+                match params.clusterer_type {
+                    ClustererType::Leiden => {
+                        object.insert("leiden_revision".to_string(), json!(LEIDEN_REVISION));
+                    }
+                    ClustererType::Gmm => {
+                        object.insert("gmm_revision".to_string(), json!(GMM_REVISION));
+                    }
+                    _ => {}
+                }
+            }
+            settings
+        };
         let clustering_source = compact(&json!({
             "sample": sample,
             "features": features,
             "reduction": computed_reduction,
-            "clustering": clustering,
+            "clustering": computed_clustering,
         }));
 
         Ok(Self {
@@ -1428,6 +1447,10 @@ fn project(var_aggreg: &VarAggreg, params: &NicheParams) -> Result<ClusterInput>
                     ConfigMetric::Euclidean => Metric::Euclidean,
                 },
                 min_dist: params.min_dist,
+                init: match params.init {
+                    UmapInit::Pca => Init::Pca,
+                    UmapInit::Spectral => Init::Spectral,
+                },
                 ..UmapParams::default()
             };
             // Narrowed on the way in and widened on the way out: the

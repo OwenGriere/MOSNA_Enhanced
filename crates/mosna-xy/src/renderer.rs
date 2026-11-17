@@ -83,6 +83,79 @@ impl Run for Captured {
     }
 }
 
+/// Runs a real sub-process, handing each line of its stdout to a callback.
+///
+/// For a terminal that shows its own progress bars: the renderer's
+/// `[QT_PROGRESS]` lines are read as they come and turned into the bars, rather
+/// than printed across them. Standard error is captured, so a failure still
+/// says why.
+#[derive(Clone)]
+pub struct Streamed {
+    on_line: std::sync::Arc<dyn Fn(&str) + Send + Sync>,
+}
+
+impl Streamed {
+    pub fn new(on_line: impl Fn(&str) + Send + Sync + 'static) -> Self {
+        Self {
+            on_line: std::sync::Arc::new(on_line),
+        }
+    }
+}
+
+impl Run for Streamed {
+    fn run(&self, program: &Path, arguments: &[String]) -> std::io::Result<Outcome> {
+        use std::io::{BufRead, BufReader, Read};
+
+        let mut child = std::process::Command::new(program)
+            .args(arguments)
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()?;
+
+        // Drained on its own thread: a full stderr pipe would block the child
+        // while this one waits on stdout.
+        let errors = child.stderr.take().map(|mut stream| {
+            std::thread::spawn(move || {
+                let mut text = String::new();
+                let _ = stream.read_to_string(&mut text);
+                text
+            })
+        });
+        let mut printed = String::new();
+        if let Some(stream) = child.stdout.take() {
+            for line in BufReader::new(stream).lines().map_while(Result::ok) {
+                (self.on_line)(&line);
+                printed.push_str(&line);
+                printed.push('\n');
+            }
+        }
+        let status = child.wait()?;
+        let errors = errors
+            .and_then(|handle| handle.join().ok())
+            .unwrap_or_default();
+
+        let mut message = errors.trim().to_string();
+        if message.is_empty() {
+            message = printed.trim().to_string();
+        }
+        Ok(Outcome {
+            success: status.success(),
+            message,
+        })
+    }
+}
+
+impl Renderer<Streamed> {
+    /// The interpreter this machine is set up to use, each line of its output
+    /// handed to `on_line` instead of printed.
+    pub fn detect_streamed(on_line: impl Fn(&str) + Send + Sync + 'static) -> Self {
+        Self::with(
+            mosna_paths::python::resolve(&mosna_paths::Environment::detect()),
+            Streamed::new(on_line),
+        )
+    }
+}
+
 impl Renderer<Captured> {
     /// The interpreter this machine is set up to use, run without letting its
     /// output through.

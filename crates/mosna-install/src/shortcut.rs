@@ -136,7 +136,7 @@ mod tests {
         write(&layout, ShortcutKind::DesktopEntry, &path).unwrap();
 
         let contents = std::fs::read_to_string(&path).unwrap();
-        assert!(contents.contains("Exec=/opt/mosna/bin/mosna-gui"));
+        assert!(contents.contains(&format!("Exec={}", layout.interface_binary().display())));
 
         #[cfg(unix)]
         {

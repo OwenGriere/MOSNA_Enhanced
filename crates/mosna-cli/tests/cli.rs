@@ -398,6 +398,18 @@ fn the_report_describes_what_the_analyses_wrote() {
     let page = std::fs::read_to_string(&report).unwrap();
 
     assert!(page.starts_with("<!doctype html>"));
+    // The table beside the figures, which is not a figure but is in the
+    // directory — written by Rust, so listed whether or not Python drew.
+    assert!(page.contains("net_stat.csv"), "the listing is incomplete");
+
+    // The figures are drawn by the Python renderer. A checkout that has not
+    // installed it (`pip install -e python` into `.venv`) has none to list:
+    // say so and stop, as `mosna-xy/tests/real_figures.rs` does, rather than
+    // fail on something this test does not cover.
+    if let Err(error) = mosna_xy::renderer::Renderer::detect().check() {
+        eprintln!("skipping the figure checks: no figure renderer ({error})");
+        return;
+    }
     // The figures of step 2, under the names the analyses wrote them with.
     assert!(
         page.contains("abundance"),
@@ -411,8 +423,6 @@ fn the_report_describes_what_the_analyses_wrote() {
         !page.contains("Assortativity/abundance.html"),
         "a figure was written as HTML"
     );
-    // And the table beside them, which is not a figure but is in the directory.
-    assert!(page.contains("net_stat.csv"), "the listing is incomplete");
 }
 
 /// Generating a report on a directory nothing has been run in is the first

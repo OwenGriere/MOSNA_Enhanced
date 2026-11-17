@@ -16,6 +16,24 @@ fn identifier() -> impl Strategy<Value = String> {
     "[A-Za-z0-9][A-Za-z0-9-]{0,7}"
 }
 
+/// Distinct identifiers for a cohort, as many as `size` allows.
+///
+/// Distinct *ignoring case*: on Windows and macOS `nodes_patient-a.parquet` and
+/// `nodes_patient-A.parquet` are one file, so a cohort holding both would
+/// write one file over the other and find one sample where two were written.
+/// No real cohort can hold both on those systems either.
+fn cohort(size: std::ops::Range<usize>) -> impl Strategy<Value = Vec<String>> {
+    proptest::collection::hash_set(identifier(), size).prop_map(|ids| {
+        let mut seen = std::collections::HashSet::new();
+        let mut ids: Vec<String> = ids
+            .into_iter()
+            .filter(|id| seen.insert(id.to_lowercase()))
+            .collect();
+        ids.sort();
+        ids
+    })
+}
+
 /// A column name, which may be any ordinary word.
 fn column_name() -> impl Strategy<Value = String> {
     "[a-z][a-z_]{0,9}"
@@ -64,10 +82,9 @@ proptest! {
     /// identifier decodes back to the one it was written for.
     #[test]
     fn prop_written_cohorts_are_fully_discovered(
-        ids in proptest::collection::hash_set(identifier(), 1..6),
+        ids in cohort(1..6),
     ) {
         let dir = tempfile::tempdir().unwrap();
-        let ids: Vec<String> = ids.into_iter().collect();
 
         for patient in &ids {
             let table = Table::from_columns(vec![("x".into(), Table::f64_array([1.0]))]).unwrap();
@@ -90,7 +107,7 @@ proptest! {
     /// Discovery is sorted, so two machines holding the same data process the
     /// samples in the same order.
     #[test]
-    fn prop_discovery_is_sorted(ids in proptest::collection::hash_set(identifier(), 1..8)) {
+    fn prop_discovery_is_sorted(ids in cohort(1..8)) {
         let dir = tempfile::tempdir().unwrap();
         for patient in &ids {
             let table = Table::from_columns(vec![("x".into(), Table::f64_array([0.0]))]).unwrap();

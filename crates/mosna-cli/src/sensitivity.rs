@@ -29,13 +29,15 @@ use std::sync::Mutex;
 use std::time::Duration;
 
 use anyhow::{bail, Context};
-use indicatif::{MultiProgress, ProgressBar, ProgressStyle};
+use indicatif::{MultiProgress, ProgressBar};
 use serde_yaml::Value;
 
 use mosna_config::model::sweep_plan::{Recomputes, SweepPlan};
 use mosna_pipeline::{compare_sweep, niche_analysis_in, Progress};
 use mosna_xy::renderer::Renderer;
 use mosna_xy::Figures;
+
+use crate::terminal::{clean, say, style, STEP_TEMPLATE};
 
 /// The comparison table a finished sweep leaves beside its runs; the name the
 /// interface gives it.
@@ -142,18 +144,6 @@ impl Progress for RunBar<'_> {
     }
 }
 
-/// A progress message without the `[INFO]`-style tags meant for the interface.
-fn clean(message: &str) -> String {
-    let mut text = message.trim();
-    while let Some(rest) = text.strip_prefix('[') {
-        match rest.find(']') {
-            Some(end) => text = rest[end + 1..].trim_start(),
-            None => break,
-        }
-    }
-    text.lines().next().unwrap_or_default().to_string()
-}
-
 /// A value as a table cell shows it: as the interface's `Point::label` does.
 fn plain(value: &Value) -> String {
     match value {
@@ -230,25 +220,6 @@ pub fn explanation(text: &str) -> String {
         .join("\n")
 }
 
-/// Print one line of the run's story.
-///
-/// Above the bars in a terminal. Anywhere else — a batch job's log file, a
-/// pipe — the bars are not drawn at all, and the lines are the only record of
-/// how far the grid got, so they go to stdout as they are.
-fn say(bars: &MultiProgress, interactive: bool, line: String) {
-    if interactive {
-        let _ = bars.println(line);
-    } else {
-        println!("{line}");
-    }
-}
-
-fn style(template: &str) -> ProgressStyle {
-    ProgressStyle::with_template(template)
-        .unwrap_or_else(|_| ProgressStyle::default_bar())
-        .progress_chars("█▓░")
-}
-
 /// Run the plan at `log`.
 ///
 /// `working_dir` replaces the one the plan names — for a plan written on one
@@ -312,9 +283,7 @@ pub fn run_plan(
     ));
     grid.set_prefix("Sensitivity");
     let current = bars.add(ProgressBar::new(1));
-    current.set_style(style(
-        "  {spinner:.green} {bar:30.green/white} {pos:>5}/{len:5} {wide_msg}",
-    ));
+    current.set_style(style(STEP_TEMPLATE));
     current.enable_steady_tick(Duration::from_millis(120));
 
     let mut outcomes: Vec<Outcome> = Vec::with_capacity(total);
@@ -518,16 +487,6 @@ mod tests {
              1-1-1,done,1,0.0108,6,120,1\n\
              ,failed,2,0.05,,,\n"
         );
-    }
-
-    #[test]
-    fn the_interfaces_tags_are_taken_off_the_messages() {
-        assert_eq!(clean("[MULTI PROCESS] Processing file"), "Processing file");
-        assert_eq!(
-            clean("[INFO] Parameters are read correctly\n"),
-            "Parameters are read correctly"
-        );
-        assert_eq!(clean("plain"), "plain");
     }
 
     #[test]

@@ -39,7 +39,9 @@
 
 use std::collections::BTreeSet;
 
-use mosna_config::model::niche_params::{IMPLEMENTED_CLUSTERERS, IMPLEMENTED_REDUCERS};
+use mosna_config::model::niche_params::{
+    IMPLEMENTED_CLUSTERERS, IMPLEMENTED_REDUCERS, IMPLEMENTED_UMAP_INITS,
+};
 use mosna_config::RawConfig;
 
 /// Which stage of the pipeline a parameter belongs to.
@@ -395,7 +397,9 @@ impl Plan {
 pub fn stage_of(key: &str) -> Stage {
     match key {
         "order" | "stat_funcs" => Stage::Aggregation,
-        "reducer_type" | "n_neighbors" | "dim_clust" | "min_dist" | "metric" => Stage::Reduction,
+        "reducer_type" | "n_neighbors" | "dim_clust" | "min_dist" | "metric" | "init" => {
+            Stage::Reduction
+        }
         _ => Stage::Clustering,
     }
 }
@@ -579,6 +583,7 @@ pub fn sweepable(stage: Stage) -> &'static [(&'static str, Sampling)] {
                 "metric",
                 Sampling::Choice(&["euclidean", "manhattan", "cosine"]),
             ),
+            ("init", Sampling::Choice(IMPLEMENTED_UMAP_INITS)),
         ],
         Stage::Clustering => &[
             // The one parameter that is genuinely multiplicative: 0.005 to 0.05
@@ -647,6 +652,7 @@ pub fn default_for(key: &str) -> &'static str {
         "dim_clust" => "2",
         "min_dist" => "0.0",
         "metric" => "euclidean",
+        "init" => "pca",
         "resolution" => "0.005",
         "k_cluster" => "8",
         "n_clusters" => "15",
@@ -1130,7 +1136,7 @@ impl SweepForm {
     /// `effective_k_cluster`, so it still decides something with no reduction
     /// at all — which is the judgement the main interface already makes.
     pub fn is_inert(&self, key: &str) -> bool {
-        matches!(key, "dim_clust" | "min_dist" | "metric") && self.reduction_is_inert()
+        matches!(key, "dim_clust" | "min_dist" | "metric" | "init") && self.reduction_is_inert()
     }
 
     /// The plan as the form currently reads.

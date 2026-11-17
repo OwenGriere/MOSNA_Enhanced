@@ -8,6 +8,7 @@ use serde_yaml::Value;
 use crate::error::{ConfigError, Result};
 use crate::model::niche_params::{
     split_stat_list, IMPLEMENTED_CLUSTERERS, IMPLEMENTED_REDUCERS, IMPLEMENTED_STAT_FUNCS,
+    IMPLEMENTED_UMAP_INITS,
 };
 use crate::section;
 use crate::value::type_name::type_name;
@@ -234,6 +235,14 @@ fn assert_niche_subsection(c: &Value) -> Result<()> {
 
     require_str(c, "metric", "metric must be str")?;
     require_one_of(c, "metric", &["manhattan", "euclidean", "cosine"])?;
+
+    // Optional: a configuration written before the key existed has none, and
+    // runs with `pca`, the default.
+    match c.get("init") {
+        None | Some(Value::Null) => {}
+        Some(Value::String(_)) => require_one_of(c, "init", IMPLEMENTED_UMAP_INITS)?,
+        Some(_) => return Err(ConfigError::assertion("init must be str")),
+    }
 
     // Numbers, not floats. `min_dist: 0` is the first value of any sweep that
     // walks `min_dist` from zero, and YAML spells it as an integer; refusing it
@@ -635,5 +644,20 @@ normalize: all
             assert_niche_subsection(&value(&yaml))
                 .unwrap_or_else(|e| panic!("`{offered}` was refused: {e}"));
         }
+    }
+
+    #[test]
+    fn init_is_optional_and_limited_to_pca_or_spectral() {
+        let base = niche_subsection_yaml();
+        let check = |yaml: &str| {
+            let value: Value = serde_yaml::from_str(yaml).unwrap();
+            assert_niche_subsection(&value)
+        };
+        assert!(check(&base).is_ok(), "absent: pca");
+        assert!(check(&format!("{base}init: pca\n")).is_ok());
+        assert!(check(&format!("{base}init: spectral\n")).is_ok());
+        assert!(check(&format!("{base}init: none\n")).is_err());
+        assert!(check(&format!("{base}init: random\n")).is_err());
+        assert!(check(&format!("{base}init: 3\n")).is_err());
     }
 }

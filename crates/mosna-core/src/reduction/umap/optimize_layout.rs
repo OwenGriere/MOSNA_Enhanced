@@ -156,14 +156,20 @@ pub fn optimize_layout(
     }
 }
 
-/// Bumped whenever [`fn@optimize_layout`] changes what it returns for the same
-/// input, so that a cached embedding from an earlier revision is recomputed
-/// rather than believed.
+/// Bumped whenever the reduction changes what it returns for the same input —
+/// the layout itself or the graph it is laid out from — so that a cached
+/// embedding from an earlier revision is recomputed rather than believed.
 ///
 /// - 1: sequential stochastic gradient descent from one generator.
 /// - 2: each epoch from a frozen layout, in parallel over points, with negative
 ///   samples from a counter-based hash.
-pub const LAYOUT_REVISION: u32 = 2;
+/// - 3: the fuzzy graph as umap-learn builds it — `rho` from the first
+///   neighbour at a positive distance, and `n_neighbors` counting the point
+///   itself, so `n_neighbors - 1` others are searched.
+/// - 4: umap-learn's handling of the start — `noisy_scale_coords` (largest
+///   coordinate 10, noise of standard deviation 1e-4) and the rescaling of
+///   every column to `[0, 10]` — and the spectral start.
+pub const LAYOUT_REVISION: u32 = 4;
 
 /// Where each edge stands in its schedule at the current epoch.
 struct Schedule<'a> {

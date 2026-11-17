@@ -13,24 +13,39 @@ const MIN_K_DIST_SCALE: Scalar = 1e-3;
 
 /// Solve for the local connectivity radius and bandwidth of every point.
 ///
+/// `distances[i]` are the distances from point `i` to its neighbours *other
+/// than itself*, ascending. umap-learn's neighbour lists hold the point itself
+/// in first place, at distance 0, and `n_neighbors` counts it; the rows here
+/// leave it out, so a row of length `k` stands for `n_neighbors = k + 1`. Every
+/// quantity below is computed as umap-learn computes it on that longer row.
+///
 /// For each point `i`, `sigma[i]` is chosen so that the membership strengths of
-/// its neighbours sum to `log2(k)`:
+/// its neighbours sum to `log2(n_neighbors)`:
 ///
 /// ```text
-/// sum_j exp( -max(d_ij - rho_i, 0) / sigma_i ) = log2(k)
+/// sum_j exp( -max(d_ij - rho_i, 0) / sigma_i ) = log2(k + 1)
 /// ```
 ///
-/// and `rho[i]` is the distance to its nearest neighbour, which guarantees that
-/// every point keeps one connection at full strength and so cannot be stranded
-/// in the embedding.
+/// The sum runs over the `k` other points only — umap-learn's loop starts at
+/// `j = 1`, past the point itself — while the target counts the point.
+///
+/// `rho[i]` is the distance to the nearest neighbour at a *strictly positive*
+/// distance (`non_zero_dists` in umap-learn), which guarantees that every point
+/// keeps one connection at full strength and so cannot be stranded in the
+/// embedding. A neighbour at distance 0 — an identical row, which the NAS
+/// feature table is full of — does not count: taking it would set `rho` to 0
+/// for every duplicated point, and every membership of that point would then
+/// decay from 0 rather than from its first real neighbour. When no neighbour is
+/// at a positive distance, `rho` stays 0, as in umap-learn.
 ///
 /// The equation is monotone decreasing in `sigma`, so a bisection converges
 /// reliably; 64 iterations take it to machine precision.
 ///
-/// `local_connectivity` selects which neighbour defines `rho`; the
+/// `local_connectivity` selects which positive neighbour defines `rho`; the
 /// configuration never changes it from 1, so the fractional interpolation
 /// umap-learn performs for non-integer values is not reproduced — the value is
-/// rounded down to a neighbour index instead.
+/// rounded down to a neighbour index instead. When fewer positive distances
+/// exist than it asks for, the largest is taken, as umap-learn does.
 pub fn smooth_knn_dist(
     distances: &[Vec<Scalar>],
     local_connectivity: Scalar,
@@ -50,10 +65,15 @@ pub fn smooth_knn_dist(
     // so its error grows with `log(n)` rather than with `n`. Widening the
     // accumulator is the simpler way to the same place, and the result is
     // narrowed again before it is used.
+    //
+    // umap-learn's `np.mean(distances)` also counts the point itself, at
+    // distance 0, once per row: the count below adds it back.
     let (total, count) = distances
         .iter()
+        .filter(|row| !row.is_empty())
         .flat_map(|row| row.iter())
         .fold((0.0f64, 0usize), |(sum, n), &d| (sum + d as f64, n + 1));
+    let count = count + distances.iter().filter(|row| !row.is_empty()).count();
     let mean_distance = if count > 0 {
         (total / count as f64) as Scalar
     } else {
@@ -73,9 +93,19 @@ pub fn smooth_knn_dist(
                 return;
             }
             let k = row.len();
-            let target = (k as Scalar).log2();
+            // `n_neighbors`, the point itself included.
+            let target = ((k + 1) as Scalar).log2();
 
-            *rho_i = row[connectivity_index.min(k - 1)];
+            // The first neighbour at a positive distance. The row is sorted, so
+            // the positive distances are a suffix of it.
+            let positive = &row[row.partition_point(|&d| d <= 0.0)..];
+            *rho_i = if positive.len() > connectivity_index {
+                positive[connectivity_index]
+            } else {
+                // Fewer positive distances than asked for: the largest of them,
+                // or 0 when every neighbour coincides with the point.
+                positive.last().copied().unwrap_or(0.0)
+            };
 
             // Bisection on sigma. `hi` starts unbounded and is discovered by
             // doubling, because a good upper bound depends on the local scale.
@@ -109,7 +139,8 @@ pub fn smooth_knn_dist(
             // Floor the bandwidth against the local scale, then against the global
             // one, so a point whose neighbours all coincide still gets a usable
             // positive value.
-            let row_mean = row.iter().sum::<Scalar>() / k as Scalar;
+            // `np.mean(ith_distances)`, whose row holds the point itself at 0.
+            let row_mean = row.iter().sum::<Scalar>() / (k + 1) as Scalar;
             if *rho_i > 0.0 {
                 *sigma_i = sigma_i.max(MIN_K_DIST_SCALE * row_mean);
             } else {
@@ -141,7 +172,8 @@ mod tests {
         let distances = vec![vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]];
         let (rho, sigma) = smooth_knn_dist(&distances, 1.0);
 
-        let target = (8 as Scalar).log2();
+        // Eight other points, so `n_neighbors` is nine.
+        let target = (9 as Scalar).log2();
         let sum = membership_sum(&distances[0], rho[0], sigma[0]);
         assert!((sum - target).abs() < 1e-4, "sum {sum} != {target}");
     }
@@ -151,6 +183,20 @@ mod tests {
         let distances = vec![vec![2.5, 3.0, 9.0]];
         let (rho, _) = smooth_knn_dist(&distances, 1.0);
         assert_eq!(rho[0], 2.5);
+    }
+
+    /// A neighbour at distance 0 is an identical row, not a nearest neighbour:
+    /// umap-learn takes `rho` from the positive distances only.
+    #[test]
+    fn rho_skips_neighbours_at_distance_zero() {
+        let distances = vec![vec![0.0, 1.5, 3.0, 4.0, 6.0, 9.0, 12.0, 15.0]];
+        let (rho, sigma) = smooth_knn_dist(&distances, 1.0);
+        assert_eq!(rho[0], 1.5);
+        // The equation is still solved over every neighbour, the duplicate
+        // included: eight others, so `n_neighbors` is nine.
+        let sum = membership_sum(&distances[0], rho[0], sigma[0]);
+        let target = (9 as Scalar).log2();
+        assert!((sum - target).abs() < 1e-4, "sum {sum} != {target}");
     }
 
     #[test]
@@ -188,7 +234,7 @@ mod tests {
     fn each_point_is_solved_independently() {
         let distances = vec![vec![1.0, 1.1, 1.2, 1.3], vec![10.0, 50.0, 90.0, 130.0]];
         let (rho, sigma) = smooth_knn_dist(&distances, 1.0);
-        let target = (4 as Scalar).log2();
+        let target = (5 as Scalar).log2();
         for i in 0..2 {
             let sum = membership_sum(&distances[i], rho[i], sigma[i]);
             assert!((sum - target).abs() < 1e-4, "row {i}: sum {sum}");
