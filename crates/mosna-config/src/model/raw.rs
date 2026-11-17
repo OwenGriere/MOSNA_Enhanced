@@ -113,7 +113,11 @@ impl RawConfig {
                 continue;
             };
             let trimmed = value.trim();
-            if trimmed.is_empty() || trimmed == "Default" || Path::new(trimmed).is_absolute() {
+            // `has_root` as well: on Windows `\data\mIF` is not absolute (it
+            // names no drive) but is no more relative to `base` than on Unix —
+            // joining it would only swap in `base`'s drive.
+            let path = Path::new(trimmed);
+            if trimmed.is_empty() || trimmed == "Default" || path.is_absolute() || path.has_root() {
                 continue;
             }
             let absolute = base.join(trimmed).to_string_lossy().into_owned();
@@ -200,8 +204,14 @@ Niche Analysis:
     fn relative_input_directories_are_resolved_against_the_base() {
         let mut cfg = RawConfig::from_yaml_str(INPUTS).unwrap();
         assert!(cfg.resolve_input_paths(Path::new("/configs")));
-        assert_eq!(text(&cfg, "Tysserand"), "/configs/IMC");
-        assert_eq!(text(&cfg, "Niche Analysis"), "/configs/nets");
+        let under = |folder| {
+            Path::new("/configs")
+                .join(folder)
+                .to_string_lossy()
+                .into_owned()
+        };
+        assert_eq!(text(&cfg, "Tysserand"), under("IMC"));
+        assert_eq!(text(&cfg, "Niche Analysis"), under("nets"));
     }
 
     /// `Default` is step 1's output, which does live under the working

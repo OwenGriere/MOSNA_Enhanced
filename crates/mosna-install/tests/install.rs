@@ -7,8 +7,18 @@
 use std::path::{Path, PathBuf};
 
 use mosna_install::{desktop, plan::Action, Installer, Sources};
-use mosna_paths::layout::Layout;
+use mosna_paths::layout::{Layout, Platform};
 use mosna_paths::Environment;
+
+/// The Unix layout, whatever the platform running the tests.
+///
+/// What is checked here — the desktop entry, the menu entry inside the prefix,
+/// the PNG icon — is the Unix install, and means the same on every platform
+/// once it is named. The Windows install, its `.lnk` shortcuts and `.exe`
+/// names, is checked in `shortcuts.rs`.
+fn unix_layout(prefix: impl AsRef<Path>) -> Layout {
+    Layout::for_platform(prefix, Platform::Unix)
+}
 
 /// An environment with a temporary home, so no test can write a launcher onto
 /// the machine running it. `Installer` takes this explicitly for that reason.
@@ -73,7 +83,7 @@ fn repository_icon() -> Option<PathBuf> {
 /// A relative `Exec` would launch nothing when the menu runs it from `/`.
 #[test]
 fn the_desktop_entry_launches_the_installed_interface() {
-    let layout = Layout::new("/opt/mosna");
+    let layout = unix_layout("/opt/mosna");
     let entry = desktop::entry(&layout);
 
     assert!(entry.starts_with("[Desktop Entry]"), "{entry}");
@@ -95,7 +105,7 @@ fn the_desktop_entry_launches_the_installed_interface() {
 /// whole file invalid and the entry silently disappears from the menu.
 #[test]
 fn the_desktop_entry_is_well_formed() {
-    let entry = desktop::entry(&Layout::new("/opt/mosna"));
+    let entry = desktop::entry(&unix_layout("/opt/mosna"));
 
     for line in entry.lines().skip(1).filter(|l| !l.trim().is_empty()) {
         assert!(
@@ -118,7 +128,7 @@ fn the_plan_lists_every_file_it_will_write() {
     let prefix = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
     let installer = Installer::new(
-        Layout::new(prefix.path()),
+        unix_layout(prefix.path()),
         build.sources.clone(),
         sandboxed(&home),
     );
@@ -126,7 +136,7 @@ fn the_plan_lists_every_file_it_will_write() {
     let plan = installer.plan();
     let written: Vec<&Path> = plan.written_paths().collect();
 
-    let layout = Layout::new(prefix.path());
+    let layout = unix_layout(prefix.path());
     assert!(written.contains(&layout.analysis_binary().as_path()));
     assert!(written.contains(&layout.interface_binary().as_path()));
     assert!(written.contains(&layout.menu_entry().unwrap().as_path()));
@@ -144,7 +154,7 @@ fn directories_are_created_before_their_contents() {
     let prefix = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
     let installer = Installer::new(
-        Layout::new(prefix.path()),
+        unix_layout(prefix.path()),
         build.sources.clone(),
         sandboxed(&home),
     );
@@ -182,7 +192,7 @@ fn a_missing_artefact_is_refused_before_anything_is_written() {
     let mut sources = build.sources.clone();
     sources.analysis_binary = PathBuf::from("/nonexistent/mosna");
 
-    let installer = Installer::new(Layout::new(prefix.path()), sources, sandboxed(&home));
+    let installer = Installer::new(unix_layout(prefix.path()), sources, sandboxed(&home));
     let error = installer.verify_sources().unwrap_err();
     assert!(error.to_string().contains("/nonexistent/mosna"), "{error}");
 
@@ -199,7 +209,7 @@ fn installing_puts_every_file_in_place() {
     let build = Build::new();
     let prefix = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
-    let layout = Layout::new(prefix.path());
+    let layout = unix_layout(prefix.path());
     let installer = Installer::new(layout.clone(), build.sources.clone(), sandboxed(&home));
 
     installer.install().unwrap();
@@ -222,7 +232,7 @@ fn installed_binaries_are_executable() {
     let build = Build::new();
     let prefix = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
-    let layout = Layout::new(prefix.path());
+    let layout = unix_layout(prefix.path());
     Installer::new(layout.clone(), build.sources.clone(), sandboxed(&home))
         .install()
         .unwrap();
@@ -244,7 +254,7 @@ fn installing_is_idempotent() {
     let build = Build::new();
     let prefix = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
-    let layout = Layout::new(prefix.path());
+    let layout = unix_layout(prefix.path());
     let installer = Installer::new(layout.clone(), build.sources.clone(), sandboxed(&home));
 
     installer.install().unwrap();
@@ -264,7 +274,7 @@ fn installing_never_writes_to_the_user_configuration() {
     let build = Build::new();
     let prefix = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
-    let layout = Layout::new(prefix.path());
+    let layout = unix_layout(prefix.path());
 
     let environment = sandboxed(&home);
     let installer = Installer::new(layout.clone(), build.sources.clone(), environment.clone());
@@ -305,7 +315,7 @@ fn the_icon_is_converted_to_png() {
     let build = Build::new().with_icon(source);
     let prefix = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
-    let layout = Layout::new(prefix.path());
+    let layout = unix_layout(prefix.path());
     Installer::new(layout.clone(), build.sources.clone(), sandboxed(&home))
         .install()
         .unwrap();
@@ -331,7 +341,7 @@ fn uninstalling_removes_what_was_installed() {
     let build = Build::new();
     let prefix = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
-    let layout = Layout::new(prefix.path());
+    let layout = unix_layout(prefix.path());
     let installer = Installer::new(layout.clone(), build.sources.clone(), sandboxed(&home));
 
     installer.install().unwrap();
@@ -349,7 +359,7 @@ fn uninstalling_leaves_other_software_alone() {
     let build = Build::new();
     let prefix = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
-    let layout = Layout::new(prefix.path());
+    let layout = unix_layout(prefix.path());
 
     Installer::new(layout.clone(), build.sources.clone(), sandboxed(&home))
         .install()
@@ -376,7 +386,7 @@ fn uninstalling_an_absent_install_is_not_an_error() {
     let prefix = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
     Installer::new(
-        Layout::new(prefix.path()),
+        unix_layout(prefix.path()),
         build.sources.clone(),
         sandboxed(&home),
     )
@@ -390,7 +400,7 @@ fn a_dry_run_writes_nothing() {
     let build = Build::new();
     let prefix = tempfile::tempdir().unwrap();
     let home = tempfile::tempdir().unwrap();
-    let layout = Layout::new(prefix.path());
+    let layout = unix_layout(prefix.path());
 
     let report = Installer::new(layout.clone(), build.sources.clone(), sandboxed(&home))
         .dry_run()
