@@ -47,6 +47,39 @@ pub const IMPLEMENTED_CLUSTERERS: &[&str] = &["leiden", "gmm", "spectral"];
 /// The reducers, on the same terms.
 pub const IMPLEMENTED_REDUCERS: &[&str] = &["umap", "none"];
 
+/// The starting layouts UMAP can be given, on the same terms.
+pub const IMPLEMENTED_UMAP_INITS: &[&str] = &["pca", "spectral"];
+
+/// Starting layout of the UMAP reduction (`init`).
+///
+/// Read only when `reducer_type` is `umap`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum UmapInit {
+    /// The leading principal components of the features — the default, and
+    /// what every configuration written before the key existed ran with.
+    #[default]
+    Pca,
+    /// The eigenvectors of the normalised Laplacian of the fuzzy graph —
+    /// umap-learn's `init='spectral'`, its own default.
+    Spectral,
+}
+
+impl UmapInit {
+    pub fn parse(s: &str) -> Self {
+        match s {
+            "spectral" => UmapInit::Spectral,
+            _ => UmapInit::Pca,
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            UmapInit::Pca => "pca",
+            UmapInit::Spectral => "spectral",
+        }
+    }
+}
+
 /// The statistics `mosna_core::nas::make_features_nas` computes, in order.
 ///
 /// The aggregation takes the mean, and then optionally the population standard
@@ -181,6 +214,8 @@ pub struct NicheParams {
     pub normalize: Normalize,
     pub n_neighbors: usize,
     pub min_dist: f64,
+    /// Starting layout of the UMAP reduction.
+    pub init: UmapInit,
     pub dim_clust: usize,
     pub k_cluster: usize,
     pub n_clusters: usize,
@@ -204,6 +239,7 @@ impl NicheParams {
             normalize: Normalize::parse(&get_str_or(section, "normalize", "total")),
             n_neighbors: get_int_or(section, "n_neighbors", 15).max(2) as usize,
             min_dist: get_float_or(section, "min_dist", 0.0),
+            init: UmapInit::parse(&get_str_or(section, "init", "pca")),
             dim_clust: get_int_or(section, "dim_clust", 2).max(1) as usize,
             k_cluster: get_int_or(section, "k_cluster", 8).max(1) as usize,
             n_clusters: get_int_or(section, "n_clusters", 15).max(1) as usize,
@@ -220,12 +256,17 @@ impl NicheParams {
     ///
     /// `observations` caps `n_neighbors` first: a neighbourhood cannot be
     /// larger than the cohort it is drawn from, and the reduction clamps it the
-    /// same way.
+    /// same way. The clustering graph is then capped at `observations - 1`, the
+    /// number of *other* points each one can be linked to — which is what the
+    /// neighbour search clamps `k_cluster` to.
     pub fn effective_k_cluster_in(&self, observations: Option<usize>) -> usize {
-        self.k_cluster.min(match observations {
-            Some(rows) => self.effective_n_neighbors(rows),
-            None => self.n_neighbors,
-        })
+        match observations {
+            Some(rows) => self
+                .k_cluster
+                .min(self.effective_n_neighbors(rows))
+                .min(rows.saturating_sub(1).max(1)),
+            None => self.k_cluster.min(self.n_neighbors),
+        }
     }
 
     /// The same, without a cohort to cap against.
@@ -234,15 +275,19 @@ impl NicheParams {
     }
 
     /// `n_neighbors` capped by the cohort, which is what the reduction does to
-    /// it: `params.n_neighbors.max(2).min(n_rows - 1)`.
+    /// it.
+    ///
+    /// `n_neighbors` counts the point itself, as in umap-learn, so the
+    /// reduction searches `n_neighbors - 1` other points and can find at most
+    /// `observations - 1` of them: every value from `observations` up builds
+    /// the same graph. The floor of two is the reduction's own — one other
+    /// point at least.
     ///
     /// Two values that clamp alike build the same graph and therefore the same
     /// projection, so recording the raw one made a sweep whose upper bound
     /// overshoots compute the same answer twice under two different numbers.
     pub fn effective_n_neighbors(&self, observations: usize) -> usize {
-        self.n_neighbors
-            .max(2)
-            .min(observations.saturating_sub(1).max(2))
+        self.n_neighbors.max(2).min(observations.max(2))
     }
 
     /// `n_clusters` capped by the number of observations, which is what the
@@ -299,14 +344,21 @@ impl NicheParams {
     /// Directory name encoding the reduction settings, matching
     /// `clustering.py::make_reducer_name` so that cached embeddings computed by
     /// either implementation are found by the other.
+    ///
+    /// `init` is appended only when it is not the default: the Python has no
+    /// such key, and a `pca` run keeps the name it has always had.
     pub fn reducer_name(&self) -> String {
         match self.reducer_type {
             ReducerType::Umap => format!(
-                "reducer-umap_dim-{}_nneigh-{}_metric-{}_min_dist-{}",
+                "reducer-umap_dim-{}_nneigh-{}_metric-{}_min_dist-{}{}",
                 self.dim_clust,
                 self.n_neighbors,
                 self.metric.as_str(),
                 format_python_float(self.min_dist),
+                match self.init {
+                    UmapInit::Pca => String::new(),
+                    other => format!("_init-{}", other.as_str()),
+                },
             ),
             ReducerType::None => "reducer-none".to_string(),
         }
@@ -378,13 +430,22 @@ impl NicheParams {
             None => self.n_neighbors,
         };
         match self.reducer_type {
-            ReducerType::Umap => serde_json::json!({
-                "reducer_type": "umap",
-                "dim_clust": self.dim_clust,
-                "n_neighbors": n_neighbors,
-                "metric": self.metric.as_str(),
-                "min_dist": self.min_dist,
-            }),
+            ReducerType::Umap => {
+                let mut settings = serde_json::json!({
+                    "reducer_type": "umap",
+                    "dim_clust": self.dim_clust,
+                    "n_neighbors": n_neighbors,
+                    "metric": self.metric.as_str(),
+                    "min_dist": self.min_dist,
+                });
+                // Recorded only when it departs from the default, so that every
+                // run made before `init` existed — all of them `pca` — keeps
+                // its identity and its run numbers.
+                if self.init != UmapInit::Pca {
+                    settings["init"] = serde_json::json!(self.init.as_str());
+                }
+                settings
+            }
             ReducerType::None => serde_json::json!({ "reducer_type": "none" }),
         }
     }
@@ -776,7 +837,7 @@ mod tests {
     #[test]
     fn the_neighbourhood_is_capped_by_the_cohort() {
         let p = params("reducer_type: umap\nn_neighbors: 50000\n");
-        assert_eq!(p.effective_n_neighbors(72), 71);
+        assert_eq!(p.effective_n_neighbors(72), 72);
         assert_eq!(
             p.effective_n_neighbors(90000),
             50000,
@@ -797,6 +858,28 @@ mod tests {
         let p = params("clusterer_type: leiden\nk_cluster: 5000\nn_neighbors: 50000\n");
         assert_eq!(p.effective_k_cluster_in(Some(72)), 71);
         assert_eq!(p.clustering_parameters(Some(72))["k_cluster"], 71);
+    }
+
+    /// `init` defaults to `pca`, and only `spectral` changes the reduction's name
+    /// and identity — so every run made before the key existed keeps both.
+    #[test]
+    fn init_is_pca_unless_asked_and_named_only_when_not() {
+        let default = params("reducer_type: umap\nn_neighbors: 20\n");
+        let pca = params("reducer_type: umap\nn_neighbors: 20\ninit: pca\n");
+        let spectral = params("reducer_type: umap\nn_neighbors: 20\ninit: spectral\n");
+
+        assert_eq!(default.init, UmapInit::Pca);
+        assert_eq!(spectral.init, UmapInit::Spectral);
+        assert_eq!(default.reducer_name(), pca.reducer_name());
+        assert!(!pca.reducer_name().contains("init"));
+        assert!(spectral.reducer_name().ends_with("_init-spectral"));
+
+        assert_eq!(
+            default.reduction_parameters(None),
+            pca.reduction_parameters(None)
+        );
+        assert!(pca.reduction_parameters(None).get("init").is_none());
+        assert_eq!(spectral.reduction_parameters(None)["init"], "spectral");
     }
 
     /// A cohort too small for even two neighbours still asks for two, which is

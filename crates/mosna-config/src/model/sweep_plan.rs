@@ -91,7 +91,7 @@ impl Recomputes {
 pub fn stage_rank(key: &str) -> u8 {
     match key {
         "order" | "stat_funcs" => 0,
-        "reducer_type" | "n_neighbors" | "dim_clust" | "min_dist" | "metric" => 1,
+        "reducer_type" | "n_neighbors" | "dim_clust" | "min_dist" | "metric" | "init" => 1,
         _ => 2,
     }
 }
@@ -333,7 +333,11 @@ impl SweepPlan {
         );
         line(
             &mut out,
-            &format!("  Results            : {}/<run>/", results.display()),
+            &format!(
+                "  Results            : {}{}",
+                results.join("<run>").display(),
+                std::path::MAIN_SEPARATOR
+            ),
         );
         line(&mut out, "");
         line(&mut out, "The grid");
@@ -391,8 +395,8 @@ impl SweepPlan {
         line(
             &mut out,
             &format!(
-                "  {}/sensitivity.csv — one line per run: what it was",
-                results.display()
+                "  {} — one line per run: what it was",
+                results.join("sensitivity.csv").display()
             ),
         );
         line(
@@ -725,6 +729,13 @@ Niche Analysis:
     #[test]
     fn the_explanation_covers_the_plan() {
         let text = plan().render(Path::new("/work dir/plan.log")).unwrap();
+        // Joined by the code, so with `\` on Windows: built the same way here.
+        let summary = Path::new("/work dir")
+            .join("Niche_Analysis")
+            .join("sensitivity_analysis")
+            .join("sensitivity.csv")
+            .display()
+            .to_string();
         for expected in [
             "mosna sensitivity-analysis --log \"/work dir/plan.log\"",
             "run 4 time(s)",
@@ -736,7 +747,7 @@ Niche Analysis:
             "projections computed : 3",
             "clusterings computed : 4",
             "# Run 2 of 4 — reuses the aggregation and the projection, re-clusters.",
-            "/work dir/Niche_Analysis/sensitivity_analysis/sensitivity.csv",
+            summary.as_str(),
             "Column to aggregate: Cluster",
         ] {
             assert!(text.contains(expected), "missing `{expected}` in:\n{text}");

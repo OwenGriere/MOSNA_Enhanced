@@ -9,7 +9,7 @@
 
 use std::sync::Mutex;
 
-use mosna_pipeline::{Progress, StdoutProgress};
+use mosna_pipeline::Progress;
 
 /// One stage's computing time, added up over every time it was reported.
 #[derive(Debug, Clone, PartialEq)]
@@ -111,11 +111,12 @@ pub fn summary(stages: &[StageTime]) -> Option<String> {
     Some(out)
 }
 
-/// The interface's reporter, keeping the timings as they go past.
+/// The command's display, keeping the timings as they go past.
 ///
-/// Everything still reaches stdout exactly as before — the interface launches
-/// these same commands and reads the same lines.
+/// Everything still reaches the display — under the interface, the same lines
+/// on stdout as ever.
 pub struct TimedProgress<'a> {
+    pub display: &'a dyn Progress,
     pub timings: &'a Timings,
     /// Where the per-sample times go, under `--benchmark`.
     pub benchmark: Option<&'a crate::benchmark::Benchmark>,
@@ -123,22 +124,22 @@ pub struct TimedProgress<'a> {
 
 impl Progress for TimedProgress<'_> {
     fn info(&self, message: &str) {
-        StdoutProgress.info(message);
+        self.display.info(message);
     }
 
     fn step(&self, current: usize, total: usize, description: &str) {
-        StdoutProgress.step(current, total, description);
+        self.display.step(current, total, description);
     }
 
     fn run_directory(&self, name: &str) {
-        StdoutProgress.run_directory(name);
+        self.display.run_directory(name);
         if let Some(benchmark) = self.benchmark {
             benchmark.run_directory(name);
         }
     }
 
     fn timing(&self, stage: &str, seconds: Option<f64>) {
-        StdoutProgress.timing(stage, seconds);
+        self.display.timing(stage, seconds);
         self.timings.add(stage, seconds);
     }
 
@@ -188,6 +189,7 @@ mod tests {
     fn the_timed_reporter_keeps_what_it_forwards() {
         let timings = Timings::new();
         let progress = TimedProgress {
+            display: &mosna_pipeline::SilentProgress,
             timings: &timings,
             benchmark: None,
         };

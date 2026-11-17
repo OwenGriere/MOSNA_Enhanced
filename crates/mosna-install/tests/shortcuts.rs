@@ -275,13 +275,27 @@ fn a_windows_link_records_its_target() {
 
     shortcut::write_windows_link(&target, None, &link).unwrap();
 
+    // Not the whole path, compared as text: on Windows the temporary directory
+    // is handed out in its short 8.3 form (`C:\Users\RUNNER~1\…`), and the
+    // shell records the long one — and splits it into an ID list, one entry
+    // per component. The directory's own random name and the file name are in
+    // the link whichever form it took, and together they are this target.
     let bytes = std::fs::read(&link).unwrap();
-    let needle = target.to_string_lossy().into_owned();
-    let ascii = bytes.windows(needle.len()).any(|w| w == needle.as_bytes());
-    let utf16: Vec<u8> = needle.encode_utf16().flat_map(u16::to_le_bytes).collect();
-    let wide = bytes.windows(utf16.len()).any(|w| w == utf16);
+    let contains = |needle: &str| {
+        let ascii = bytes.windows(needle.len()).any(|w| w == needle.as_bytes());
+        let utf16: Vec<u8> = needle.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        ascii || bytes.windows(utf16.len()).any(|w| w == utf16)
+    };
+    let directory = dir.path().file_name().unwrap().to_string_lossy();
 
-    assert!(ascii || wide, "the target path is not in the link");
+    assert!(
+        contains(&directory),
+        "the target's directory is not in the link"
+    );
+    assert!(
+        contains("mosna-gui.exe"),
+        "the target's name is not in the link"
+    );
 }
 
 /// A missing target is refused rather than producing a link to nowhere.

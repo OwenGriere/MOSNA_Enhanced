@@ -15,7 +15,8 @@ use crate::reduction::umap::Scalar;
 /// stretched to match rather than left at the data's own scale.
 const INIT_EXTENT: Scalar = 10.0;
 
-/// Initial embedding, from the leading principal components of the data.
+/// Initial embedding, from the leading principal components of the data —
+/// umap-learn's `init='pca'`.
 ///
 /// # Why not the spectral initialisation
 ///
@@ -150,7 +151,7 @@ fn rescale(embedding: &mut [Scalar], n_rows: usize, n_components: usize) {
 }
 
 /// A seeded uniform layout, matching umap-learn's `init='random'`.
-fn random_layout(n_rows: usize, n_components: usize, seed: u64) -> Vec<Scalar> {
+pub(crate) fn random_layout(n_rows: usize, n_components: usize, seed: u64) -> Vec<Scalar> {
     let mut rng = ChaCha8Rng::seed_from_u64(seed);
     (0..n_rows * n_components)
         .map(|_| rng.gen_range(-INIT_EXTENT..INIT_EXTENT))

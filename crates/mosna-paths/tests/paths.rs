@@ -8,7 +8,11 @@
 
 use std::path::{Path, PathBuf};
 
-use mosna_paths::{binary, config_file, layout::Layout, Environment};
+use mosna_paths::{
+    binary, config_file,
+    layout::{Layout, Platform},
+    Environment,
+};
 
 /// An environment with nothing set, so each test states exactly what it relies
 /// on rather than inheriting the developer's machine.
@@ -200,6 +204,10 @@ fn the_bare_name_lets_the_shell_search_the_path() {
 /// A user install goes under `~/.local`, which needs no administrator rights —
 /// the default, because asking for `sudo` to try an application is a poor
 /// trade.
+///
+/// The tests of this section are the Unix layout's, named explicitly so they
+/// mean the same on every platform; the Windows one is pinned in
+/// `install_layout.rs`.
 #[test]
 fn the_default_prefix_is_the_user_local_directory() {
     let dir = tempfile::tempdir().unwrap();
@@ -207,23 +215,20 @@ fn the_default_prefix_is_the_user_local_directory() {
     environment.home = Some(dir.path().to_path_buf());
 
     assert_eq!(
-        Layout::default_prefix(&environment),
+        Layout::default_prefix_for(&environment, Platform::Unix),
         Some(dir.path().join(".local"))
     );
 }
 
 #[test]
 fn the_layout_follows_the_filesystem_hierarchy_standard() {
-    let layout = Layout::new(Path::new("/opt/mosna"));
+    let layout = Layout::for_platform(Path::new("/opt/mosna"), Platform::Unix);
 
     assert_eq!(layout.bin_dir(), Path::new("/opt/mosna/bin"));
-    assert_eq!(
-        layout.analysis_binary(),
-        Path::new("/opt/mosna/bin").join(binary::ANALYSIS_FILE_NAME)
-    );
+    assert_eq!(layout.analysis_binary(), Path::new("/opt/mosna/bin/mosna"));
     assert_eq!(
         layout.interface_binary(),
-        Path::new("/opt/mosna/bin").join(binary::INTERFACE_FILE_NAME)
+        Path::new("/opt/mosna/bin/mosna-gui")
     );
     assert_eq!(
         layout.shipped_config(),
@@ -244,7 +249,7 @@ fn the_layout_follows_the_filesystem_hierarchy_standard() {
 #[test]
 fn every_installed_path_is_inside_the_prefix() {
     let prefix = Path::new("/opt/mosna");
-    let layout = Layout::new(prefix);
+    let layout = Layout::for_platform(prefix, Platform::Unix);
 
     for path in layout.all_paths() {
         assert!(
@@ -258,7 +263,7 @@ fn every_installed_path_is_inside_the_prefix() {
 /// An install must know everything it wrote, so it can be undone.
 #[test]
 fn the_layout_enumerates_what_an_install_creates() {
-    let layout = Layout::new(Path::new("/opt/mosna"));
+    let layout = Layout::for_platform(Path::new("/opt/mosna"), Platform::Unix);
     let paths = layout.all_paths();
 
     assert!(paths.contains(&layout.analysis_binary()));

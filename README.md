@@ -280,6 +280,66 @@ mosna sensitivity-analysis --log sensitivity_plan.log               # run it
 mosna sensitivity-analysis --log sensitivity_plan.log --working_dir /scratch/run
 ```
 
+### UMAP starting layout — `init`
+
+When a niche sub-section (`Aggregated nodes` or `Per sample`) asks for
+`reducer_type: umap`, the key `init` chooses where the layout optimisation
+starts:
+
+| `init` | Starting layout | When to use it |
+|---|---|---|
+| `pca` *(default)* | The leading principal components of the aggregated features — umap-learn's `init='pca'`. | The usual choice, and the cheapest: the global arrangement of the features is there from the first epoch, and the descent refines it. |
+| `spectral` | The eigenvectors of the normalised Laplacian of the UMAP graph itself (a Laplacian eigenmap), for its smallest non-trivial eigenvalues — umap-learn's `init='spectral'`, its own default. When the graph falls apart into several connected components, each is laid out on its own and the components are placed by a spectral embedding of their centroids, as umap-learn does. | To start exactly as umap-learn does by default, for a comparison with the Python reference. It costs an eigensolver on the cell graph (LOBPCG), which grows with the cohort. |
+
+Either way the start is then treated as umap-learn 0.5.12 treats it: scaled so
+its largest coordinate is 10, with a little Gaussian noise (σ = 10⁻⁴) that
+separates cells whose features are identical, and each axis rescaled to
+`[0, 10]`.
+
+```yaml
+Niche Analysis:
+  Aggregated nodes:
+    reducer_type: umap
+    n_neighbors: 20
+    min_dist: 0.0
+    init: pca        # or spectral
+```
+
+The key is optional: a configuration without it runs with `pca`, and keeps its
+run numbers. It is ignored with `reducer_type: none`, and greyed out in the
+interface then. A run with `init: spectral` is stored apart from the `pca` one
+(its reduction directory ends in `_init-spectral`), and `init` can be swept over
+in a sensitivity analysis like `metric`. Both starts are seeded, so either gives
+the same embedding twice.
+
+`n_neighbors` counts the cell itself, as in umap-learn: `n_neighbors: 20` links
+each cell to its 19 nearest other cells.
+
+### Niche clustering — `clusterer_type: gmm`
+
+`gmm` fits a Gaussian mixture of `n_clusters` components by
+expectation-maximisation, and each cell takes the niche of its most likely
+component. It reproduces the Python reference's
+`torchgmm.bayes.GaussianMixture(n_clusters)`, with torchgmm 0.1.4's settings:
+
+| Setting | Value |
+|---|---|
+| Covariance | **diagonal**: one variance per component and per feature, no correlation between features (torchgmm's `covariance_type="diag"`) |
+| Start | k-means centres, then covariances from the k-means groups |
+| Stop | mean log-likelihood moving by less than `1e-3`, or 100 iterations |
+| Regularisation | `1e-6` added to every variance |
+
+A diagonal component is an axis-aligned ellipse: a niche stretched along a
+diagonal of the embedding is covered by several components rather than one.
+That is the model the Python reference fits, so the niches are comparable with
+it. Earlier versions of MOSNA_Enhanced fitted full covariances (scikit-learn's
+default) instead; runs cached by them are computed again, under the same run
+numbers.
+
+Two departures from torchgmm, both deliberate: the fit is seeded, so a run
+gives the same niches twice; and a component whose variance collapses to zero
+gets more regularisation instead of stopping the run with an error.
+
 ## Benchmark
 
 *To come.*

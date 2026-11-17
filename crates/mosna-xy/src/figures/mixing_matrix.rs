@@ -99,6 +99,15 @@ mod tests {
         )
     }
 
+    /// `save_dir` as the specification writes it: joined with the platform's
+    /// separator, so `\` between the two on Windows.
+    fn under_out(folder: &str) -> String {
+        Path::new("/out")
+            .join(folder)
+            .to_string_lossy()
+            .into_owned()
+    }
+
     #[test]
     fn there_are_two_figures_for_every_sample() {
         let (columns, rows) = table();
@@ -115,10 +124,10 @@ mod tests {
         let json: Vec<_> = specs.iter().map(|spec| spec.to_json()).collect();
 
         assert_eq!(specs[0].stem(), "heatmap_zscore_1-2");
-        assert_eq!(json[0]["save_dir"], "/out/assort_files");
+        assert_eq!(json[0]["save_dir"], under_out("assort_files").as_str());
         assert!(json
             .iter()
-            .any(|spec| spec["save_dir"] == "/out/assort_files_without_diag"));
+            .any(|spec| spec["save_dir"] == under_out("assort_files_without_diag").as_str()));
     }
 
     #[test]
@@ -128,11 +137,13 @@ mod tests {
 
         let with_diagonal = specs
             .iter()
-            .find(|spec| spec.to_json()["save_dir"] == "/out/assort_files")
+            .find(|spec| spec.to_json()["save_dir"] == under_out("assort_files").as_str())
             .unwrap();
         let without = specs
             .iter()
-            .find(|spec| spec.to_json()["save_dir"] == "/out/assort_files_without_diag")
+            .find(|spec| {
+                spec.to_json()["save_dir"] == under_out("assort_files_without_diag").as_str()
+            })
             .unwrap();
 
         assert!(with_diagonal.blob_values("z")[0].is_finite());

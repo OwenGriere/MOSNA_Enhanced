@@ -155,38 +155,20 @@ fn sections(app: &mut MosnaApp, ui: &mut egui::Ui) {
     egui::ScrollArea::vertical()
         .auto_shrink([false, false])
         .show(ui, |ui| {
-            let groups = app.form.sections[section_index].tabs[tab_index]
-                .groups
-                .len();
-            for group_index in 0..groups {
+            let groups = &mut app.form.sections[section_index].tabs[tab_index].groups;
+            for group_box in groups.iter_mut() {
                 // A box the current choices make irrelevant — the Delaunay
                 // trimming with knn — is not drawn at all.
-                if !app.form.sections[section_index].tabs[tab_index].groups[group_index].visible {
+                if !group_box.visible {
                     continue;
                 }
-                let title = app.form.sections[section_index].tabs[tab_index].groups[group_index]
-                    .title
-                    .clone();
+                let title = group_box.title.clone();
                 group(ui, &title, |ui| {
-                    let fields = app.form.sections[section_index].tabs[tab_index].groups
-                        [group_index]
-                        .fields
-                        .len();
-
                     // One column for the whole group, set by its longest name,
                     // so the controls line up instead of forming a ragged edge.
-                    let names: Vec<String> = app.form.sections[section_index].tabs[tab_index]
-                        .groups[group_index]
-                        .fields
-                        .iter()
-                        .map(caption_of)
-                        .collect();
+                    let names: Vec<String> = group_box.fields.iter().map(caption_of).collect();
                     let column = label_column_for(ui, names.iter().map(String::as_str));
-                    for field_index in 0..fields {
-                        let field = &mut app.form.sections[section_index].tabs[tab_index].groups
-                            [group_index]
-                            .fields[field_index];
-
+                    for field in group_box.fields.iter_mut() {
                         let mut caption =
                             egui::RichText::new(caption_of(field)).size(theme::size::LABEL);
                         if !field.enabled {

@@ -10,8 +10,8 @@ pub mod merge_clusters;
 pub mod relabel_clusters;
 pub mod spectral;
 
-pub use gmm::{gaussian_mixture, GmmParams, GmmResult};
-pub use leiden::leiden;
+pub use gmm::{gaussian_mixture, CovarianceType, GmmParams, GmmResult, GMM_REVISION};
+pub use leiden::{leiden, LEIDEN_REVISION};
 pub use merge_clusters::{merge_clusters, merge_clusters_until};
 pub use relabel_clusters::relabel_clusters;
 pub use spectral::{spectral_clustering, SpectralParams};

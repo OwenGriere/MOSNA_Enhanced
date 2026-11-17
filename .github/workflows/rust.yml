@@ -98,21 +98,30 @@ jobs:
   # The same suite on Windows: paths, line endings, process spawning and the
   # Python interpreter lookup are where the two platforms differ.
   #
-  # Skipped for now: the suite does not pass on the Windows runner yet. The job
-  # is kept whole so that turning it back on is deleting the `if:` line below;
-  # until then it shows as "skipped" in the checks list rather than as a red
-  # build, and Linux stays the gate. `workflow_dispatch` still runs it on
-  # demand, from the Actions tab, to work on the failures.
+  # Runs on every push and pull request, but does not gate them yet
+  # (`continue-on-error`): the suite has not been seen passing on the Windows
+  # runner, so its result is reported without blocking the change, and Linux
+  # stays the gate. Once it is green, deleting the `continue-on-error` line
+  # makes it a gate too.
   # ---------------------------------------------------------------------------
   test-windows:
     name: tests (Windows)
-    if: github.event_name == 'workflow_dispatch'
     runs-on: windows-latest
+    continue-on-error: true
     env:
       # A failing test prints where it failed, not only that it did.
       RUST_BACKTRACE: '1'
 
     steps:
+      # The Windows runner checks text files out with CRLF line endings by
+      # default. Several tests read sources, the README, the configuration and
+      # the installer script and look for exact text in them; checked out as
+      # committed, they test the code rather than Git's conversion.
+      - name: Keep line endings as committed
+        run: |
+          git config --global core.autocrlf false
+          git config --global core.eol lf
+
       - uses: actions/checkout@v4
 
       - name: Install Rust toolchain
