@@ -85,12 +85,18 @@ fn repository_icon() -> Option<PathBuf> {
 fn the_desktop_entry_launches_the_installed_interface() {
     let layout = unix_layout("/opt/mosna");
     let entry = desktop::entry(&layout);
+    // `Path` compares by component, so this holds on Windows too, where the
+    // separators `join` puts between them are `\`.
+    assert_eq!(
+        layout.interface_binary(),
+        Path::new("/opt/mosna/bin/mosna-gui")
+    );
 
     assert!(entry.starts_with("[Desktop Entry]"), "{entry}");
     assert!(entry.contains("Type=Application"));
     assert!(entry.contains("Name=MOSNA"));
     assert!(
-        entry.contains("Exec=/opt/mosna/bin/mosna-gui"),
+        entry.contains(&format!("Exec={}\n", layout.interface_binary().display())),
         "the Exec line must be absolute: {entry}"
     );
     assert!(entry.contains("Icon=mosna"));

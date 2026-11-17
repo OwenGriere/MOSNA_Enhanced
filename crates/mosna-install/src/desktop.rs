@@ -37,23 +37,32 @@ pub fn entry(layout: &Layout) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use mosna_paths::layout::Platform;
+
+    /// The entry is the Unix install's, whatever the platform running the
+    /// tests: Windows gets `.lnk` shortcuts instead.
+    fn unix_layout(prefix: &str) -> Layout {
+        Layout::for_platform(prefix, Platform::Unix)
+    }
 
     #[test]
     fn the_header_comes_first() {
-        let entry = entry(&Layout::new("/opt/mosna"));
+        let entry = entry(&unix_layout("/opt/mosna"));
         assert!(entry.starts_with("[Desktop Entry]\n"));
     }
 
     #[test]
     fn the_command_is_absolute() {
-        let entry = entry(&Layout::new("/opt/mosna"));
+        let entry = entry(&unix_layout("/opt/mosna"));
         let exec = entry
             .lines()
             .find(|line| line.starts_with("Exec="))
             .unwrap()
             .trim_start_matches("Exec=");
+        // `has_root` rather than `is_absolute`: run on Windows, a Unix path
+        // names no drive and is never "absolute" there.
         assert!(
-            std::path::Path::new(exec).is_absolute(),
+            std::path::Path::new(exec).has_root(),
             "Exec is relative: {exec}"
         );
     }
@@ -61,7 +70,7 @@ mod tests {
     #[test]
     fn the_icon_is_named_not_pathed() {
         // A bare name lets the theme pick the right size; a path pins one.
-        let entry = entry(&Layout::new("/opt/mosna"));
+        let entry = entry(&unix_layout("/opt/mosna"));
         assert!(entry.contains(&format!("Icon={DESKTOP_ID}\n")));
         assert!(!entry.contains("Icon=/"));
     }
@@ -69,7 +78,7 @@ mod tests {
     #[test]
     fn the_categories_end_with_a_semicolon() {
         // The specification requires the list separator after the last item.
-        let entry = entry(&Layout::new("/opt/mosna"));
+        let entry = entry(&unix_layout("/opt/mosna"));
         let categories = entry
             .lines()
             .find(|line| line.starts_with("Categories="))
@@ -79,7 +88,12 @@ mod tests {
 
     #[test]
     fn the_prefix_reaches_the_command() {
-        let entry = entry(&Layout::new("/home/someone/.local"));
-        assert!(entry.contains("Exec=/home/someone/.local/bin/mosna-gui"));
+        let layout = unix_layout("/home/someone/.local");
+        let entry = entry(&layout);
+        assert_eq!(
+            layout.interface_binary(),
+            std::path::Path::new("/home/someone/.local/bin/mosna-gui")
+        );
+        assert!(entry.contains(&format!("Exec={}\n", layout.interface_binary().display())));
     }
 }
