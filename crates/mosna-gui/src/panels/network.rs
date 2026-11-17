@@ -853,8 +853,7 @@ fn legend(app: &mut MosnaApp, ui: &mut egui::Ui) {
     }
 
     let mut repalette: Option<(usize, Palette)> = None;
-    for index in 0..app.network.layers.len() {
-        let layer = &app.network.layers[index];
+    for (index, layer) in app.network.layers.iter().enumerate() {
         let column = layer.column.clone();
         let palette = layer.palette;
         let legend = layer.attribute().map(|attribute| attribute.legend(palette));

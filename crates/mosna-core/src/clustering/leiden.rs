@@ -73,7 +73,7 @@ impl Graph {
 ///
 /// The algorithm is Leiden proper, not Louvain: after each local-moving pass
 /// the communities are *refined* into sub-communities, never across a
-/// community boundary, before being aggregated (see [`fn@refine`]). That refinement is what stops Louvain's known failure
+/// community boundary, before being aggregated (see `refine`). That refinement is what stops Louvain's known failure
 /// mode, where a community can end up internally disconnected and yet never be
 /// split again.
 ///
