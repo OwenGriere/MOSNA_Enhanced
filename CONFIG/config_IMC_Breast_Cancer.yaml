@@ -1,0 +1,66 @@
+Tysserand:
+  Nodes directory: ../data/processed/IMC_Breast_Cancer/tysserand_python_network
+  Patient column name: patient
+  Sample column name: sample
+  Extension: parquet
+  X coordinates column: x
+  Y coordinates column: y
+  Phenotype column: cellPhenotype
+  Edges method: delaunay
+  Trim distance ratio: 2.0
+  Trim number of edges: 3
+  Trim min distance: 0.0
+  Min neighbors: 3
+  CPU: 20
+Assortativity:
+  Network directory: Default
+  Phenotype column: cellPhenotype
+  Patient column name: patient
+  Sample column name: sample
+  Extension: parquet
+  Index: index
+  Number of shuffle: 500
+  Randomization diagnostic: false
+Niche Analysis:
+  Network directory: Default
+  Extension: parquet
+  Patient column name: patient
+  Sample column name: sample
+  Processing method: Aggregated nodes
+  Niches method: NAS
+  Phenotype column: null
+  Column to aggregate: null
+  Plot Network: true
+  X coordinates column for niches: null
+  Y coordinates column for niches: null
+  CPU: 20
+  Aggregated nodes:
+    reducer_type: umap
+    dim_clust: 2
+    n_neighbors: 20
+    metric: manhattan
+    min_dist: 0.0
+    clusterer_type: gmm
+    k_cluster: 20
+    n_clusters: 6
+    resolution: 0.05
+    min_cluster_size: 100
+    normalize: all
+    order: '1'
+    stat_funcs: np.mean,np.std
+    stat_names: [mean, std]
+  Per sample:
+    reducer_type: umap
+    dim_clust: 3
+    n_neighbors: 20
+    metric: cosine
+    min_dist: 0.0
+    clusterer_type: gmm
+    k_cluster: 20
+    n_clusters: 7
+    resolution: 0.05
+    min_cluster_size: 100
+    normalize: all
+    order: '1'
+    stat_funcs: np.mean,np.std
+    stat_names: [mean, std]
